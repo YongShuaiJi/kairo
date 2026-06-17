@@ -1,0 +1,346 @@
+openapi: 3.0.3
+info:
+  title: Runtime Mock Platform API
+  version: 0.1.0
+servers:
+  - url: http://127.0.0.1:18280/api/v1
+paths:
+  /control/health:
+    get:
+      summary: Platform health and counters
+      responses:
+        "200":
+          description: OK
+  /control/schedulers/run-once:
+    post:
+      summary: Run rollout, extraction, and replay schedulers once
+      responses:
+        "200":
+          description: OK
+  /fencing-tokens:
+    get:
+      summary: List issued fencing tokens
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Issue a Redis-backed fencing token with PostgreSQL audit trail
+      responses:
+        "201":
+          description: Created
+  /instances:
+    get:
+      summary: List instances
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Register an application instance
+      responses:
+        "201":
+          description: Created
+  /sidecars:
+    get:
+      summary: List sidecars
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Register a sidecar
+      responses:
+        "201":
+          description: Created
+  /agents:
+    get:
+      summary: List agents
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Register an agent
+      responses:
+        "201":
+          description: Created
+  /agents/{id}/heartbeat:
+    post:
+      summary: Record an agent heartbeat
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+  /agent-commands:
+    get:
+      summary: List platform-to-agent commands
+      responses:
+        "200":
+          description: OK
+  /agents/{id}/commands:
+    post:
+      summary: Enqueue a manual command for an agent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Created
+  /agents/{id}/commands/next:
+    post:
+      summary: Agent poll endpoint that leases the next command
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+  /agent-commands/{id}/ack:
+    post:
+      summary: Ack or fail a leased agent command
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+  /rules:
+    get:
+      summary: List rules
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Create a rule and immutable version 1
+      responses:
+        "201":
+          description: Created
+  /rules/{id}/versions:
+    post:
+      summary: Create a new immutable rule version
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Created
+  /operation-plans:
+    get:
+      summary: List rollout operation plans
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Create a rollout operation plan
+      responses:
+        "201":
+          description: Created
+  /operation-plans/{id}/transition:
+    post:
+      summary: Transition a rollout operation plan using expected status and version
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+  /recording-rules:
+    get:
+      summary: List recording rules
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Create a recording rule
+      responses:
+        "201":
+          description: Created
+  /recording-sessions:
+    get:
+      summary: List recording sessions
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Create a recording session
+      responses:
+        "201":
+          description: Created
+  /datasets:
+    get:
+      summary: List dataset versions
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Create a dataset version from a completed recording session
+      responses:
+        "201":
+          description: Created
+  /datasources:
+    get:
+      summary: List datasource registrations
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Register a datasource for controlled extraction
+      responses:
+        "201":
+          description: Created
+  /extraction-templates:
+    get:
+      summary: List extraction templates
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Create an extraction template
+      responses:
+        "201":
+          description: Created
+  /extraction-tasks:
+    get:
+      summary: List extraction tasks
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Create an extraction task
+      responses:
+        "201":
+          description: Created
+  /extraction-tasks/{id}/transition:
+    post:
+      summary: Transition an extraction task using expected status and version
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+  /extraction-executions:
+    get:
+      summary: List extraction worker executions
+      responses:
+        "200":
+          description: OK
+  /extraction-results:
+    get:
+      summary: List extraction result artifacts
+      responses:
+        "200":
+          description: OK
+  /replay-plans:
+    get:
+      summary: List replay plans
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Create a replay plan
+      responses:
+        "201":
+          description: Created
+  /replay-executions:
+    get:
+      summary: List replay executions
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Create a replay execution
+      responses:
+        "201":
+          description: Created
+  /replay-executions/{id}/transition:
+    post:
+      summary: Transition a replay execution using expected status and version
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+  /replay-batches:
+    get:
+      summary: List replay worker batches
+      responses:
+        "200":
+          description: OK
+  /replay-invocation-results:
+    get:
+      summary: List replay invocation results
+      responses:
+        "200":
+          description: OK
+  /comparison-results:
+    get:
+      summary: List replay comparison results
+      responses:
+        "200":
+          description: OK
+  /approvals:
+    get:
+      summary: List approvals
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Create an approval request
+      responses:
+        "201":
+          description: Created
+  /approvals/{id}/decisions:
+    post:
+      summary: Approve or reject an approval step
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+  /audits:
+    get:
+      summary: List hash-chained audit records
+      responses:
+        "200":
+          description: OK
+  /outbox:
+    get:
+      summary: List outbox events
+      responses:
+        "200":
+          description: OK
+  /worker-artifacts:
+    get:
+      summary: List worker output artifacts
+      responses:
+        "200":
+          description: OK

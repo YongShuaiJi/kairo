@@ -1,0 +1,382 @@
+package com.example.runtimemock.platform;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+class PlatformControllerIntegrationTest {
+
+    @Autowired
+    MockMvc mockMvc;
+
+    @Autowired
+    ObjectMapper objectMapper;
+
+    @Test
+    void persistsRecordingDatasetReplayApprovalAuditAndOutbox() throws Exception {
+        JsonNode health = getJson("/api/v1/control/health");
+        assertThat(health.get("status").asText()).isEqualTo("UP");
+
+        JsonNode instance = postJson("/api/v1/instances", Map.of(
+                "id", "instance-platform-1",
+                "applicationId", "app-default",
+                "environmentId", "env-dev",
+                "hostname", "localhost",
+                "processId", "12345",
+                "runtime", "java-21",
+                "labels", Map.of("az", "local", "tier", "demo"),
+                "reason", "register instance"
+        ), "system");
+        assertThat(instance.get("status").asText()).isEqualTo("ACTIVE");
+
+        JsonNode sidecar = postJson("/api/v1/sidecars", Map.of(
+                "id", "sidecar-platform-1",
+                "instanceId", "instance-platform-1",
+                "sidecarVersion", "0.1.0",
+                "endpoint", "https://127.0.0.1:18443",
+                "capabilities", java.util.List.of("MTLS", "WAL"),
+                "reason", "register sidecar"
+        ), "system");
+        assertThat(sidecar.get("status").asText()).isEqualTo("ACTIVE");
+
+        JsonNode agent = postJson("/api/v1/agents", Map.of(
+                "id", "agent-platform-1",
+                "instanceId", "instance-platform-1",
+                "sidecarId", "sidecar-platform-1",
+                "agentVersion", "0.1.0",
+                "bootstrapVersion", "0.1.0",
+                "listenHost", "127.0.0.1",
+                "listenPort", 18081,
+                "tokenHash", "sha256-token",
+                "capabilities", java.util.List.of("JAVA_METHOD", "RESET_CLASS"),
+                "reason", "register agent"
+        ), "system");
+        assertThat(agent.get("listen_port").asInt()).isEqualTo(18081);
+
+        JsonNode heartbeat = postJson("/api/v1/agents/agent-platform-1/heartbeat", Map.of(
+                "status", "ACTIVE",
+                "metrics", Map.of("queueDepth", 0),
+                "reason", "heartbeat"
+        ), "system");
+        assertThat(heartbeat.get("status").asText()).isEqualTo("ACTIVE");
+
+        JsonNode rule = postJson("/api/v1/rules", Map.ofEntries(
+                Map.entry("id", "rule-platform-1"),
+                Map.entry("applicationId", "app-default"),
+                Map.entry("environmentId", "env-dev"),
+                Map.entry("name", "Demo method latency fault"),
+                Map.entry("riskLevel", "MEDIUM"),
+                Map.entry("matcher", Map.of("stableSamplingKey", "traceId")),
+                Map.entry("script", Map.of("type", "RETURN", "value", "mocked")),
+                Map.entry("governance", Map.of("ttlSeconds", 600, "maxHits", 100)),
+                Map.entry("targets", java.util.List.of(Map.of(
+                        "protocol", "JAVA_METHOD",
+                        "className", "com.example.DemoService",
+                        "methodName", "query",
+                        "matcher", Map.of("descriptor", "(Ljava/lang/String;)Ljava/lang/String;")
+                ))),
+                Map.entry("capabilities", java.util.List.of("EARLY_RETURN")),
+                Map.entry("reason", "create rule")
+        ), "system");
+        assertThat(rule.get("latest_version").asLong()).isEqualTo(1);
+
+        JsonNode ruleVersion = postJson("/api/v1/rules/rule-platform-1/versions", Map.of(
+                "riskLevel", "HIGH",
+                "matcher", Map.of("stableSamplingKey", "userId"),
+                "script", Map.of("type", "THROW", "exception", "java.lang.IllegalStateException"),
+                "governance", Map.of("ttlSeconds", 300, "maxHits", 10),
+                "targets", java.util.List.of(Map.of(
+                        "protocol", "JAVA_METHOD",
+                        "className", "com.example.DemoService",
+                        "methodName", "query"
+                )),
+                "capabilities", java.util.List.of("THROW_EXCEPTION"),
+                "reason", "tighten rule"
+        ), "system");
+        assertThat(ruleVersion.get("version").asLong()).isEqualTo(2);
+
+        JsonNode recordingRule = postJson("/api/v1/recording-rules", Map.of(
+                "id", "recording-rule-platform-1",
+                "applicationId", "app-default",
+                "environmentId", "env-dev",
+                "name", "Record demo method",
+                "protocol", "JAVA_METHOD",
+                "target", Map.of("className", "com.example.DemoService", "methodName", "query"),
+                "sampling", Map.of("rate", 0.1),
+                "quota", Map.of("maxEvents", 100, "maxBytes", 1024),
+                "reason", "create recording rule"
+        ), "system");
+        assertThat(recordingRule.get("latest_version").asLong()).isEqualTo(1);
+
+        JsonNode recordingRuleVersion = postJson("/api/v1/recording-rules/recording-rule-platform-1/versions", Map.of(
+                "protocol", "JAVA_METHOD",
+                "target", Map.of("className", "com.example.DemoService", "methodName", "queryV2"),
+                "sampling", Map.of("rate", 0.05),
+                "quota", Map.of("maxEvents", 50, "maxBytes", 2048),
+                "reason", "create recording rule version"
+        ), "system");
+        assertThat(recordingRuleVersion.get("version").asLong()).isEqualTo(2);
+
+        JsonNode operation = postJson("/api/v1/operation-plans", Map.of(
+                "id", "operation-platform-1",
+                "applicationId", "app-default",
+                "environmentId", "env-dev",
+                "planType", "RULE_ROLLOUT",
+                "resourceType", "rule",
+                "resourceId", "rule-platform-1",
+                "resourceVersion", 2,
+                "strategy", Map.of("mode", "canary", "observeSeconds", 60),
+                "rollout", Map.of(
+                        "mode", "SEQUENTIAL",
+                        "batchPolicy", Map.of("batchSize", 1),
+                        "rollbackPolicy", Map.of("automatic", true)
+                ),
+                "reason", "create operation"
+        ), "system");
+        assertThat(operation.get("status").asText()).isEqualTo("DRAFT");
+        transitionOperation("operation-platform-1", "DRAFT", 1, "WAITING_APPROVAL");
+        transitionOperation("operation-platform-1", "WAITING_APPROVAL", 2, "APPROVED");
+        transitionOperation("operation-platform-1", "APPROVED", 3, "SCHEDULED");
+        JsonNode runningOperation = transitionOperation("operation-platform-1", "SCHEDULED", 4, "RUNNING");
+        assertThat(runningOperation.get("version").asLong()).isEqualTo(5);
+
+        JsonNode batch = postJson("/api/v1/operation-plans/operation-platform-1/batches", Map.of(
+                "id", "rollout-batch-platform-1",
+                "batchOrder", 1,
+                "targetSelector", Map.of("labels", Map.of("tier", "demo")),
+                "reason", "create batch"
+        ), "system");
+        assertThat(batch.get("batch_order").asInt()).isEqualTo(1);
+
+        JsonNode execution = postJson("/api/v1/rollout-batches/rollout-batch-platform-1/executions", Map.of(
+                "id", "rollout-execution-platform-1",
+                "instanceId", "instance-platform-1",
+                "expectedAgentVersion", "0.1.0",
+                "expectedRuleVersion", 2,
+                "reason", "create execution"
+        ), "system");
+        assertThat(execution.get("status").asText()).isEqualTo("PENDING");
+
+        JsonNode recording = postJson("/api/v1/recording-sessions", Map.of(
+                "id", "rec-platform-1",
+                "applicationId", "app-default",
+                "environmentId", "env-dev",
+                "maxEvents", 100,
+                "ttlSeconds", 600,
+                "target", Map.of("protocol", "JAVA_METHOD"),
+                "quota", Map.of("maxBytes", 1024),
+                "reason", "integration test"
+        ), "system");
+        assertThat(recording.get("status").asText()).isEqualTo("DRAFT");
+
+        transitionRecording("rec-platform-1", "DRAFT", 1, "WAITING_APPROVAL");
+        transitionRecording("rec-platform-1", "WAITING_APPROVAL", 2, "APPROVED");
+        transitionRecording("rec-platform-1", "APPROVED", 3, "RECORDING");
+        JsonNode completed = transitionRecording("rec-platform-1", "RECORDING", 4, "COMPLETED");
+        assertThat(completed.get("version").asLong()).isEqualTo(5);
+
+        JsonNode dataset = postJson("/api/v1/datasets", Map.of(
+                "datasetId", "dataset-platform",
+                "applicationId", "app-default",
+                "environmentId", "env-dev",
+                "sourceSessionId", "rec-platform-1",
+                "schemaHash", "schema-sha256",
+                "manifestHash", "manifest-sha256",
+                "maskingHash", "masking-sha256",
+                "retentionPolicy", "P30D",
+                "reason", "build dataset"
+        ), "system");
+        assertThat(dataset.get("id").asText()).isEqualTo("dataset-platform:1");
+
+        JsonNode datasource = postJson("/api/v1/datasources", Map.of(
+                "id", "datasource-platform-1",
+                "applicationId", "app-default",
+                "environmentId", "env-dev",
+                "datasourceType", "POSTGRESQL",
+                "name", "orders readonly",
+                "config", Map.of("host", "orders-db", "database", "orders"),
+                "credential", Map.of("provider", "VAULT", "secretRef", "secret/data/orders/readonly"),
+                "reason", "register datasource"
+        ), "system");
+        assertThat(datasource.get("status").asText()).isEqualTo("ACTIVE");
+
+        JsonNode extractionTemplate = postJson("/api/v1/extraction-templates", Map.of(
+                "id", "extraction-template-platform-1",
+                "datasourceId", "datasource-platform-1",
+                "name", "order by id",
+                "rootTable", "orders",
+                "template", Map.of("where", "id = :id", "columns", java.util.List.of("id", "status")),
+                "quota", Map.of("maxRows", 100, "timeoutSeconds", 5),
+                "relations", java.util.List.of(Map.of(
+                        "sourceTable", "orders",
+                        "targetTable", "order_items",
+                        "relation", Map.of("sourceColumn", "id", "targetColumn", "order_id")
+                )),
+                "reason", "create extraction template"
+        ), "system");
+        assertThat(extractionTemplate.get("latest_version").asLong()).isEqualTo(1);
+
+        JsonNode extractionTask = postJson("/api/v1/extraction-tasks", Map.of(
+                "id", "extraction-task-platform-1",
+                "templateId", "extraction-template-platform-1",
+                "templateVersion", 1,
+                "datasetId", "dataset-platform",
+                "parameters", Map.of("id", "order-1"),
+                "quota", Map.of("maxRows", 10, "timeoutSeconds", 5),
+                "reason", "create extraction task"
+        ), "system");
+        assertThat(extractionTask.get("status").asText()).isEqualTo("DRAFT");
+        transitionExtraction("extraction-task-platform-1", "DRAFT", 1, "QUEUED");
+        transitionExtraction("extraction-task-platform-1", "QUEUED", 2, "RUNNING");
+        JsonNode completedExtraction = transitionExtraction("extraction-task-platform-1", "RUNNING", 3, "SUCCEEDED");
+        assertThat(completedExtraction.get("version").asLong()).isEqualTo(4);
+
+        JsonNode replay = postJson("/api/v1/replay-plans", Map.of(
+                "id", "replay-platform-1",
+                "datasetId", "dataset-platform",
+                "datasetVersion", 1,
+                "targetEnvironment", "test",
+                "targetApplication", "order-service",
+                "sideEffectPolicyHash", "side-effect-sha256",
+                "comparisonPolicyHash", "comparison-sha256",
+                "executionPolicy", Map.of("qps", 10),
+                "reason", "create replay"
+        ), "system");
+        assertThat(replay.get("status").asText()).isEqualTo("DRAFT");
+
+        JsonNode replayExecution = postJson("/api/v1/replay-executions", Map.of(
+                "id", "replay-execution-platform-1",
+                "replayPlanId", "replay-platform-1",
+                "executorConfig", Map.of("qps", 1, "concurrency", 1),
+                "reason", "create replay execution"
+        ), "system");
+        assertThat(replayExecution.get("status").asText()).isEqualTo("QUEUED");
+        transitionReplayExecution("replay-execution-platform-1", "QUEUED", 1, "RUNNING");
+        JsonNode completedReplayExecution = transitionReplayExecution(
+                "replay-execution-platform-1", "RUNNING", 2, "SUCCEEDED");
+        assertThat(completedReplayExecution.get("version").asLong()).isEqualTo(3);
+
+        JsonNode approval = postJson("/api/v1/approvals", Map.of(
+                "id", "approval-platform-1",
+                "subjectType", "REPLAY_PLAN",
+                "subjectId", "replay-platform-1",
+                "subjectVersion", 1,
+                "subjectHash", "approval-subject-sha256",
+                "reason", "approve replay",
+                "approvers", java.util.List.of("reviewer")
+        ), "system");
+        assertThat(approval.get("status").asText()).isEqualTo("WAITING_APPROVAL");
+
+        JsonNode decided = postJson("/api/v1/approvals/approval-platform-1/decisions", Map.of(
+                "decision", "APPROVED",
+                "reason", "looks safe"
+        ), "reviewer");
+        assertThat(decided.get("status").asText()).isEqualTo("APPROVED");
+
+        JsonNode audits = getJson("/api/v1/audits");
+        JsonNode outbox = getJson("/api/v1/outbox");
+        assertThat(audits).hasSizeGreaterThanOrEqualTo(8);
+        assertThat(outbox).hasSizeGreaterThanOrEqualTo(8);
+        assertThat(audits.get(0).get("previous_record_hash").asText()).isEqualTo("GENESIS");
+        assertThat(audits.get(1).get("previous_record_hash").asText())
+                .isEqualTo(audits.get(0).get("record_hash").asText());
+    }
+
+    private JsonNode transitionExtraction(String id, String expectedStatus, long expectedVersion,
+                                          String targetStatus) throws Exception {
+        String token = issueFencingToken("extraction_task", id, "move to " + targetStatus);
+        return postJson("/api/v1/extraction-tasks/" + id + "/transition", Map.of(
+                "expectedStatus", expectedStatus,
+                "expectedVersion", expectedVersion,
+                "targetStatus", targetStatus,
+                "reason", "move to " + targetStatus,
+                "fencingToken", token
+        ), "system");
+    }
+
+    private JsonNode transitionReplayExecution(String id, String expectedStatus, long expectedVersion,
+                                               String targetStatus) throws Exception {
+        String token = issueFencingToken("replay_execution", id, "move to " + targetStatus);
+        return postJson("/api/v1/replay-executions/" + id + "/transition", Map.of(
+                "expectedStatus", expectedStatus,
+                "expectedVersion", expectedVersion,
+                "targetStatus", targetStatus,
+                "reason", "move to " + targetStatus,
+                "fencingToken", token
+        ), "system");
+    }
+
+    private JsonNode transitionOperation(String id, String expectedStatus, long expectedVersion,
+                                         String targetStatus) throws Exception {
+        String token = issueFencingToken("operation_plan", id, "move to " + targetStatus);
+        return postJson("/api/v1/operation-plans/" + id + "/transition", Map.of(
+                "expectedStatus", expectedStatus,
+                "expectedVersion", expectedVersion,
+                "targetStatus", targetStatus,
+                "reason", "move to " + targetStatus,
+                "fencingToken", token
+        ), "system");
+    }
+
+    private JsonNode transitionRecording(String id, String expectedStatus, long expectedVersion,
+                                         String targetStatus) throws Exception {
+        String token = issueFencingToken("recording_session", id, "move to " + targetStatus);
+        return postJson("/api/v1/recording-sessions/" + id + "/transition", Map.of(
+                "expectedStatus", expectedStatus,
+                "expectedVersion", expectedVersion,
+                "targetStatus", targetStatus,
+                "reason", "move to " + targetStatus,
+                "fencingToken", token
+        ), "system");
+    }
+
+    private String issueFencingToken(String resourceType, String resourceId, String purpose) throws Exception {
+        JsonNode token = postJson("/api/v1/fencing-tokens", Map.of(
+                "resourceType", resourceType,
+                "resourceId", resourceId,
+                "purpose", purpose,
+                "ttlSeconds", 300,
+                "reason", purpose
+        ), "system");
+        assertThat(token.get("token").asText()).contains(resourceType + ":" + resourceId + ":");
+        return token.get("token").asText();
+    }
+
+    private JsonNode getJson(String path) throws Exception {
+        String body = mockMvc.perform(get(path))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        return objectMapper.readTree(body);
+    }
+
+    private JsonNode postJson(String path, Object request, String actor) throws Exception {
+        String body = mockMvc.perform(post(path)
+                        .header("X-Actor", actor)
+                        .header("X-Correlation-Id", "corr-test")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(request)))
+                .andExpect(status().is2xxSuccessful())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        return objectMapper.readTree(body);
+    }
+}

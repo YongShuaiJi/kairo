@@ -1,0 +1,35 @@
+package com.example.runtimemock.platform.fencing;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+@ConfigurationProperties(prefix = "runtime-mock.platform.fencing")
+public class FencingProperties {
+
+    private boolean redisEnabled;
+    private String keyPrefix = "runtime-mock:fencing:";
+    private long defaultTtlSeconds = 300;
+
+    public boolean isRedisEnabled() {
+        return redisEnabled;
+    }
+
+    public void setRedisEnabled(boolean redisEnabled) {
+        this.redisEnabled = redisEnabled;
+    }
+
+    public String getKeyPrefix() {
+        return keyPrefix;
+    }
+
+    public void setKeyPrefix(String keyPrefix) {
+        this.keyPrefix = keyPrefix;
+    }
+
+    public long getDefaultTtlSeconds() {
+        return defaultTtlSeconds;
+    }
+
+    public void setDefaultTtlSeconds(long defaultTtlSeconds) {
+        this.defaultTtlSeconds = defaultTtlSeconds;
+    }
+}

@@ -1,0 +1,75 @@
+# Maven build output
+target/
+**/target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+.flattened-pom.xml
+
+# Runtime data and logs
+logs/
+*.log
+*.log.*
+*.pid
+*.pid.lock
+*.out
+*.tmp
+tmp/
+temp/
+data/
+.runtime-mock/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.token
+*.secrets
+
+# JVM diagnostics
+hs_err_pid*
+replay_pid*
+java_pid*
+*.hprof
+*.jfr
+
+# IDE and editor files
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+.factorypath
+*.swp
+*.swo
+*~
+
+# Local AI assistant configuration
+.claude/settings.local.json
+
+# Operating system files
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# Test and coverage reports outside Maven target directories
+.coverage
+coverage/
+*.exec
+
+# Local container overrides and volumes
+docker-compose.override.yml
+.docker/

@@ -1,0 +1,130 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: runtime-mock-postgres
+    environment:
+      POSTGRES_DB: runtime_mock
+      POSTGRES_USER: runtime_mock
+      POSTGRES_PASSWORD: runtime_mock
+    ports:
+      - "5432:5432"
+    volumes:
+      - runtime-mock-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U runtime_mock -d runtime_mock"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  kafka:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    container_name: runtime-mock-kafka
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://kafka:9092,external://localhost:9092
+    ports:
+      - "9092:19092"
+      - "9644:9644"
+    volumes:
+      - runtime-mock-kafka-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: runtime-mock-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - runtime-mock-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: runtime-mock-minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: runtime_mock
+      MINIO_ROOT_PASSWORD: runtime_mock_secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - runtime-mock-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    container_name: runtime-mock-keycloak
+    command: ["start-dev"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8081:8080"
+    volumes:
+      - runtime-mock-keycloak-data:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080; echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '200' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  platform:
+    image: runtime-mock-platform-server:0.1.0-SNAPSHOT
+    build:
+      context: ./runtime-mock-platform-server
+      dockerfile: Dockerfile
+    container_name: runtime-mock-platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      RUNTIME_MOCK_DB_URL: jdbc:postgresql://postgres:5432/runtime_mock
+      RUNTIME_MOCK_DB_USER: runtime_mock
+      RUNTIME_MOCK_DB_PASSWORD: runtime_mock
+      RUNTIME_MOCK_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      RUNTIME_MOCK_KAFKA_ENABLED: "true"
+      RUNTIME_MOCK_OUTBOX_FIXED_DELAY_MS: "1000"
+      RUNTIME_MOCK_REDIS_HOST: redis
+      RUNTIME_MOCK_REDIS_PORT: "6379"
+      RUNTIME_MOCK_FENCING_REDIS_ENABLED: "true"
+      RUNTIME_MOCK_OBJECT_STORE_ROOT: /tmp/runtime-mock-platform-objects
+    ports:
+      - "18280:18280"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec \"exec 3<>/dev/tcp/127.0.0.1/18280; printf 'GET /actuator/health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q 'UP' <&3\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  runtime-mock-postgres-data:
+  runtime-mock-kafka-data:
+  runtime-mock-redis-data:
+  runtime-mock-minio-data:
+  runtime-mock-keycloak-data:
