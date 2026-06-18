@@ -12,15 +12,23 @@ import java.util.concurrent.ConcurrentMap;
 
 public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable {
 
+    private static final int MAX_CLASSES_PER_GENERATION = 256;
+    private static final int MAX_CACHE_ENTRIES = 1024;
+
     private final ConcurrentMap<ScriptCacheKey, CompiledMockScript> cache = new ConcurrentHashMap<>();
-    private final ScriptLoaderGeneration generation;
+    private final ClassLoader parentClassLoader;
+    private final CompilerConfiguration configuration;
+    private volatile ScriptLoaderGeneration generation;
+    private int classesInGeneration;
 
     public GroovyScriptCompiler() {
         this(Thread.currentThread().getContextClassLoader());
     }
 
     public GroovyScriptCompiler(ClassLoader parentClassLoader) {
-        this.generation = new ScriptLoaderGeneration(parentClassLoader, GroovySecurityConfiguration.compilerConfiguration());
+        this.parentClassLoader = Objects.requireNonNull(parentClassLoader, "parentClassLoader");
+        this.configuration = GroovySecurityConfiguration.compilerConfiguration();
+        this.generation = new ScriptLoaderGeneration(parentClassLoader, configuration);
     }
 
     @Override
@@ -30,6 +38,9 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
         GroovyScriptSecurityPolicy.validateSource(script);
         String scriptHash = sha256(script);
         ScriptCacheKey key = new ScriptCacheKey(ruleId, version, scriptHash);
+        if (cache.size() >= MAX_CACHE_ENTRIES && !cache.containsKey(key)) {
+            cache.clear();
+        }
         return cache.computeIfAbsent(key, ignored -> compileNew(ruleId, version, scriptHash, script));
     }
 
@@ -37,8 +48,10 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
         String className = "RuntimeMockRule_" + sanitize(ruleId) + "_" + version + "_" + scriptHash.substring(0, 16);
         Class<?> scriptType;
         try {
-            synchronized (generation) {
+            synchronized (this) {
+                rotateGenerationIfNeeded();
                 scriptType = generation.groovyClassLoader().parseClass(script, className + ".groovy");
+                classesInGeneration++;
             }
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("Invalid or forbidden Groovy script: " + rootMessage(e), e);
@@ -81,9 +94,19 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         generation.close();
         cache.clear();
+    }
+
+    private void rotateGenerationIfNeeded() {
+        if (classesInGeneration < MAX_CLASSES_PER_GENERATION) {
+            return;
+        }
+        ScriptLoaderGeneration previous = generation;
+        generation = new ScriptLoaderGeneration(parentClassLoader, configuration);
+        classesInGeneration = 0;
+        previous.close();
     }
 
     private record ScriptCacheKey(String ruleId, long version, String scriptHash) {

@@ -2,6 +2,7 @@ package com.example.runtimemock.platform.event;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.example.runtimemock.platform.service.PlatformJson;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -94,7 +95,14 @@ public class KafkaOutboxPublisher {
     private void publishOne(OutboxEvent event) {
         String topic = properties.getTopicPrefix() + event.eventType();
         try {
-            kafkaTemplate.send(topic, event.key(), event.payloadJson())
+            String envelope = PlatformJson.write(java.util.Map.of(
+                    "eventId", event.id(),
+                    "eventType", event.eventType(),
+                    "aggregateType", event.aggregateType(),
+                    "aggregateId", event.aggregateId(),
+                    "payload", PlatformJson.readMap(event.payloadJson())
+            ));
+            kafkaTemplate.send(topic, event.key(), envelope)
                     .get(properties.getSendTimeout().toMillis(), TimeUnit.MILLISECONDS);
             markPublished(event);
         } catch (Exception ex) {

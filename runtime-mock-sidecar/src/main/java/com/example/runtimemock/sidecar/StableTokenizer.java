@@ -5,7 +5,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
-public final class StableTokenizer {
+public final class StableTokenizer implements AutoCloseable {
 
     private final byte[] domainKey;
 
@@ -14,6 +14,9 @@ public final class StableTokenizer {
     }
 
     public String tokenize(String domain, String fieldPath, Object value) {
+        if (destroyed()) {
+            throw new IllegalStateException("Tokenizer key has been destroyed");
+        }
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(domainKey, "HmacSHA256"));
@@ -24,5 +27,18 @@ public final class StableTokenizer {
         } catch (Exception e) {
             throw new IllegalStateException("Cannot tokenize value", e);
         }
+    }
+
+    public boolean destroyed() {
+        int aggregate = 0;
+        for (byte value : domainKey) {
+            aggregate |= value;
+        }
+        return aggregate == 0;
+    }
+
+    @Override
+    public void close() {
+        java.util.Arrays.fill(domainKey, (byte) 0);
     }
 }

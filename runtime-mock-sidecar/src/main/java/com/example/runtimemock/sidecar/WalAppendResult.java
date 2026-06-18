@@ -7,6 +7,7 @@ public record WalAppendResult(
         Instant timestamp,
         String payloadHash,
         long plaintextBytes,
-        long ciphertextBytes
+        long ciphertextBytes,
+        boolean duplicate
 ) {
 }

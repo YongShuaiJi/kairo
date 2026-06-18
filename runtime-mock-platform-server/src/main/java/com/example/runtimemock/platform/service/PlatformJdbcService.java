@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +37,7 @@ import java.util.UUID;
 public class PlatformJdbcService {
 
     private static final String GENESIS_HASH = "GENESIS";
+    private static final long AUDIT_CHAIN_LOCK_ID = 0x52554E54494D454DL;
 
     private final JdbcTemplate jdbcTemplate;
     private final RbacService rbacService;
@@ -73,7 +75,8 @@ public class PlatformJdbcService {
     }
 
     public List<Map<String, Object>> list(String table, String orderBy) {
-        return normalizeRows(jdbcTemplate.queryForList("select * from " + table + " order by " + orderBy));
+        return normalizeRows(jdbcTemplate.queryForList(
+                "select * from " + table + " order by " + orderBy + " limit 1000"));
     }
 
     @Transactional
@@ -294,6 +297,9 @@ public class PlatformJdbcService {
                     "Cannot transition operation plan from " + currentStatus + " to " + targetStatus,
                     Map.of("id", id, "currentStatus", currentStatus.name(), "targetStatus", targetStatus.name()));
         }
+        if (targetStatus == OperationPlanStatus.APPROVED) {
+            requireApprovedApproval("OPERATION_PLAN", id, currentVersion, current);
+        }
         String fencingToken = requiredString(request, "fencingToken", null);
         fencingTokenService.consume(context, "operation_plan", id, fencingToken);
         long newVersion = currentVersion + 1;
@@ -318,14 +324,18 @@ public class PlatformJdbcService {
         rbacService.require(context, "ROLLOUT_MANAGE");
         getById("operation_plan", operationPlanId);
         Instant now = clock.instant();
-        int batchOrder = (int) optionalLong(request, "batchOrder", nextBatchOrder(operationPlanId));
+        int batchOrder = request.containsKey("batchOrder")
+                ? (int) requiredLong(request, "batchOrder")
+                : (int) nextBatchOrder(operationPlanId);
         String id = optionalString(request, "id", "rollout-batch-" + UUID.randomUUID());
         jdbcTemplate.update("""
                 insert into rollout_batch(
-                    id, operation_plan_id, batch_order, status, target_selector_json, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?)
+                    id, operation_plan_id, batch_order, status, target_selector_json,
+                    version, updated_by, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, id, operationPlanId, batchOrder, requiredString(request, "status", "PENDING"),
-                jsonValue(request, "targetSelector", Map.of()), timestamp(now), timestamp(now));
+                jsonValue(request, "targetSelector", Map.of()), 1L, context.actor(),
+                timestamp(now), timestamp(now));
         auditAndOutbox(context, "rollout_batch.create", "rollout_batch", id, 1,
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "create rollout batch"),
                 Map.of("operationPlanId", operationPlanId, "batchOrder", batchOrder));
@@ -344,8 +354,8 @@ public class PlatformJdbcService {
         jdbcTemplate.update("""
                 insert into rollout_instance_execution(
                     id, rollout_batch_id, instance_id, status, expected_agent_version, expected_rule_version,
-                    command_id, error_message, started_at, finished_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    command_id, error_message, started_at, finished_at, version, updated_by, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, id, rolloutBatchId, instanceId, requiredString(request, "status", "PENDING"),
                 requiredString(request, "expectedAgentVersion", "unknown"),
                 optionalLongObject(request, "expectedRuleVersion"),
@@ -353,6 +363,8 @@ public class PlatformJdbcService {
                 optionalString(request, "errorMessage", null),
                 null,
                 null,
+                1L,
+                context.actor(),
                 timestamp(now));
         auditAndOutbox(context, "rollout_instance_execution.create", "rollout_instance_execution", id, 1,
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "create rollout execution"),
@@ -588,6 +600,14 @@ public class PlatformJdbcService {
         rbacService.require(context, "RECORD_ARGUMENTS");
         Instant now = clock.instant();
         String id = optionalString(request, "id", "rec-" + UUID.randomUUID());
+        long ttlSeconds = optionalLong(request, "ttlSeconds", 900);
+        if (ttlSeconds < 1 || ttlSeconds > 7_200) {
+            throw PlatformException.badRequest("INVALID_TTL", "ttlSeconds must be between 1 and 7200");
+        }
+        long maxEvents = optionalLong(request, "maxEvents", 10_000);
+        if (maxEvents < 1 || maxEvents > 100_000) {
+            throw PlatformException.badRequest("INVALID_MAX_EVENTS", "maxEvents must be between 1 and 100000");
+        }
         jdbcTemplate.update("""
                 insert into recording_session(
                     id, application_id, environment_id, status, version, max_events, ttl_seconds,
@@ -599,8 +619,8 @@ public class PlatformJdbcService {
                 requiredString(request, "environmentId", "env-dev"),
                 RecordingSessionStatus.DRAFT.name(),
                 1L,
-                optionalLong(request, "maxEvents", 10_000),
-                optionalLong(request, "ttlSeconds", 3_600),
+                maxEvents,
+                ttlSeconds,
                 json(optionalMap(request, "target")),
                 json(optionalMap(request, "quota")),
                 context.actor(),
@@ -618,9 +638,9 @@ public class PlatformJdbcService {
                 insert into recording_session_quota(id, recording_session_id, max_events, max_bytes, expires_at, created_at)
                 values (?, ?, ?, ?, ?, ?)
                 """, "recording-session-quota-" + UUID.randomUUID(), id,
-                optionalLong(request, "maxEvents", 10_000),
+                maxEvents,
                 optionalLong(optionalMap(request, "quota"), "maxBytes", 1024 * 1024 * 1024L),
-                timestamp(now.plusSeconds(optionalLong(request, "ttlSeconds", 3_600))),
+                timestamp(now.plusSeconds(ttlSeconds)),
                 timestamp(now));
         auditAndOutbox(context, "recording_session.create", "recording_session", id, 1,
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "create recording session"),
@@ -644,6 +664,9 @@ public class PlatformJdbcService {
             throw PlatformException.conflict("RECORDING_SESSION_INVALID_TRANSITION",
                     "Cannot transition recording session from " + currentStatus + " to " + targetStatus,
                     Map.of("id", id, "currentStatus", currentStatus.name(), "targetStatus", targetStatus.name()));
+        }
+        if (targetStatus == RecordingSessionStatus.APPROVED) {
+            requireApprovedApproval("RECORDING_SESSION", id, currentVersion, current);
         }
         fencingTokenService.consume(context, "recording_session", id, fencingToken);
         long newVersion = currentVersion + 1;
@@ -779,6 +802,9 @@ public class PlatformJdbcService {
                     "Cannot transition replay plan from " + currentStatus + " to " + targetStatus,
                     Map.of("id", id, "currentStatus", currentStatus.name(), "targetStatus", targetStatus.name()));
         }
+        if (targetStatus == PlanStatus.APPROVED) {
+            requireApprovedApproval("REPLAY_PLAN", id, currentVersion, current);
+        }
         fencingTokenService.consume(context, "replay_plan", id, fencingToken);
         long newVersion = currentVersion + 1;
         jdbcTemplate.update("""
@@ -798,6 +824,18 @@ public class PlatformJdbcService {
         rbacService.require(context, "APPROVE");
         Instant now = clock.instant();
         String id = optionalString(request, "id", "approval-" + UUID.randomUUID());
+        String subjectType = requiredString(request, "subjectType", null);
+        String subjectId = requiredString(request, "subjectId", null);
+        long subjectVersion = requiredLong(request, "subjectVersion");
+        Map<String, Object> subject = approvalSubject(subjectType, subjectId, subjectVersion);
+        String subjectHash = hash(subject);
+        String providedHash = optionalString(request, "subjectHash", null);
+        if (providedHash != null && !providedHash.equals(subjectHash)) {
+            throw PlatformException.conflict("APPROVAL_SUBJECT_HASH_MISMATCH",
+                    "Provided subject hash does not match the current immutable approval subject",
+                    Map.of("subjectType", subjectType, "subjectId", subjectId,
+                            "subjectVersion", subjectVersion));
+        }
         jdbcTemplate.update("""
                 insert into approval_request(
                     id, subject_type, subject_id, subject_version, subject_hash, status,
@@ -805,10 +843,10 @@ public class PlatformJdbcService {
                 ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 id,
-                requiredString(request, "subjectType", null),
-                requiredString(request, "subjectId", null),
-                requiredLong(request, "subjectVersion"),
-                requiredString(request, "subjectHash", null),
+                subjectType,
+                subjectId,
+                subjectVersion,
+                subjectHash,
                 ApprovalStatus.WAITING_APPROVAL.name(),
                 context.actor(),
                 requiredString(request, "reason", null),
@@ -817,7 +855,12 @@ public class PlatformJdbcService {
         );
         List<?> approvers = optionalList(request, "approvers");
         if (approvers.isEmpty()) {
-            approvers = List.of(context.actor());
+            throw PlatformException.badRequest("APPROVER_REQUIRED",
+                    "At least one approver different from the requester is required");
+        }
+        if (approvers.stream().map(String::valueOf).anyMatch(context.actor()::equals)) {
+            throw PlatformException.badRequest("SELF_APPROVER_FORBIDDEN",
+                    "Requester cannot be included as an approver");
         }
         int order = 1;
         for (Object approver : approvers) {
@@ -833,22 +876,86 @@ public class PlatformJdbcService {
         return getById("approval_request", id);
     }
 
+    private void requireApprovedApproval(String subjectType, String subjectId, long subjectVersion,
+                                         Map<String, Object> subject) {
+        List<Map<String, Object>> approvals = normalizeRows(jdbcTemplate.queryForList("""
+                select *
+                  from approval_request
+                 where subject_type = ?
+                   and subject_id = ?
+                   and subject_version = ?
+                   and status = 'APPROVED'
+                 order by updated_at desc
+                """, subjectType, subjectId, subjectVersion));
+        String currentHash = hash(subject);
+        boolean valid = approvals.stream()
+                .anyMatch(approval -> currentHash.equals(String.valueOf(approval.get("subject_hash"))));
+        if (!valid) {
+            throw PlatformException.conflict("APPROVAL_REQUIRED",
+                    "An approved decision bound to the current resource version is required",
+                    Map.of("subjectType", subjectType, "subjectId", subjectId,
+                            "subjectVersion", subjectVersion));
+        }
+    }
+
+    private Map<String, Object> approvalSubject(String subjectType, String subjectId, long subjectVersion) {
+        return switch (subjectType) {
+            case "OPERATION_PLAN" -> versionedSubject("operation_plan", subjectId, subjectVersion);
+            case "RECORDING_SESSION" -> versionedSubject("recording_session", subjectId, subjectVersion);
+            case "REPLAY_PLAN" -> versionedSubject("replay_plan", subjectId, subjectVersion);
+            case "REPLAY_EXECUTION" -> versionedSubject("replay_execution", subjectId, subjectVersion);
+            case "EXTRACTION_TASK" -> versionedSubject("extraction_task", subjectId, subjectVersion);
+            case "RULE" -> normalizeRow(jdbcTemplate.queryForMap(
+                    "select * from rule_version where rule_id = ? and version = ?", subjectId, subjectVersion));
+            case "RECORDING_RULE" -> normalizeRow(jdbcTemplate.queryForMap(
+                    "select * from recording_rule_version where recording_rule_id = ? and version = ?",
+                    subjectId, subjectVersion));
+            case "DATASET_VERSION" -> normalizeRow(jdbcTemplate.queryForMap(
+                    "select * from dataset_version where dataset_id = ? and version = ?", subjectId, subjectVersion));
+            default -> throw PlatformException.badRequest(
+                    "INVALID_APPROVAL_SUBJECT", "Unsupported approval subject type: " + subjectType);
+        };
+    }
+
+    private Map<String, Object> versionedSubject(String table, String subjectId, long subjectVersion) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "select * from " + table + " where id = ? and version = ?", subjectId, subjectVersion);
+        if (rows.isEmpty()) {
+            throw PlatformException.notFound(table, subjectId + ":" + subjectVersion);
+        }
+        return normalizeRow(rows.get(0));
+    }
+
     @Transactional
     public Map<String, Object> decideApproval(String id, RequestContext context, Map<String, Object> request) {
         rbacService.require(context, "APPROVE");
         Map<String, Object> approval = getById("approval_request", id);
-        if (context.actor().equals(String.valueOf(approval.get("requester")))) {
+        if (!ApprovalStatus.WAITING_APPROVAL.name().equals(String.valueOf(approval.get("status")))) {
+            throw PlatformException.conflict("APPROVAL_ALREADY_DECIDED",
+                    "Approval request is no longer waiting for a decision",
+                    Map.of("approvalId", id, "status", approval.get("status")));
+        }
+        String decision = requiredString(request, "decision", null);
+        if (!ApprovalStatus.APPROVED.name().equals(decision)
+                && !ApprovalStatus.REJECTED.name().equals(decision)) {
+            throw PlatformException.badRequest("INVALID_DECISION", "decision must be APPROVED or REJECTED");
+        }
+        if (context.actor().equals(String.valueOf(approval.get("requester")))
+                && ApprovalStatus.APPROVED.name().equals(decision)) {
             throw PlatformException.conflict("SELF_APPROVAL_FORBIDDEN",
                     "Requester cannot approve their own request", Map.of("approvalId", id));
         }
-        String decision = requiredString(request, "decision", null);
         String reason = requiredString(request, "reason", null);
-        Map<String, Object> step = normalizeRow(jdbcTemplate.queryForMap("""
+        List<Map<String, Object>> steps = jdbcTemplate.queryForList("""
                 select * from approval_step
                  where approval_id = ? and approver = ? and status = ?
                  order by step_order
                  limit 1
-                """, id, context.actor(), ApprovalStatus.WAITING_APPROVAL.name()));
+                """, id, context.actor(), ApprovalStatus.WAITING_APPROVAL.name());
+        if (steps.isEmpty()) {
+            throw PlatformException.forbidden("APPROVAL_ASSIGNEE");
+        }
+        Map<String, Object> step = normalizeRow(steps.get(0));
         Instant now = clock.instant();
         jdbcTemplate.update("update approval_step set status = ?, decided_at = ? where id = ?",
                 decision, timestamp(now), step.get("id"));
@@ -957,6 +1064,20 @@ public class PlatformJdbcService {
     private void insertRecordingRuleVersion(RequestContext context, String ruleId, long version,
                                             Map<String, Object> request, Instant now) {
         String versionId = ruleId + ":" + version;
+        String versionStatus = requiredString(request, "versionStatus", "DRAFT");
+        String targetJson = jsonValue(request, "target", Map.of());
+        if ("ACTIVE".equals(versionStatus)) {
+            Integer activeCount = jdbcTemplate.queryForObject("""
+                    select count(*)
+                      from recording_rule_version
+                     where status = 'ACTIVE' and target_json = ?
+                    """, Integer.class, targetJson);
+            if (activeCount != null && activeCount >= 10) {
+                throw PlatformException.conflict("RECORDING_RULE_METHOD_LIMIT",
+                        "At most 10 active recording rules may target the same method",
+                        Map.of("target", targetJson, "activeCount", activeCount));
+            }
+        }
         jdbcTemplate.update("""
                 insert into recording_rule_version(
                     id, recording_rule_id, version, status, protocol, target_json, sampling_json,
@@ -966,10 +1087,10 @@ public class PlatformJdbcService {
                 versionId,
                 ruleId,
                 version,
-                requiredString(request, "versionStatus", "DRAFT"),
+                versionStatus,
                 requiredString(request, "protocol", "JAVA_METHOD"),
-                jsonValue(request, "target", Map.of()),
-                jsonValue(request, "sampling", Map.of("rate", 1.0)),
+                targetJson,
+                validatedSampling(request),
                 jsonValue(request, "quota", Map.of("maxEvents", 10_000, "maxBytes", 1024 * 1024 * 1024L)),
                 optionalString(request, "maskingPolicyId", null),
                 context.actor(),
@@ -1063,22 +1184,22 @@ public class PlatformJdbcService {
                 operationPlanId,
                 optionalString(rollout, "mode", "SEQUENTIAL"),
                 jsonValue(rollout, "batchPolicy", Map.of("batchSize", 1)),
-                jsonValue(rollout, "rollbackPolicy", Map.of("automatic", false)),
+                jsonValue(rollout, "rollbackPolicy", Map.of("automatic", true)),
                 timestamp(now));
     }
 
     private long nextScopedVersion(String table, String keyColumn, String keyValue) {
-        Long value = jdbcTemplate.queryForObject(
-                "select coalesce(max(version), 0) + 1 from " + table + " where " + keyColumn + " = ?",
+        Long maximum = jdbcTemplate.queryForObject(
+                "select coalesce(max(version), 0) from " + table + " where " + keyColumn + " = ?",
                 Long.class, keyValue);
-        return value == null ? 1 : value;
+        return nextCounter(table + ":" + keyValue, maximum == null ? 1 : maximum + 1);
     }
 
     private long nextBatchOrder(String operationPlanId) {
-        Long value = jdbcTemplate.queryForObject(
-                "select coalesce(max(batch_order), 0) + 1 from rollout_batch where operation_plan_id = ?",
+        Long maximum = jdbcTemplate.queryForObject(
+                "select coalesce(max(batch_order), 0) from rollout_batch where operation_plan_id = ?",
                 Long.class, operationPlanId);
-        return value == null ? 1 : value;
+        return nextCounter("rollout_batch:" + operationPlanId, maximum == null ? 1 : maximum + 1);
     }
 
     private void ensureDataset(String datasetId, Map<String, Object> request, RequestContext context) {
@@ -1100,10 +1221,39 @@ public class PlatformJdbcService {
     }
 
     private long nextDatasetVersion(String datasetId) {
-        Long value = jdbcTemplate.queryForObject(
-                "select coalesce(max(version), 0) + 1 from dataset_version where dataset_id = ?",
+        Long maximum = jdbcTemplate.queryForObject(
+                "select coalesce(max(version), 0) from dataset_version where dataset_id = ?",
                 Long.class, datasetId);
-        return value == null ? 1 : value;
+        return nextCounter("dataset_version:" + datasetId, maximum == null ? 1 : maximum + 1);
+    }
+
+    private long nextCounter(String counterKey, long initialValue) {
+        int updated = jdbcTemplate.update("""
+                update scoped_counter
+                   set current_value = current_value + 1, updated_at = ?
+                 where counter_key = ?
+                """, timestamp(clock.instant()), counterKey);
+        if (updated == 0) {
+            try {
+                jdbcTemplate.update("""
+                        insert into scoped_counter(counter_key, current_value, updated_at)
+                        values (?, ?, ?)
+                        """, counterKey, initialValue, timestamp(clock.instant()));
+                return initialValue;
+            } catch (DuplicateKeyException ignored) {
+                jdbcTemplate.update("""
+                        update scoped_counter
+                           set current_value = current_value + 1, updated_at = ?
+                         where counter_key = ?
+                        """, timestamp(clock.instant()), counterKey);
+            }
+        }
+        Long value = jdbcTemplate.queryForObject(
+                "select current_value from scoped_counter where counter_key = ?", Long.class, counterKey);
+        if (value == null) {
+            throw new IllegalStateException("Counter did not return a value: " + counterKey);
+        }
+        return value;
     }
 
     private Map<String, Object> getDatasetVersion(String datasetId, long version) {
@@ -1176,6 +1326,7 @@ public class PlatformJdbcService {
     private void auditAndOutbox(RequestContext context, String action, String resourceType, String resourceId,
                                 long resourceVersion, String beforeHash, String afterHash, String result,
                                 String reason, Map<String, Object> details) {
+        lockAuditChain();
         Instant now = clock.instant();
         String previousHash = previousAuditHash();
         String auditId = "audit-" + UUID.randomUUID();
@@ -1193,6 +1344,7 @@ public class PlatformJdbcService {
         auditPayload.put("previousRecordHash", previousHash);
         auditPayload.put("correlationId", context.correlationId());
         auditPayload.put("ipAddress", context.ipAddress());
+        auditPayload.put("device", context.device());
         auditPayload.put("result", result);
         auditPayload.put("reason", reason);
         auditPayload.put("details", details);
@@ -1202,11 +1354,11 @@ public class PlatformJdbcService {
                 insert into audit_record(
                     id, occurred_at, actor, identity_source, action, resource_type, resource_id, resource_version,
                     before_hash, after_hash, previous_record_hash, record_hash, correlation_id, ip_address,
-                    result, reason, details_json
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    device, result, reason, details_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, auditId, timestamp(now), context.actor(), context.identitySource(), action,
                 resourceType, resourceId, resourceVersion, beforeHash, afterHash, previousHash, recordHash,
-                context.correlationId(), context.ipAddress(), result, reason, json(details));
+                context.correlationId(), context.ipAddress(), context.device(), result, reason, json(details));
 
         jdbcTemplate.update("""
                 insert into outbox_event(
@@ -1214,6 +1366,19 @@ public class PlatformJdbcService {
                 ) values (?, ?, ?, ?, ?, ?, ?, ?)
                 """, "outbox-" + UUID.randomUUID(), resourceType, resourceId, action,
                 json(auditPayload), "NEW", timestamp(now), timestamp(now));
+    }
+
+    private void lockAuditChain() {
+        jdbcTemplate.execute((ConnectionCallback<Void>) connection -> {
+            String database = connection.getMetaData().getDatabaseProductName();
+            if ("PostgreSQL".equalsIgnoreCase(database)) {
+                try (var statement = connection.prepareStatement("select pg_advisory_xact_lock(?)")) {
+                    statement.setLong(1, AUDIT_CHAIN_LOCK_ID);
+                    statement.execute();
+                }
+            }
+            return null;
+        });
     }
 
     private String previousAuditHash() {
@@ -1234,6 +1399,21 @@ public class PlatformJdbcService {
     private String jsonValue(Map<String, Object> request, String key, Object defaultValue) {
         Object value = request.containsKey(key) ? request.get(key) : defaultValue;
         return json(value == null ? defaultValue : value);
+    }
+
+    private String validatedSampling(Map<String, Object> request) {
+        Map<String, Object> sampling = request.containsKey("sampling")
+                ? optionalMap(request, "sampling")
+                : Map.of("rate", 0.001);
+        Object rateValue = sampling.getOrDefault("rate", 0.001);
+        double rate = rateValue instanceof Number number
+                ? number.doubleValue()
+                : Double.parseDouble(String.valueOf(rateValue));
+        if (!Double.isFinite(rate) || rate <= 0 || rate > 1) {
+            throw PlatformException.badRequest("INVALID_SAMPLING_RATE",
+                    "sampling.rate must be greater than 0 and at most 1");
+        }
+        return json(sampling);
     }
 
     private String hash(Object value) {

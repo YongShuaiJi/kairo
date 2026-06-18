@@ -7,28 +7,40 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.time.Instant;
 
 public final class OpsCommand {
 
     private OpsCommand() {
     }
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
         int exitCode = execute(args);
         if (exitCode != 0) {
             System.exit(exitCode);
         }
     }
 
-    static int execute(String[] args) throws IOException, InterruptedException {
+    static int execute(String[] args) {
         try {
             OpsOptions options = OpsOptions.parse(args);
             HttpResponse<String> response = send(options);
             System.out.println(response.body());
+            appendAudit(options, response.statusCode(), response.body());
             return response.statusCode() >= 200 && response.statusCode() < 300 ? 0 : 2;
         } catch (IllegalArgumentException e) {
             System.err.println("{\"error\":\"" + escape(e.getMessage()) + "\"}");
             return 64;
+        } catch (IOException e) {
+            System.err.println("{\"error\":\"NETWORK_ERROR\",\"message\":\"" + escape(e.getMessage()) + "\"}");
+            return 69;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            System.err.println("{\"error\":\"INTERRUPTED\"}");
+            return 130;
         }
     }
 
@@ -81,6 +93,17 @@ public final class OpsCommand {
             return "";
         }
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static void appendAudit(OpsOptions options, int status, String response) throws IOException {
+        Path audit = Path.of(System.getProperty("user.home"), ".runtime-mock", "ops-audit.jsonl");
+        Files.createDirectories(audit.getParent());
+        String line = "{\"timestamp\":\"" + Instant.now() + "\",\"command\":\""
+                + escape(options.command()) + "\",\"eventId\":\"" + escape(options.eventId())
+                + "\",\"reason\":\"" + escape(options.reason()) + "\",\"status\":" + status
+                + ",\"response\":\"" + escape(response) + "\"}" + System.lineSeparator();
+        Files.writeString(audit, line, StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
     }
 
     private record RequestSpec(String method, String path, String body) {

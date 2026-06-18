@@ -28,7 +28,9 @@ class OpsOptionsTest {
                 "disable-rule",
                 "--url", "http://127.0.0.1:18081",
                 "--token", "dev",
-                "--rule-id", "rule-1"
+                "--rule-id", "rule-1",
+                "--reason", "incident mitigation",
+                "--event", "INC-123"
         });
 
         assertThat(options.command()).isEqualTo("disable-rule");

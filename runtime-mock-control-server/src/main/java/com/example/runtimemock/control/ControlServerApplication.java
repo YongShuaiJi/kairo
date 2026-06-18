@@ -13,6 +13,7 @@ public final class ControlServerApplication {
         Runtime.getRuntime().addShutdownHook(new Thread(server::close, "runtime-mock-control-shutdown"));
         server.start();
         System.out.println("Runtime Mock control server started: http://" + options.host() + ":" + server.port());
+        System.out.println("Control token: " + options.controlToken());
         new CountDownLatch(1).await();
     }
 }

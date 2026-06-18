@@ -68,3 +68,4 @@ runtime-mock:
     auth:
       header-actor: X-Actor
       header-roles: X-Roles
+      shared-secret: ${RUNTIME_MOCK_PLATFORM_AUTH_SHARED_SECRET:}

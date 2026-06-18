@@ -73,12 +73,20 @@ public final class OpsOptions {
         switch (command) {
             case "status" -> {
             }
-            case "disable-rule", "remove-rule" -> require("rule-id");
+            case "disable-rule", "remove-rule" -> {
+                require("rule-id");
+                require("reason");
+                require("event");
+            }
             case "reset-class" -> {
                 require("class-id");
                 require("reason");
+                require("event");
             }
-            case "disable-all", "reset-all", "shutdown-agent" -> require("reason");
+            case "disable-all", "reset-all", "shutdown-agent" -> {
+                require("reason");
+                require("event");
+            }
             default -> throw new IllegalArgumentException("Unknown command: " + command);
         }
     }

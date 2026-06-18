@@ -21,6 +21,7 @@ public record RuleInfo(
         boolean enabled,
         long hits,
         long errors,
+        boolean locked,
         String scriptHash
 ) {
 }

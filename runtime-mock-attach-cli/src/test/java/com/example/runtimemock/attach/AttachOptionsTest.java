@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AttachOptionsTest {
 
@@ -34,5 +35,19 @@ class AttachOptionsTest {
                 + ",platformUrl=http://127.0.0.1:18280"
                 + ",platformAgentId=agent-1"
                 + ",platformToken=platform-dev");
+    }
+
+    @Test
+    void rejectsNonLoopbackHost() throws Exception {
+        Path jar = Files.createTempFile("runtime-mock-agent", ".jar");
+
+        assertThatThrownBy(() -> AttachOptions.parse(new String[]{
+                "--pid", "12345",
+                "--agent", jar.toString(),
+                "--host", "0.0.0.0",
+                "--token", "dev"
+        }))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("loopback");
     }
 }

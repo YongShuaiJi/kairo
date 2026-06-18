@@ -43,6 +43,10 @@ public final class PlatformException extends RuntimeException {
                 "Missing required capability: " + capability, false, Map.of("capability", capability));
     }
 
+    public static PlatformException unauthorized(String message) {
+        return new PlatformException(401, "UNAUTHORIZED", message, false, Map.of());
+    }
+
     public static PlatformException notFound(String resourceType, String resourceId) {
         return new PlatformException(404, "RESOURCE_NOT_FOUND",
                 resourceType + " not found: " + resourceId, false,

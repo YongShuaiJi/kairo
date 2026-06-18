@@ -27,6 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class AgentRuntime implements AutoCloseable {
 
@@ -40,6 +41,8 @@ public final class AgentRuntime implements AutoCloseable {
     private final LoadedClassRepository loadedClassRepository;
     private final RuntimeEventBuffer eventBuffer;
     private final ConcurrentHashMap<String, PublishedRule> publishedRules = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> degradedClasses = new ConcurrentHashMap<>();
+    private final AtomicReference<AgentState> state = new AtomicReference<>(AgentState.STARTING);
     private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
         Thread thread = new Thread(runnable, "runtime-mock-rule-cleanup");
         thread.setDaemon(true);
@@ -67,10 +70,16 @@ public final class AgentRuntime implements AutoCloseable {
     }
 
     public void start() {
-        RuntimeMockBridge.install(new AgentBridgeDispatcher(ruleDispatcher));
-        transformerManager.install();
-        cleanupExecutor.scheduleWithFixedDelay(this::cleanupExpiredRules, 1, 1, TimeUnit.SECONDS);
-        eventBuffer.record("agent.start", "system", null, null, "Runtime mock agent started");
+        try {
+            RuntimeMockBridge.install(new AgentBridgeDispatcher(ruleDispatcher));
+            transformerManager.install();
+            cleanupExecutor.scheduleWithFixedDelay(this::cleanupExpiredRules, 1, 1, TimeUnit.SECONDS);
+            state.set(AgentState.ACTIVE);
+            eventBuffer.record("agent.start", "system", null, null, "Runtime mock agent started");
+        } catch (RuntimeException e) {
+            enterDegraded("Agent startup failed: " + e.getMessage());
+            throw e;
+        }
     }
 
     public void loadMode(String loadMode) {
@@ -82,26 +91,41 @@ public final class AgentRuntime implements AutoCloseable {
     }
 
     public CompiledRule publish(Method method, MockRule rule, String actor) {
+        requireOperationalForPublish();
+        if (method.isSynthetic() || method.isBridge()) {
+            throw new IllegalArgumentException("Synthetic and bridge methods cannot be mocked: " + method);
+        }
         MethodSignature signature = signatureOf(method);
         MethodKey methodKey = MethodKey.of(method);
         RuleSet oldRuleSet = ruleRegistry.rules(methodKey);
         PublishedRule previous = publishedRules.get(rule.id());
         boolean oldActive = hasActiveRules(oldRuleSet);
+        boolean publishApplied = false;
         try {
             CompiledRule compiledRule = rulePublisher.publish(method, rule);
+            publishApplied = true;
             publishedRules.put(rule.id(), new PublishedRule(method, methodKey, compiledRule.rule(), compiledRule));
             applyInstrumentationTransition(method, signature, oldActive, hasActiveRules(ruleRegistry.rules(methodKey)));
             eventBuffer.record(previous == null ? "rule.create" : "rule.update", actor, rule.id(),
                     methodKey.toString(), "Published rule version " + compiledRule.rule().version());
             return compiledRule;
         } catch (RuntimeException e) {
-            ruleRegistry.replace(methodKey, oldRuleSet);
-            if (previous == null) {
-                publishedRules.remove(rule.id());
-            } else {
-                publishedRules.put(rule.id(), previous);
+            if (publishApplied) {
+                ruleRegistry.restoreRule(methodKey, rule.id(),
+                        previous == null ? null : previous.compiledRule());
+                if (previous == null) {
+                    publishedRules.remove(rule.id());
+                } else {
+                    publishedRules.put(rule.id(), previous);
+                }
+                try {
+                    restoreInstrumentationState(method, signature, oldActive);
+                } catch (RuntimeException restoreFailure) {
+                    degradedClasses.put(method.getDeclaringClass().getName(), restoreFailure.getMessage());
+                    enterDegraded("Cannot restore instrumentation for " + method.getDeclaringClass().getName());
+                    e.addSuppressed(restoreFailure);
+                }
             }
-            restoreInstrumentationState(method, signature, oldActive);
             eventBuffer.record("rule.publish.failed", actor, rule.id(), methodKey.toString(), e.getMessage());
             throw e;
         }
@@ -145,7 +169,7 @@ public final class AgentRuntime implements AutoCloseable {
             applyInstrumentationTransition(method, signature, oldActive, hasActiveRules(ruleRegistry.rules(methodKey)));
             eventBuffer.record("rule.delete", actor, ruleId, methodKey.toString(), "Deleted rule");
         } catch (RuntimeException e) {
-            ruleRegistry.replace(methodKey, oldRuleSet);
+            ruleRegistry.restoreRule(methodKey, ruleId, publishedRule.compiledRule());
             publishedRules.put(ruleId, publishedRule);
             restoreInstrumentationState(method, signature, oldActive);
             eventBuffer.record("rule.delete.failed", actor, ruleId, methodKey.toString(), e.getMessage());
@@ -156,33 +180,61 @@ public final class AgentRuntime implements AutoCloseable {
     public void disableAll(boolean disabled) {
         globallyEnabled = !disabled;
         ruleDispatcher.enabled(globallyEnabled);
+        if (state.get() != AgentState.DEGRADED) {
+            state.set(disabled ? AgentState.DISABLED : AgentState.ACTIVE);
+        }
         eventBuffer.record(disabled ? "agent.disable-all" : "agent.enable-all", "system", null, null,
                 "Global enabled=" + globallyEnabled);
     }
 
     public void resetAll(String actor) {
+        state.set(AgentState.RESETTING);
         RuntimeMockBridge.uninstall();
         ruleDispatcher.enabled(false);
-        ruleRegistry.clear();
-        publishedRules.clear();
-        instrumentationRegistry.snapshot().forEach(instrumentationRegistry::unregister);
-        transformerManager.close();
-        transformerManager.install();
-        RuntimeMockBridge.install(new AgentBridgeDispatcher(ruleDispatcher));
-        globallyEnabled = true;
-        ruleDispatcher.enabled(true);
-        eventBuffer.record("agent.reset-all", actor, null, null, "All rules removed and transformer reset");
+        try {
+            ruleRegistry.clear();
+            publishedRules.clear();
+            instrumentationRegistry.snapshot().forEach(instrumentationRegistry::unregister);
+            transformerManager.close();
+            transformerManager.install();
+            RuntimeMockBridge.install(new AgentBridgeDispatcher(ruleDispatcher));
+            degradedClasses.clear();
+            globallyEnabled = true;
+            ruleDispatcher.enabled(true);
+            state.set(AgentState.ACTIVE);
+            eventBuffer.record("agent.reset-all", actor, null, null, "All rules removed and transformer reset");
+        } catch (RuntimeException e) {
+            enterDegraded("Reset all failed: " + e.getMessage());
+            eventBuffer.record("agent.reset-all.failed", actor, null, null, e.getMessage());
+            throw e;
+        }
     }
 
-    public List<RuleInfo> resetClass(String classId, String actor) {
+    public ResetClassResult resetClass(String classId, String actor) {
         List<String> ruleIds = publishedRules.values().stream()
                 .filter(rule -> matchesClass(rule, classId))
                 .map(rule -> rule.rule().id())
                 .toList();
-        ruleIds.forEach(ruleId -> remove(ruleId, actor));
+        List<String> removed = new java.util.ArrayList<>();
+        Map<String, String> failures = new java.util.LinkedHashMap<>();
+        for (String ruleId : ruleIds) {
+            try {
+                remove(ruleId, actor);
+                removed.add(ruleId);
+            } catch (RuntimeException e) {
+                failures.put(ruleId, String.valueOf(e.getMessage()));
+            }
+        }
+        if (failures.isEmpty()) {
+            degradedClasses.remove(classId);
+        } else {
+            degradedClasses.put(classId, failures.toString());
+            enterDegraded("Class reset failed for " + classId);
+        }
         eventBuffer.record("agent.reset-class", actor, null, classId,
-                "Removed " + ruleIds.size() + " rules from class");
-        return rules();
+                "Removed " + removed.size() + " rules; failures=" + failures.size());
+        return new ResetClassResult(classId, List.copyOf(removed), Map.copyOf(failures), rules(),
+                !failures.isEmpty());
     }
 
     public void recordEvent(String type, String actor, String ruleId, String target, String message) {
@@ -247,7 +299,7 @@ public final class AgentRuntime implements AutoCloseable {
                 startTimeMillis,
                 "0.1.0-SNAPSHOT",
                 loadMode,
-                globallyEnabled ? "enabled" : "disabled",
+                state.get().name(),
                 metrics.enhancedClassCount(),
                 metrics.enhancedMethodCount(),
                 metrics.activeRuleCount()
@@ -268,12 +320,14 @@ public final class AgentRuntime implements AutoCloseable {
 
     @Override
     public void close() {
+        state.set(AgentState.STOPPING);
         RuntimeMockBridge.uninstall();
         ruleRegistry.clear();
         publishedRules.clear();
         transformerManager.close();
         scriptCompiler.close();
         cleanupExecutor.shutdownNow();
+        state.set(AgentState.STOPPED);
         eventBuffer.record("agent.stop", "system", null, null, "Runtime mock agent stopped");
     }
 
@@ -334,6 +388,10 @@ public final class AgentRuntime implements AutoCloseable {
     }
 
     private void cleanupExpiredRules() {
+        if (state.get() == AgentState.DEGRADED || state.get() == AgentState.STOPPING
+                || state.get() == AgentState.STOPPED) {
+            return;
+        }
         long now = System.currentTimeMillis();
         publishedRules.values().stream()
                 .filter(rule -> rule.rule().expireAt() > 0 && rule.rule().expireAt() <= now)
@@ -370,6 +428,7 @@ public final class AgentRuntime implements AutoCloseable {
                 rule.enabled(),
                 publishedRule.compiledRule().hits(),
                 publishedRule.compiledRule().errors(),
+                publishedRule.compiledRule().locked(),
                 rule.scriptHash()
         );
     }
@@ -380,5 +439,20 @@ public final class AgentRuntime implements AutoCloseable {
         } catch (Exception ignored) {
             return "localhost";
         }
+    }
+
+    private void requireOperationalForPublish() {
+        AgentState current = state.get();
+        if (current != AgentState.ACTIVE && current != AgentState.DISABLED) {
+            throw new IllegalStateException("Agent does not accept rule publication while state=" + current);
+        }
+    }
+
+    private void enterDegraded(String message) {
+        globallyEnabled = false;
+        ruleDispatcher.enabled(false);
+        RuntimeMockBridge.uninstall();
+        state.set(AgentState.DEGRADED);
+        eventBuffer.record("agent.degraded", "system", null, null, message);
     }
 }

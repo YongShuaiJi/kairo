@@ -98,6 +98,7 @@ class PlatformControllerIntegrationTest {
 
         JsonNode ruleVersion = postJson("/api/v1/rules/rule-platform-1/versions", Map.of(
                 "riskLevel", "HIGH",
+                "versionStatus", "ACTIVE",
                 "matcher", Map.of("stableSamplingKey", "userId"),
                 "script", Map.of("type", "THROW", "exception", "java.lang.IllegalStateException"),
                 "governance", Map.of("ttlSeconds", 300, "maxHits", 10),
@@ -151,6 +152,7 @@ class PlatformControllerIntegrationTest {
         ), "system");
         assertThat(operation.get("status").asText()).isEqualTo("DRAFT");
         transitionOperation("operation-platform-1", "DRAFT", 1, "WAITING_APPROVAL");
+        approveSubject("approval-operation-platform-1", "OPERATION_PLAN", "operation-platform-1", 2);
         transitionOperation("operation-platform-1", "WAITING_APPROVAL", 2, "APPROVED");
         transitionOperation("operation-platform-1", "APPROVED", 3, "SCHEDULED");
         JsonNode runningOperation = transitionOperation("operation-platform-1", "SCHEDULED", 4, "RUNNING");
@@ -186,6 +188,7 @@ class PlatformControllerIntegrationTest {
         assertThat(recording.get("status").asText()).isEqualTo("DRAFT");
 
         transitionRecording("rec-platform-1", "DRAFT", 1, "WAITING_APPROVAL");
+        approveSubject("approval-rec-platform-1", "RECORDING_SESSION", "rec-platform-1", 2);
         transitionRecording("rec-platform-1", "WAITING_APPROVAL", 2, "APPROVED");
         transitionRecording("rec-platform-1", "APPROVED", 3, "RECORDING");
         JsonNode completed = transitionRecording("rec-platform-1", "RECORDING", 4, "COMPLETED");
@@ -277,7 +280,6 @@ class PlatformControllerIntegrationTest {
                 "subjectType", "REPLAY_PLAN",
                 "subjectId", "replay-platform-1",
                 "subjectVersion", 1,
-                "subjectHash", "approval-subject-sha256",
                 "reason", "approve replay",
                 "approvers", java.util.List.of("reviewer")
         ), "system");
@@ -298,6 +300,81 @@ class PlatformControllerIntegrationTest {
                 .isEqualTo(audits.get(0).get("record_hash").asText());
     }
 
+    @Test
+    void enforcesSafeRecordingAndApprovalDefaults() throws Exception {
+        JsonNode recording = postJson("/api/v1/recording-sessions", Map.of(
+                "id", "rec-safe-defaults",
+                "applicationId", "app-default",
+                "environmentId", "env-dev",
+                "target", Map.of("protocol", "JAVA_METHOD"),
+                "reason", "verify safe defaults"
+        ), "system");
+        assertThat(recording.get("ttl_seconds").asLong()).isEqualTo(900);
+
+        postJson("/api/v1/recording-rules", Map.of(
+                "id", "recording-rule-safe-defaults",
+                "applicationId", "app-default",
+                "environmentId", "env-dev",
+                "name", "Safe default sampling",
+                "protocol", "JAVA_METHOD",
+                "target", Map.of("className", "com.example.DemoService", "methodName", "query"),
+                "reason", "verify safe defaults"
+        ), "system");
+        JsonNode recordingRuleVersions = getJson("/api/v1/recording-rule-versions");
+        JsonNode safeVersion = null;
+        for (JsonNode version : recordingRuleVersions) {
+            if ("recording-rule-safe-defaults".equals(version.get("recording_rule_id").asText())) {
+                safeVersion = version;
+                break;
+            }
+        }
+        assertThat(safeVersion).isNotNull();
+        assertThat(objectMapper.readTree(safeVersion.get("sampling_json").asText()).get("rate").asDouble())
+                .isEqualTo(0.001);
+
+        postJsonExpectingStatus("/api/v1/recording-sessions", Map.of(
+                "id", "rec-invalid-ttl",
+                "applicationId", "app-default",
+                "environmentId", "env-dev",
+                "ttlSeconds", 7_201,
+                "reason", "reject invalid ttl"
+        ), "system", 400);
+
+        postJsonExpectingStatus("/api/v1/approvals", Map.of(
+                "id", "approval-without-approver",
+                "subjectType", "RECORDING_SESSION",
+                "subjectId", "rec-safe-defaults",
+                "subjectVersion", 1,
+                "reason", "reject empty approvers"
+        ), "system", 400);
+
+        postJsonExpectingStatus("/api/v1/approvals", Map.of(
+                "id", "approval-self-approver",
+                "subjectType", "RECORDING_SESSION",
+                "subjectId", "rec-safe-defaults",
+                "subjectVersion", 1,
+                "approvers", java.util.List.of("system"),
+                "reason", "reject self approver"
+        ), "system", 400);
+
+        postJson("/api/v1/approvals", Map.of(
+                "id", "approval-single-decision",
+                "subjectType", "RECORDING_SESSION",
+                "subjectId", "rec-safe-defaults",
+                "subjectVersion", 1,
+                "approvers", java.util.List.of("reviewer"),
+                "reason", "verify one decision"
+        ), "system");
+        postJson("/api/v1/approvals/approval-single-decision/decisions", Map.of(
+                "decision", "APPROVED",
+                "reason", "approved once"
+        ), "reviewer");
+        postJsonExpectingStatus("/api/v1/approvals/approval-single-decision/decisions", Map.of(
+                "decision", "REJECTED",
+                "reason", "must not overwrite"
+        ), "reviewer", 409);
+    }
+
     private JsonNode transitionExtraction(String id, String expectedStatus, long expectedVersion,
                                           String targetStatus) throws Exception {
         String token = issueFencingToken("extraction_task", id, "move to " + targetStatus);
@@ -308,6 +385,22 @@ class PlatformControllerIntegrationTest {
                 "reason", "move to " + targetStatus,
                 "fencingToken", token
         ), "system");
+    }
+
+    private void approveSubject(String approvalId, String subjectType, String subjectId, long subjectVersion)
+            throws Exception {
+        postJson("/api/v1/approvals", Map.of(
+                "id", approvalId,
+                "subjectType", subjectType,
+                "subjectId", subjectId,
+                "subjectVersion", subjectVersion,
+                "reason", "approve transition",
+                "approvers", java.util.List.of("reviewer")
+        ), "system");
+        postJson("/api/v1/approvals/" + approvalId + "/decisions", Map.of(
+                "decision", "APPROVED",
+                "reason", "approved for integration test"
+        ), "reviewer");
     }
 
     private JsonNode transitionReplayExecution(String id, String expectedStatus, long expectedVersion,
@@ -378,5 +471,15 @@ class PlatformControllerIntegrationTest {
                 .getResponse()
                 .getContentAsString();
         return objectMapper.readTree(body);
+    }
+
+    private void postJsonExpectingStatus(String path, Object request, String actor, int expectedStatus)
+            throws Exception {
+        mockMvc.perform(post(path)
+                        .header("X-Actor", actor)
+                        .header("X-Correlation-Id", "corr-test")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(request)))
+                .andExpect(status().is(expectedStatus));
     }
 }

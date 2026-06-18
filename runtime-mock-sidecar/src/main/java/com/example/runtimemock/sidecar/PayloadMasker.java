@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 public final class PayloadMasker {
@@ -32,7 +33,7 @@ public final class PayloadMasker {
 
     @SuppressWarnings("unchecked")
     private Object maskValue(String path, String fieldName, Object value, int depth) {
-        if (depth > policy.maxDepth()) {
+        if (depth >= policy.maxDepth()) {
             return "[MAX_DEPTH]";
         }
         if (!policy.isAllowed(path)) {
@@ -56,8 +57,28 @@ public final class PayloadMasker {
             return masked;
         }
         if (value instanceof List<?> list) {
-            List<Object> masked = new ArrayList<>();
-            int limit = Math.min(list.size(), policy.maxCollectionSize());
+            return maskCollection(path, fieldName, list, depth);
+        }
+        if (value instanceof Set<?> set) {
+            return maskCollection(path, fieldName, new ArrayList<>(set), depth);
+        }
+        if (value != null && value.getClass().isArray()) {
+            int length = java.lang.reflect.Array.getLength(value);
+            List<Object> items = new ArrayList<>(length);
+            for (int i = 0; i < length; i++) {
+                items.add(java.lang.reflect.Array.get(value, i));
+            }
+            return maskCollection(path, fieldName, items, depth);
+        }
+        if (value instanceof String text && text.length() > policy.maxStringLength()) {
+            return text.substring(0, policy.maxStringLength()) + "[TRUNCATED]";
+        }
+        return value;
+    }
+
+    private List<Object> maskCollection(String path, String fieldName, List<?> list, int depth) {
+        List<Object> masked = new ArrayList<>();
+        int limit = Math.min(list.size(), policy.maxCollectionSize());
             for (int i = 0; i < limit; i++) {
                 masked.add(maskValue(path + "[" + i + "]", fieldName, list.get(i), depth + 1));
             }
@@ -65,11 +86,6 @@ public final class PayloadMasker {
                 masked.add("[TRUNCATED:" + (list.size() - limit) + "]");
             }
             return masked;
-        }
-        if (value instanceof String text && text.length() > policy.maxStringLength()) {
-            return text.substring(0, policy.maxStringLength()) + "[TRUNCATED]";
-        }
-        return value;
     }
 
     private Object apply(String path, Object value, MaskingAction action) {

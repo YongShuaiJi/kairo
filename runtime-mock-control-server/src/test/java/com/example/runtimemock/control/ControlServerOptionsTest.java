@@ -13,5 +13,6 @@ class ControlServerOptionsTest {
         assertThat(options.host()).isEqualTo("127.0.0.1");
         assertThat(options.port()).isEqualTo(19090);
         assertThat(options.defaultAgent().toString()).isEqualTo("http://127.0.0.1:18080");
+        assertThat(options.controlToken()).isNotBlank();
     }
 }

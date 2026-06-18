@@ -7,6 +7,9 @@ import org.codehaus.groovy.ast.expr.ClosureExpression;
 import org.codehaus.groovy.ast.expr.ConstructorCallExpression;
 import org.codehaus.groovy.ast.expr.Expression;
 import org.codehaus.groovy.ast.expr.MethodCallExpression;
+import org.codehaus.groovy.ast.expr.ListExpression;
+import org.codehaus.groovy.ast.expr.MapExpression;
+import org.codehaus.groovy.ast.expr.ConstantExpression;
 import org.codehaus.groovy.ast.expr.PropertyExpression;
 import org.codehaus.groovy.ast.expr.StaticMethodCallExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
@@ -39,11 +42,22 @@ final class GroovyScriptSecurityPolicy {
     private static final int MAX_SCRIPT_CHARS = 16 * 1024;
     private static final int MAX_SCRIPT_LINES = 400;
     private static final int MAX_CLOSURE_CHARS = 8 * 1024;
+    private static final int MAX_BLOCK_DEPTH = 5;
+    private static final int MAX_LITERAL_COLLECTION_SIZE = 100;
+    private static final int MAX_LITERAL_STRING_LENGTH = 8 * 1024;
 
     private static final List<String> FORBIDDEN_SOURCE_MARKERS = List.of(
             "@Grab",
             "@Grapes",
             "groovy.grape.Grape",
+            "GroovyShell",
+            "GroovyClassLoader",
+            "ScriptEngine",
+            "ClassFileTransformer",
+            "AgentBuilder",
+            "MethodHandle",
+            "methodMissing",
+            "propertyMissing",
             "package "
     );
 
@@ -58,6 +72,8 @@ final class GroovyScriptSecurityPolicy {
             "java.lang.reflect.Constructor",
             "java.lang.reflect.Field",
             "java.lang.reflect.Method",
+            "java.lang.instrument.ClassFileTransformer",
+            "java.lang.instrument.Instrumentation",
             "java.net.ServerSocket",
             "java.net.Socket",
             "java.net.URI",
@@ -72,9 +88,12 @@ final class GroovyScriptSecurityPolicy {
     private static final List<String> DISALLOWED_STAR_IMPORTS = List.of(
             "java.io.",
             "java.lang.reflect.",
+            "java.lang.instrument.",
             "java.net.",
             "java.nio.",
             "java.util.concurrent.",
+            "groovy.lang.",
+            "net.bytebuddy.",
             "javax.",
             "sun.",
             "com.sun."
@@ -105,7 +124,10 @@ final class GroovyScriptSecurityPolicy {
 
     private static final Set<String> DISALLOWED_METHODS = Set.of(
             "addShutdownHook",
+            "call",
             "defineClass",
+            "defineModule",
+            "evaluate",
             "exec",
             "exit",
             "forName",
@@ -117,15 +139,22 @@ final class GroovyScriptSecurityPolicy {
             "getDeclaredFields",
             "getDeclaredMethod",
             "getDeclaredMethods",
+            "getContextClassLoader",
+            "getModule",
+            "getProtectionDomain",
             "getResource",
             "getResourceAsStream",
             "getRuntime",
             "invoke",
+            "invokeMethod",
             "load",
+            "loadLibrary",
             "loadClass",
             "newInstance",
             "notify",
             "notifyAll",
+            "parse",
+            "parseClass",
             "setAccessible",
             "sleep",
             "start",
@@ -136,7 +165,9 @@ final class GroovyScriptSecurityPolicy {
     private static final Set<String> DISALLOWED_PROPERTIES = Set.of(
             "class",
             "classLoader",
-            "metaClass"
+            "metaClass",
+            "module",
+            "protectionDomain"
     );
 
     private GroovyScriptSecurityPolicy() {
@@ -157,6 +188,7 @@ final class GroovyScriptSecurityPolicy {
                 throw new IllegalArgumentException("Forbidden Groovy source marker: " + forbiddenMarker);
             }
         }
+        validateBlockDepth(script);
     }
 
     static SecureASTCustomizer secureAstCustomizer() {
@@ -200,6 +232,16 @@ final class GroovyScriptSecurityPolicy {
         if (expression instanceof ClosureExpression closureExpression) {
             Statement code = closureExpression.getCode();
             return code == null || code.getText().length() <= MAX_CLOSURE_CHARS;
+        }
+        if (expression instanceof ListExpression listExpression) {
+            return listExpression.getExpressions().size() <= MAX_LITERAL_COLLECTION_SIZE;
+        }
+        if (expression instanceof MapExpression mapExpression) {
+            return mapExpression.getMapEntryExpressions().size() <= MAX_LITERAL_COLLECTION_SIZE;
+        }
+        if (expression instanceof ConstantExpression constantExpression
+                && constantExpression.getValue() instanceof String text) {
+            return text.length() <= MAX_LITERAL_STRING_LENGTH;
         }
         return true;
     }
@@ -258,9 +300,12 @@ final class GroovyScriptSecurityPolicy {
         String normalized = name.toLowerCase(Locale.ROOT);
         return normalized.startsWith("java.io.")
                 || normalized.startsWith("java.lang.reflect.")
+                || normalized.startsWith("java.lang.instrument.")
                 || normalized.startsWith("java.net.")
                 || normalized.startsWith("java.nio.")
                 || normalized.startsWith("java.util.concurrent.")
+                || normalized.startsWith("groovy.lang.")
+                || normalized.startsWith("net.bytebuddy.")
                 || normalized.startsWith("javax.")
                 || normalized.startsWith("sun.")
                 || normalized.startsWith("com.sun.")
@@ -271,5 +316,36 @@ final class GroovyScriptSecurityPolicy {
                 || normalized.equals("runtime")
                 || normalized.equals("system")
                 || normalized.equals("thread");
+    }
+
+    private static void validateBlockDepth(String script) {
+        int depth = 0;
+        char quote = 0;
+        boolean escaped = false;
+        for (int i = 0; i < script.length(); i++) {
+            char current = script.charAt(i);
+            if (quote != 0) {
+                if (escaped) {
+                    escaped = false;
+                } else if (current == '\\') {
+                    escaped = true;
+                } else if (current == quote) {
+                    quote = 0;
+                }
+                continue;
+            }
+            if (current == '\'' || current == '"') {
+                quote = current;
+                continue;
+            }
+            if (current == '{') {
+                depth++;
+                if (depth > MAX_BLOCK_DEPTH) {
+                    throw new IllegalArgumentException("Groovy block nesting exceeds " + MAX_BLOCK_DEPTH);
+                }
+            } else if (current == '}') {
+                depth = Math.max(0, depth - 1);
+            }
+        }
     }
 }

@@ -141,16 +141,21 @@ public class AgentCommandService {
         Instant now = clock.instant();
         Map<String, Object> result = optionalMap(request, "result");
         String errorMessage = optionalString(request, "errorMessage", null);
-        jdbcTemplate.update("""
+        int updatedCount = jdbcTemplate.update("""
                 update agent_command
                    set status = ?,
                        result_json = ?,
                        error_message = ?,
                        completed_at = ?,
                        updated_at = ?
-                 where id = ?
+                 where id = ? and status = 'DISPATCHED'
                 """, resultStatus, PlatformJson.write(result), errorMessage,
                 timestamp(now), timestamp(now), commandId);
+        if (updatedCount == 0) {
+            throw PlatformException.conflict("AGENT_COMMAND_STATE_CONFLICT",
+                    "Agent command is not currently dispatched",
+                    Map.of("commandId", commandId, "status", current.get("status")));
+        }
         Map<String, Object> updated = getById(commandId);
         eventWriter.recordEvent(context, "agent_command.ack", "agent_command", commandId,
                 ((Number) updated.get("attempts")).longValue(), current, updated, resultStatus,
@@ -175,14 +180,21 @@ public class AgentCommandService {
             Map<String, Object> execution = normalizeRow(rawExecution);
             String executionId = String.valueOf(execution.get("id"));
             String newStatus = success ? "SUCCEEDED" : "FAILED";
-            jdbcTemplate.update("""
+            long executionVersion = ((Number) execution.get("version")).longValue();
+            int executionUpdated = jdbcTemplate.update("""
                     update rollout_instance_execution
                        set status = ?,
                            error_message = ?,
                            finished_at = ?,
+                           version = version + 1,
+                           updated_by = ?,
                            updated_at = ?
-                     where id = ?
-                    """, newStatus, success ? null : errorMessage, timestamp(now), timestamp(now), executionId);
+                     where id = ? and status = 'WAITING_AGENT' and version = ?
+                    """, newStatus, success ? null : errorMessage, timestamp(now),
+                    context.actor(), timestamp(now), executionId, executionVersion);
+            if (executionUpdated == 0) {
+                continue;
+            }
             Map<String, Object> updatedExecution = normalizeRow(jdbcTemplate.queryForMap(
                     "select * from rollout_instance_execution where id = ?", executionId));
             eventWriter.recordEvent(context, "rollout_instance_execution.agent_ack",
@@ -211,11 +223,15 @@ public class AgentCommandService {
                 .allMatch(row -> "SUCCEEDED".equals(String.valueOf(row.get("status"))));
         String batchStatus = allSucceeded ? "SUCCEEDED" : "FAILED";
         Instant now = clock.instant();
-        jdbcTemplate.update("""
+        long batchVersion = ((Number) batch.get("version")).longValue();
+        int batchUpdated = jdbcTemplate.update("""
                 update rollout_batch
-                   set status = ?, updated_at = ?
-                 where id = ?
-                """, batchStatus, timestamp(now), batchId);
+                   set status = ?, version = version + 1, updated_by = ?, updated_at = ?
+                 where id = ? and status = 'RUNNING' and version = ?
+                """, batchStatus, context.actor(), timestamp(now), batchId, batchVersion);
+        if (batchUpdated == 0) {
+            return;
+        }
         Map<String, Object> updatedBatch = normalizeRow(jdbcTemplate.queryForMap(
                 "select * from rollout_batch where id = ?", batchId));
         eventWriter.recordEvent(context, "rollout_batch.complete", "rollout_batch", batchId,
@@ -246,11 +262,15 @@ public class AgentCommandService {
         String newStatus = allSucceeded ? "SUCCEEDED" : "FAILED";
         long version = ((Number) operation.get("version")).longValue() + 1;
         Instant now = clock.instant();
-        jdbcTemplate.update("""
+        long currentVersion = ((Number) operation.get("version")).longValue();
+        int operationUpdated = jdbcTemplate.update("""
                 update operation_plan
                    set status = ?, version = ?, updated_by = ?, updated_at = ?
-                 where id = ? and status = 'RUNNING'
-                """, newStatus, version, context.actor(), timestamp(now), operationPlanId);
+                 where id = ? and status = 'RUNNING' and version = ?
+                """, newStatus, version, context.actor(), timestamp(now), operationPlanId, currentVersion);
+        if (operationUpdated == 0) {
+            return;
+        }
         Map<String, Object> updatedOperation = normalizeRow(jdbcTemplate.queryForMap(
                 "select * from operation_plan where id = ?", operationPlanId));
         eventWriter.recordEvent(context, "operation_plan.auto_complete", "operation_plan", operationPlanId,
@@ -275,7 +295,7 @@ public class AgentCommandService {
     }
 
     private void requireAgentProtocolOrManager(String agentId, RequestContext context) {
-        if (agentId.equals(context.actor()) || "agent".equals(context.identitySource())) {
+        if (agentId.equals(context.actor()) && "agent".equals(context.identitySource())) {
             return;
         }
         rbacService.require(context, "AGENT_MANAGE");

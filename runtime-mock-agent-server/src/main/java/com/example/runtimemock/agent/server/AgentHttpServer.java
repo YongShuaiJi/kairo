@@ -30,9 +30,10 @@ import java.util.concurrent.Executors;
 public final class AgentHttpServer implements AutoCloseable {
 
     public static final String PROTOCOL_VERSION = "v1";
+    private static final String LOOPBACK_HOST = "127.0.0.1";
 
     private final AgentRuntime runtime;
-    private final String token;
+    private final AgentTokenManager tokenManager;
     private final HttpServer server;
     private final ExecutorService executor;
     private final ObjectMapper objectMapper = new ObjectMapper()
@@ -40,10 +41,18 @@ public final class AgentHttpServer implements AutoCloseable {
             .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
 
     public AgentHttpServer(AgentRuntime runtime, String host, int port, String token) {
+        this(runtime, host, port, new AgentTokenManager(token, java.time.Duration.ofMinutes(15)));
+    }
+
+    AgentHttpServer(AgentRuntime runtime, String host, int port, AgentTokenManager tokenManager) {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
-        this.token = token == null ? "" : token;
+        this.tokenManager = Objects.requireNonNull(tokenManager, "tokenManager");
+        String bindHost = host == null || host.isBlank() ? LOOPBACK_HOST : host;
+        if (!LOOPBACK_HOST.equals(bindHost) && !"localhost".equalsIgnoreCase(bindHost)) {
+            throw new IllegalArgumentException("Agent HTTP server must bind to loopback");
+        }
         try {
-            this.server = HttpServer.create(new InetSocketAddress(host == null ? "127.0.0.1" : host, port), 64);
+            this.server = HttpServer.create(new InetSocketAddress(bindHost, port), 64);
         } catch (IOException e) {
             throw new IllegalStateException("Cannot start agent HTTP server", e);
         }
@@ -208,15 +217,14 @@ public final class AgentHttpServer implements AutoCloseable {
     }
 
     private boolean authorized(HttpExchange exchange) {
-        if (token.isBlank()) {
-            return true;
-        }
         String header = exchange.getRequestHeaders().getFirst("X-Agent-Token");
-        if (token.equals(header)) {
+        if (tokenManager.accepts(header)) {
             return true;
         }
         String authorization = exchange.getRequestHeaders().getFirst("Authorization");
-        return ("Bearer " + token).equals(authorization);
+        return authorization != null
+                && authorization.startsWith("Bearer ")
+                && tokenManager.accepts(authorization.substring("Bearer ".length()));
     }
 
     private boolean isHealthPath(String path) {

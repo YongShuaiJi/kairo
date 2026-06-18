@@ -501,6 +501,20 @@ class RuntimeMockAgentIntegrationTest {
                 .hasMessage("amount too large");
     }
 
+    @Test
+    void syntheticAndBridgeMethodsCannotBePublished() {
+        Method bridgeMethod = java.util.Arrays.stream(StringValue.class.getDeclaredMethods())
+                .filter(Method::isBridge)
+                .findFirst()
+                .orElseThrow();
+
+        assertThatThrownBy(() -> runtime.publish(bridgeMethod,
+                rule("bridge-method", bridgeMethod, InvokePhase.RETURN,
+                        "return mock.returnValue('blocked')")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Synthetic and bridge methods cannot be mocked");
+    }
+
     private Class<?> compileAndLoadDuplicateService(String prefix) throws Exception {
         Path dir = Files.createTempDirectory("duplicate-service-" + prefix);
         Path sourceDir = dir.resolve("com/example/duplicate");
@@ -538,5 +552,16 @@ class RuntimeMockAgentIntegrationTest {
                 .failOpen(true)
                 .enabled(true)
                 .build();
+    }
+
+    private interface Value<T> {
+        T value();
+    }
+
+    private static final class StringValue implements Value<String> {
+        @Override
+        public String value() {
+            return "value";
+        }
     }
 }

@@ -39,7 +39,11 @@ public final class AgentLaunchConfig {
     }
 
     public String host() {
-        return stringValue("host", "127.0.0.1");
+        String host = stringValue("host", "127.0.0.1");
+        if (!"127.0.0.1".equals(host) && !"localhost".equalsIgnoreCase(host)) {
+            throw new IllegalArgumentException("Agent host must be loopback");
+        }
+        return host;
     }
 
     public int port() {

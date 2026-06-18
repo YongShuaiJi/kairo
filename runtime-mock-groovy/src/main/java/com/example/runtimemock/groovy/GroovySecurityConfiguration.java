@@ -10,7 +10,10 @@ public final class GroovySecurityConfiguration {
     public static CompilerConfiguration compilerConfiguration() {
         CompilerConfiguration configuration = new CompilerConfiguration();
         configuration.setScriptBaseClass(RuntimeMockScript.class.getName());
-        configuration.addCompilationCustomizers(GroovyScriptSecurityPolicy.secureAstCustomizer());
+        configuration.addCompilationCustomizers(
+                GroovyScriptSecurityPolicy.secureAstCustomizer(),
+                new GroovyStructureCustomizer()
+        );
         return configuration;
     }
 }

@@ -34,6 +34,14 @@ import java.util.regex.Pattern;
 public class ExtractionWorker {
 
     private static final Pattern NAMED_PARAMETER = Pattern.compile(":[A-Za-z][A-Za-z0-9_]*");
+    private static final Pattern SQL_IDENTIFIER = Pattern.compile(
+            "[A-Za-z_][A-Za-z0-9_$]*(\\.[A-Za-z_][A-Za-z0-9_$]*)?");
+    private static final Pattern SAFE_WHERE = Pattern.compile(
+            "[A-Za-z0-9_$.:?(),=<>!+*/%\\-\\s'\"\\[\\]]+");
+    private static final Pattern FORBIDDEN_SQL = Pattern.compile(
+            "(?i)(;|--|/\\*|\\*/|\\b(insert|update|delete|merge|drop|alter|create|truncate|grant|revoke|call|execute|copy|lock|vacuum|analyze|refresh)\\b)");
+    private static final int MAX_EXTRACTION_ROWS = 100_000;
+    private static final int MAX_TIMEOUT_SECONDS = 30;
 
     private final JdbcTemplate jdbcTemplate;
     private final PlatformJdbcService eventWriter;
@@ -137,11 +145,14 @@ public class ExtractionWorker {
                  where id = ?
                 """, timestamp(clock.instant()), PlatformJson.write(metrics), executionId);
         long completedVersion = runningVersion + 1;
-        jdbcTemplate.update("""
+        int completed = jdbcTemplate.update("""
                 update extraction_task
                    set status = 'SUCCEEDED', version = ?, updated_by = ?, updated_at = ?
-                 where id = ?
-                """, completedVersion, context.actor(), timestamp(clock.instant()), taskId);
+                 where id = ? and status = 'RUNNING' and version = ?
+                """, completedVersion, context.actor(), timestamp(clock.instant()), taskId, runningVersion);
+        if (completed == 0) {
+            throw new IllegalStateException("Extraction task state changed while worker was running: " + taskId);
+        }
         Map<String, Object> updated = normalizeRow(jdbcTemplate.queryForMap(
                 "select * from extraction_task where id = ?", taskId));
         eventWriter.recordEvent(context, "extraction_task.worker_succeeded", "extraction_task", taskId,
@@ -167,41 +178,43 @@ public class ExtractionWorker {
         Map<String, Object> template = PlatformJson.readMap(String.valueOf(task.get("template_json")));
         Map<String, Object> datasource = PlatformJson.readMap(String.valueOf(task.get("config_json")));
         Map<String, Object> parameters = PlatformJson.readMap(String.valueOf(task.get("parameters_json")));
-        List<Map<String, Object>> inlineRows = rowsFromValue(template.get("rows"));
-        if (!inlineRows.isEmpty()) {
-            return Map.of("rows", inlineRows, "source", "template.rows");
-        }
-        List<Map<String, Object>> sampleRows = rowsFromValue(datasource.get("sampleRows"));
-        if (!sampleRows.isEmpty()) {
-            return Map.of("rows", sampleRows, "source", "datasource.sampleRows");
+        if ("TEST_FIXTURE".equals(String.valueOf(task.get("datasource_type")))) {
+            List<Map<String, Object>> inlineRows = rowsFromValue(template.get("rows"));
+            List<Map<String, Object>> sampleRows = inlineRows.isEmpty()
+                    ? rowsFromValue(datasource.get("sampleRows"))
+                    : inlineRows;
+            int maxRows = task.get("max_rows") instanceof Number number
+                    ? Math.max(1, Math.min(number.intValue(), MAX_EXTRACTION_ROWS))
+                    : 10_000;
+            return Map.of("rows", sampleRows.stream().limit(maxRows).toList(), "source", "test-fixture");
         }
         String jdbcUrl = text(datasource, "jdbcUrl", null);
         if (jdbcUrl != null && !jdbcUrl.isBlank()) {
             return Map.of("rows", queryJdbc(task, template, datasource, parameters), "source", jdbcUrl);
         }
-        Map<String, Object> fallback = new LinkedHashMap<>();
-        fallback.put("taskId", taskId);
-        fallback.put("rootTable", task.get("root_table"));
-        fallback.put("parameters", parameters);
-        fallback.put("message", "No jdbcUrl/sampleRows configured; generated deterministic placeholder row");
-        return Map.of("rows", List.of(fallback), "source", "placeholder");
+        throw new IllegalArgumentException("Datasource requires jdbcUrl; inline rows are only allowed for TEST_FIXTURE");
     }
 
     private List<Map<String, Object>> queryJdbc(Map<String, Object> task, Map<String, Object> template,
                                                 Map<String, Object> datasource,
                                                 Map<String, Object> parameters) throws Exception {
-        String sql = text(template, "sql", null);
-        if (sql == null || sql.isBlank()) {
-            sql = buildSelectSql(String.valueOf(task.get("root_table")), template);
+        String customSql = text(template, "sql", null);
+        if (customSql != null && !customSql.isBlank()) {
+            throw new IllegalArgumentException("Custom extraction SQL is not allowed; use rootTable, columns and parameterized where");
         }
+        String sql = buildSelectSql(String.valueOf(task.get("root_table")), template);
         NamedSql namedSql = bindNamedParameters(sql, parameters);
-        int maxRows = task.get("max_rows") instanceof Number number ? number.intValue() : 10_000;
-        int timeoutSeconds = task.get("timeout_seconds") instanceof Number number ? number.intValue() : 5;
+        int requestedRows = task.get("max_rows") instanceof Number number ? number.intValue() : 10_000;
+        int requestedTimeout = task.get("timeout_seconds") instanceof Number number ? number.intValue() : 5;
+        int maxRows = Math.max(1, Math.min(requestedRows, MAX_EXTRACTION_ROWS));
+        int timeoutSeconds = Math.max(1, Math.min(requestedTimeout, MAX_TIMEOUT_SECONDS));
         try (Connection connection = DriverManager.getConnection(
                 text(datasource, "jdbcUrl", null),
                 text(datasource, "username", ""),
                 text(datasource, "password", ""))) {
+            connection.setAutoCommit(false);
             connection.setReadOnly(true);
+            connection.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
             try (PreparedStatement statement = connection.prepareStatement(namedSql.sql())) {
                 statement.setMaxRows(maxRows);
                 statement.setQueryTimeout(timeoutSeconds);
@@ -209,19 +222,27 @@ public class ExtractionWorker {
                     statement.setObject(i + 1, namedSql.values().get(i));
                 }
                 try (ResultSet resultSet = statement.executeQuery()) {
-                    return rows(resultSet);
+                    List<Map<String, Object>> rows = rows(resultSet);
+                    connection.rollback();
+                    return rows;
                 }
             }
         }
     }
 
     private String buildSelectSql(String rootTable, Map<String, Object> template) {
+        requireIdentifier(rootTable, "rootTable");
         String columns = "*";
         Object columnValue = template.get("columns");
         if (columnValue instanceof List<?> list && !list.isEmpty()) {
-            columns = String.join(", ", list.stream().map(String::valueOf).toList());
+            List<String> validatedColumns = list.stream().map(String::valueOf).toList();
+            validatedColumns.forEach(column -> requireIdentifier(column, "column"));
+            columns = String.join(", ", validatedColumns);
         }
         String where = text(template, "where", null);
+        if (where != null && !where.isBlank()) {
+            requireSafeWhere(where);
+        }
         return "select " + columns + " from " + rootTable
                 + (where == null || where.isBlank() ? "" : " where " + where);
     }
@@ -232,6 +253,9 @@ public class ExtractionWorker {
         List<Object> values = new ArrayList<>();
         while (matcher.find()) {
             String name = matcher.group().substring(1);
+            if (!parameters.containsKey(name)) {
+                throw new IllegalArgumentException("Missing extraction parameter: " + name);
+            }
             matcher.appendReplacement(rewritten, "?");
             values.add(parameters.get(name));
         }
@@ -254,12 +278,17 @@ public class ExtractionWorker {
 
     private void failTask(RequestContext context, Map<String, Object> task, Exception e) {
         String taskId = String.valueOf(task.get("id"));
-        long version = ((Number) task.get("version")).longValue() + 1;
-        jdbcTemplate.update("""
+        long queuedVersion = ((Number) task.get("version")).longValue();
+        long runningVersion = queuedVersion + 1;
+        long failedVersion = runningVersion + 1;
+        int updatedCount = jdbcTemplate.update("""
                 update extraction_task
                    set status = 'FAILED', version = ?, updated_by = ?, updated_at = ?
-                 where id = ?
-                """, version, context.actor(), timestamp(clock.instant()), taskId);
+                 where id = ? and status = 'RUNNING' and version = ?
+                """, failedVersion, context.actor(), timestamp(clock.instant()), taskId, runningVersion);
+        if (updatedCount == 0) {
+            return;
+        }
         jdbcTemplate.update("""
                 insert into extraction_execution(
                     id, extraction_task_id, worker_id, status, started_at, finished_at, metrics_json, error_message
@@ -270,8 +299,20 @@ public class ExtractionWorker {
         Map<String, Object> updated = normalizeRow(jdbcTemplate.queryForMap(
                 "select * from extraction_task where id = ?", taskId));
         eventWriter.recordEvent(context, "extraction_task.worker_failed", "extraction_task", taskId,
-                version, task, updated, "FAILED", "extraction worker failed",
+                failedVersion, task, updated, "FAILED", "extraction worker failed",
                 Map.of("error", e.getClass().getName(), "message", String.valueOf(e.getMessage())));
+    }
+
+    private void requireIdentifier(String value, String field) {
+        if (value == null || !SQL_IDENTIFIER.matcher(value).matches()) {
+            throw new IllegalArgumentException("Invalid extraction " + field + ": " + value);
+        }
+    }
+
+    private void requireSafeWhere(String where) {
+        if (!SAFE_WHERE.matcher(where).matches() || FORBIDDEN_SQL.matcher(where).find()) {
+            throw new IllegalArgumentException("Unsafe extraction where clause");
+        }
     }
 
     private List<Map<String, Object>> rowsFromValue(Object value) {

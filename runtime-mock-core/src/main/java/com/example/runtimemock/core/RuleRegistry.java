@@ -44,6 +44,27 @@ public final class RuleRegistry {
         });
     }
 
+    public RuleSet restoreRule(MethodKey methodKey, String ruleId, CompiledRule previousRule) {
+        AtomicReference<RuleSet> reference = rules.computeIfAbsent(methodKey,
+                ignored -> new AtomicReference<>(RuleSet.empty()));
+        while (true) {
+            RuleSet current = reference.get();
+            List<CompiledRule> nextRules = new ArrayList<>(current.all().stream()
+                    .filter(existing -> !existing.rule().id().equals(ruleId))
+                    .toList());
+            if (previousRule != null) {
+                nextRules.add(previousRule);
+            }
+            RuleSet next = new RuleSet(nextRules);
+            if (reference.compareAndSet(current, next)) {
+                if (next.isEmpty()) {
+                    rules.remove(methodKey, reference);
+                }
+                return next;
+            }
+        }
+    }
+
     public RuleSet removeRule(MethodKey methodKey, String ruleId) {
         AtomicReference<RuleSet> reference = rules.get(methodKey);
         if (reference == null) {

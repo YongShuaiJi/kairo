@@ -17,13 +17,38 @@ public final class RbacService {
                 select count(*)
                   from user_account u
                   join user_role_binding urb on urb.user_id = u.id
+                  join resource_scope rs on rs.id = urb.scope_id
                   join role_permission rp on rp.role_id = urb.role_id
                   join permission p on p.id = rp.permission_id
                  where u.username = ?
                    and u.status = 'ACTIVE'
                    and (urb.expires_at is null or urb.expires_at > current_timestamp)
                    and (p.capability = ? or p.capability = 'ADMIN')
+                   and rs.resource_type = 'GLOBAL'
+                   and rs.resource_id = '*'
                 """, Integer.class, context.actor(), capability);
+        if (count == null || count == 0) {
+            throw PlatformException.forbidden(capability);
+        }
+    }
+
+    public void require(RequestContext context, String capability, String resourceType, String resourceId) {
+        Integer count = jdbcTemplate.queryForObject("""
+                select count(*)
+                  from user_account u
+                  join user_role_binding urb on urb.user_id = u.id
+                  join resource_scope rs on rs.id = urb.scope_id
+                  join role_permission rp on rp.role_id = urb.role_id
+                  join permission p on p.id = rp.permission_id
+                 where u.username = ?
+                   and u.status = 'ACTIVE'
+                   and (urb.expires_at is null or urb.expires_at > current_timestamp)
+                   and (p.capability = ? or p.capability = 'ADMIN')
+                   and (
+                        (rs.resource_type = 'GLOBAL' and rs.resource_id = '*')
+                        or (rs.resource_type = ? and rs.resource_id = ?)
+                   )
+                """, Integer.class, context.actor(), capability, resourceType, resourceId);
         if (count == null || count == 0) {
             throw PlatformException.forbidden(capability);
         }

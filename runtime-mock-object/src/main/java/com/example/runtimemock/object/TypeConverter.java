@@ -2,6 +2,9 @@ package com.example.runtimemock.object;
 
 import java.math.BigDecimal;
 import java.util.Map;
+import java.util.Collection;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 
 public final class TypeConverter {
 
@@ -47,6 +50,30 @@ public final class TypeConverter {
         Class<?> normalizedTarget = wrap(targetType);
         if (normalizedTarget.isInstance(value)) {
             return value;
+        }
+        if (targetType.isArray() && value instanceof Collection<?> collection) {
+            Class<?> componentType = targetType.getComponentType();
+            Object array = java.lang.reflect.Array.newInstance(componentType, collection.size());
+            int index = 0;
+            for (Object item : collection) {
+                java.lang.reflect.Array.set(array, index++, convert(item, componentType));
+            }
+            return array;
+        }
+        if (Collection.class.isAssignableFrom(targetType)
+                && (value instanceof Collection<?> || value.getClass().isArray())) {
+            Collection<Object> converted = java.util.Set.class.isAssignableFrom(targetType)
+                    ? new LinkedHashSet<>()
+                    : new ArrayList<>();
+            if (value instanceof Collection<?> collection) {
+                converted.addAll(collection);
+            } else {
+                int length = java.lang.reflect.Array.getLength(value);
+                for (int i = 0; i < length; i++) {
+                    converted.add(java.lang.reflect.Array.get(value, i));
+                }
+            }
+            return converted;
         }
         if (normalizedTarget == String.class) {
             return String.valueOf(value);

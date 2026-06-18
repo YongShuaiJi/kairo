@@ -14,25 +14,26 @@ public final class AgentCoreLauncher {
     public static AutoCloseable start(String agentArgs, Instrumentation instrumentation, String loadMode) {
         AgentLaunchConfig config = AgentLaunchConfig.parse(agentArgs);
         AgentRuntime runtime = AgentCore.start(agentArgs, instrumentation);
-        runtime.loadMode(loadMode);
-        AgentHttpServer server = new AgentHttpServer(runtime, config.host(), config.port(), config.token());
-        server.start();
-        PlatformCommandPoller poller = null;
-        if (config.platformPollingEnabled()) {
-            poller = new PlatformCommandPoller(runtime, config);
-            poller.start();
+        try {
+            runtime.loadMode(loadMode);
+            AgentTokenManager tokenManager = new AgentTokenManager(config.token(), config.tokenTtl());
+            AgentHttpServer server = new AgentHttpServer(runtime, config.host(), config.port(), tokenManager);
+            server.start();
+            PlatformCommandPoller poller = null;
+            if (config.platformPollingEnabled()) {
+                poller = new PlatformCommandPoller(runtime, config);
+                poller.start();
+            }
+            final Path[] registration = new Path[1];
+            tokenManager.start(token -> registration[0] = AgentRegistrationWriter.write(
+                    config.registrationDir(), config.tokenFile(), runtime.jvmInfo(), server.port(),
+                    token.token(), token.expiresAt(), AgentHttpServer.PROTOCOL_VERSION));
+            runtime.recordEvent("agent.register", "system", null, null,
+                    "Agent registered at " + registration[0]);
+            return new AgentCoreHandle(server, poller, tokenManager);
+        } catch (RuntimeException e) {
+            AgentCore.stop();
+            throw e;
         }
-        Path registration = AgentRegistrationWriter.write(
-                config.registrationDir(),
-                config.tokenFile(),
-                runtime.jvmInfo(),
-                server.port(),
-                config.token(),
-                config.tokenTtl(),
-                AgentHttpServer.PROTOCOL_VERSION
-        );
-        runtime.recordEvent("agent.register", "system", null, null,
-                "Agent registered at " + registration);
-        return new AgentCoreHandle(server, poller);
     }
 }

@@ -51,7 +51,7 @@ public final class DefaultRuntimeObjectFactory implements RuntimeObjectFactory {
     public Throwable newThrowable(String className, String message, ClassLoader targetClassLoader) {
         ClassLoader loader = targetClassLoader == null ? Thread.currentThread().getContextClassLoader() : targetClassLoader;
         try {
-            Class<?> type = Class.forName(className, true, loader);
+            Class<?> type = Class.forName(className, false, loader);
             if (!Throwable.class.isAssignableFrom(type)) {
                 throw new IllegalArgumentException(className + " is not a Throwable");
             }

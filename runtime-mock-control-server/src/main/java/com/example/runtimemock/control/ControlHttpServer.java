@@ -17,6 +17,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -27,7 +28,9 @@ public final class ControlHttpServer implements AutoCloseable {
     private final ControlServerOptions options;
     private final HttpServer server;
     private final ExecutorService executor;
-    private final HttpClient httpClient = HttpClient.newHttpClient();
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(3))
+            .build();
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final ControlPlaneService controlPlane = new ControlPlaneService();
 
@@ -65,6 +68,11 @@ public final class ControlHttpServer implements AutoCloseable {
         return exchange -> {
             try {
                 String path = exchange.getRequestURI().getPath();
+                if (!isPublicPath(path) && !authorized(exchange)) {
+                    writeJson(exchange, 401, errorBody(exchange, "UNAUTHORIZED",
+                            "A valid control token is required", Map.of(), false));
+                    return;
+                }
                 if (path.startsWith("/api/v1/") && handleControlApi(exchange, path)) {
                     return;
                 }
@@ -77,7 +85,7 @@ public final class ControlHttpServer implements AutoCloseable {
                 writeJson(exchange, e.status(), errorBody(exchange, e.code(), e.getMessage(), e.details(), e.retryable()));
             } catch (Exception e) {
                 writeJson(exchange, 500, errorBody(exchange, "INTERNAL_ERROR",
-                        e.getClass().getName() + ": " + e.getMessage(), Map.of(), false));
+                        "The control server could not complete the request", Map.of(), false));
             } finally {
                 exchange.close();
             }
@@ -132,15 +140,15 @@ public final class ControlHttpServer implements AutoCloseable {
     }
 
     private void proxy(HttpExchange exchange) throws Exception {
-        Map<String, String> query = query(exchange.getRequestURI());
-        URI agent = query.containsKey("agent") ? URI.create(query.get("agent")) : options.defaultAgent();
-        String token = query.getOrDefault("token", options.defaultToken());
+        URI agent = options.defaultAgent();
+        String token = options.defaultToken();
         String targetPath = exchange.getRequestURI().getPath().substring("/api".length());
         String rawQuery = removeProxyQuery(exchange.getRequestURI().getRawQuery());
         URI target = agent.resolve(targetPath + (rawQuery.isBlank() ? "" : "?" + rawQuery));
 
         byte[] body = readAll(exchange.getRequestBody());
         HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(target)
+                .timeout(Duration.ofSeconds(10))
                 .method(exchange.getRequestMethod(), body.length == 0
                         ? HttpRequest.BodyPublishers.noBody()
                         : HttpRequest.BodyPublishers.ofByteArray(body));
@@ -164,6 +172,11 @@ public final class ControlHttpServer implements AutoCloseable {
                 write(exchange, HttpURLConnection.HTTP_NOT_FOUND, "text/plain; charset=utf-8",
                         "Not found".getBytes(StandardCharsets.UTF_8));
                 return;
+            }
+            if (resource.endsWith("/index.html")) {
+                exchange.getResponseHeaders().add("Set-Cookie",
+                        "runtime_mock_control=" + options.controlToken()
+                                + "; Path=/; HttpOnly; SameSite=Strict");
             }
             write(exchange, 200, contentType(resource), readAll(inputStream));
         }
@@ -201,6 +214,34 @@ public final class ControlHttpServer implements AutoCloseable {
             values.put(decode(key), decode(value));
         }
         return values;
+    }
+
+    private boolean isPublicPath(String path) {
+        return "/".equals(path)
+                || "/index.html".equals(path)
+                || path.startsWith("/styles")
+                || path.startsWith("/app.")
+                || "/api/v1/control/health".equals(path);
+    }
+
+    private boolean authorized(HttpExchange exchange) {
+        String header = exchange.getRequestHeaders().getFirst("X-Control-Token");
+        if (options.controlToken().equals(header)) {
+            return true;
+        }
+        String cookie = exchange.getRequestHeaders().getFirst("Cookie");
+        if (cookie == null) {
+            return false;
+        }
+        for (String item : cookie.split(";")) {
+            String[] pair = item.trim().split("=", 2);
+            if (pair.length == 2
+                    && "runtime_mock_control".equals(pair[0])
+                    && options.controlToken().equals(pair[1])) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String decode(String value) {

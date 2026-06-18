@@ -23,12 +23,18 @@ final class AgentRegistrationWriter {
 
     static Path write(Path requestedDir, Path requestedTokenFile, JvmInfo jvmInfo, int port,
                       String token, Duration tokenTtl, String protocolVersion) {
+        return write(requestedDir, requestedTokenFile, jvmInfo, port, token,
+                Instant.now().plus(tokenTtl), protocolVersion);
+    }
+
+    static Path write(Path requestedDir, Path requestedTokenFile, JvmInfo jvmInfo, int port,
+                      String token, Instant expiresAt, String protocolVersion) {
         Path directory = writableDirectory(requestedDir);
         long pid = jvmInfo.pid();
         Path tokenFile = requestedTokenFile == null
                 ? directory.resolve("agent-" + pid + ".token")
                 : requestedTokenFile.toAbsolutePath().normalize();
-        writeToken(tokenFile, token, tokenTtl);
+        writeToken(tokenFile, token, expiresAt);
         Path registrationFile = directory.resolve("agent-" + pid + ".properties");
         Properties properties = new Properties();
         properties.setProperty("pid", Long.toString(pid));
@@ -71,12 +77,21 @@ final class AgentRegistrationWriter {
         }
     }
 
-    private static void writeToken(Path tokenFile, String token, Duration tokenTtl) {
+    private static void writeToken(Path tokenFile, String token, Instant expiresAt) {
         try {
             Files.createDirectories(tokenFile.getParent());
             String body = "token=" + token + "\n"
-                    + "expiresAt=" + Instant.now().plus(tokenTtl) + "\n";
-            Files.writeString(tokenFile, body, StandardCharsets.UTF_8);
+                    + "expiresAt=" + expiresAt + "\n";
+            Path temporary = tokenFile.resolveSibling(tokenFile.getFileName() + ".tmp");
+            Files.writeString(temporary, body, StandardCharsets.UTF_8);
+            restrictOwnerOnly(temporary);
+            try {
+                Files.move(temporary, tokenFile,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+                Files.move(temporary, tokenFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
             restrictOwnerOnly(tokenFile);
         } catch (IOException e) {
             throw new IllegalStateException("Cannot write agent token file: " + tokenFile, e);

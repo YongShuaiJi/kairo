@@ -100,6 +100,7 @@ class PlatformAutomationIntegrationTest {
                 Map.entry("applicationId", "app-default"),
                 Map.entry("environmentId", "env-dev"),
                 Map.entry("name", "Auto rollout rule"),
+                Map.entry("versionStatus", "ACTIVE"),
                 Map.entry("riskLevel", "LOW"),
                 Map.entry("script", Map.of("phase", "BEFORE", "script", "return mock.proceed(args)")),
                 Map.entry("targets", java.util.List.of(Map.of(
@@ -123,6 +124,7 @@ class PlatformAutomationIntegrationTest {
                 "reason", "automation test"
         ), "system");
         transitionOperation("operation-auto", "DRAFT", 1, "WAITING_APPROVAL");
+        approveSubject("approval-operation-auto", "OPERATION_PLAN", "operation-auto", 2);
         transitionOperation("operation-auto", "WAITING_APPROVAL", 2, "APPROVED");
         transitionOperation("operation-auto", "APPROVED", 3, "RUNNING");
         postJson("/api/v1/operation-plans/operation-auto/batches", Map.of(
@@ -138,7 +140,7 @@ class PlatformAutomationIntegrationTest {
                 "id", "datasource-auto",
                 "applicationId", "app-default",
                 "environmentId", "env-dev",
-                "datasourceType", "POSTGRESQL",
+                "datasourceType", "TEST_FIXTURE",
                 "name", "sample datasource",
                 "config", Map.of("sampleRows", java.util.List.of(
                         Map.of("id", "order-1", "status", "PAID"),
@@ -178,6 +180,7 @@ class PlatformAutomationIntegrationTest {
                 "reason", "automation test"
         ), "system");
         transitionRecording("rec-auto", "DRAFT", 1, "WAITING_APPROVAL");
+        approveSubject("approval-rec-auto", "RECORDING_SESSION", "rec-auto", 2);
         transitionRecording("rec-auto", "WAITING_APPROVAL", 2, "APPROVED");
         transitionRecording("rec-auto", "APPROVED", 3, "RECORDING");
         transitionRecording("rec-auto", "RECORDING", 4, "COMPLETED");
@@ -225,6 +228,22 @@ class PlatformAutomationIntegrationTest {
                 "reason", "move to " + targetStatus,
                 "fencingToken", token
         ), "system");
+    }
+
+    private void approveSubject(String approvalId, String subjectType, String subjectId, long subjectVersion)
+            throws Exception {
+        postJsonAs("/api/v1/approvals", Map.of(
+                "id", approvalId,
+                "subjectType", subjectType,
+                "subjectId", subjectId,
+                "subjectVersion", subjectVersion,
+                "reason", "automation approval",
+                "approvers", java.util.List.of("reviewer")
+        ), "system", "header-dev");
+        postJsonAs("/api/v1/approvals/" + approvalId + "/decisions", Map.of(
+                "decision", "APPROVED",
+                "reason", "automation approved"
+        ), "reviewer", "header-dev");
     }
 
     private void transitionExtraction(String id, String expectedStatus, long expectedVersion,

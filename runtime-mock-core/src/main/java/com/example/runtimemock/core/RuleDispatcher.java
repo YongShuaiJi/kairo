@@ -11,8 +11,29 @@ import com.example.runtimemock.object.RuntimeObjectFactory;
 import java.time.Clock;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.Future;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 public final class RuleDispatcher {
+
+    private static final long SCRIPT_TIMEOUT_MILLIS = 100L;
+    private static final long FIRST_SCRIPT_TIMEOUT_MILLIS = 500L;
+    private static final ThreadPoolExecutor SCRIPT_EXECUTOR = new ThreadPoolExecutor(
+            0,
+            Math.max(4, Runtime.getRuntime().availableProcessors()),
+            30L,
+            TimeUnit.SECONDS,
+            new SynchronousQueue<>(),
+            runnable -> {
+                Thread thread = new Thread(runnable, "runtime-mock-script-execution");
+                thread.setDaemon(true);
+                return thread;
+            },
+            new ThreadPoolExecutor.AbortPolicy()
+    );
 
     private final RuleRegistry ruleRegistry;
     private final RuntimeObjectFactory objectFactory;
@@ -132,7 +153,23 @@ public final class RuleDispatcher {
                         objectFactory,
                         log
                 );
-                MockDecision decision = compiledRule.script().execute(context);
+                long started = System.nanoTime();
+                Future<MockDecision> execution = SCRIPT_EXECUTOR.submit(
+                        () -> compiledRule.script().execute(context));
+                MockDecision decision;
+                long timeoutMillis = compiledRule.hasExecuted()
+                        ? SCRIPT_TIMEOUT_MILLIS
+                        : FIRST_SCRIPT_TIMEOUT_MILLIS;
+                try {
+                    decision = execution.get(timeoutMillis, TimeUnit.MILLISECONDS);
+                    compiledRule.recordSuccess(System.nanoTime() - started);
+                } catch (TimeoutException e) {
+                    execution.cancel(true);
+                    compiledRule.lock();
+                    throw new IllegalStateException(
+                            "Rule " + compiledRule.rule().id() + " exceeded "
+                                    + timeoutMillis + "ms and was locked", e);
+                }
                 if (decision == null) {
                     decision = MockDecision.proceed();
                 }

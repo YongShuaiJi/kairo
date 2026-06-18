@@ -84,8 +84,10 @@ final class PlatformCommandPoller implements AutoCloseable {
             }
             case "RESET_CLASS" -> {
                 String classId = payload.path("classId").asText(payload.path("className").asText());
-                int remainingRules = runtime.resetClass(classId, "platform").size();
-                yield Map.of("classId", classId, "remainingRules", remainingRules);
+                var result = runtime.resetClass(classId, "platform");
+                yield Map.of("classId", classId, "remainingRules", result.remainingRules().size(),
+                        "removedRuleIds", result.removedRuleIds(), "failedRules", result.failedRules(),
+                        "degraded", result.degraded());
             }
             case "RESET_ALL" -> {
                 runtime.resetAll("platform");

@@ -6,10 +6,13 @@ public final class AgentCoreHandle implements AutoCloseable {
 
     private final AgentHttpServer httpServer;
     private final PlatformCommandPoller platformCommandPoller;
+    private final AgentTokenManager tokenManager;
 
-    AgentCoreHandle(AgentHttpServer httpServer, PlatformCommandPoller platformCommandPoller) {
+    AgentCoreHandle(AgentHttpServer httpServer, PlatformCommandPoller platformCommandPoller,
+                    AgentTokenManager tokenManager) {
         this.httpServer = httpServer;
         this.platformCommandPoller = platformCommandPoller;
+        this.tokenManager = tokenManager;
     }
 
     @Override
@@ -17,6 +20,7 @@ public final class AgentCoreHandle implements AutoCloseable {
         if (platformCommandPoller != null) {
             platformCommandPoller.close();
         }
+        tokenManager.close();
         httpServer.close();
         AgentCore.stop();
     }

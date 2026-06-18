@@ -51,8 +51,11 @@ public record AttachOptions(
             throw new IllegalArgumentException("Agent jar does not exist: " + agentJar);
         }
         String host = values.getOrDefault("host", "127.0.0.1");
+        if (!"127.0.0.1".equals(host) && !"localhost".equalsIgnoreCase(host)) {
+            throw new IllegalArgumentException("--host must be loopback");
+        }
         int port = Integer.parseInt(values.getOrDefault("port", "18080"));
-        String token = values.getOrDefault("token", "");
+        String token = required(values, "token");
         Path coreJar = optionalFile(values, "core-jar", "coreJar");
         Path bootstrapJar = optionalFile(values, "bootstrap-jar", "bootstrapJar");
         return new AttachOptions(pid, agentJar, host, port, token,

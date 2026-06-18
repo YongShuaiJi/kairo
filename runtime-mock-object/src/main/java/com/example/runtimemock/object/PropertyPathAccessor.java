@@ -2,9 +2,23 @@ package com.example.runtimemock.object;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 public final class PropertyPathAccessor {
+
+    private static final Set<String> FORBIDDEN_SEGMENTS = Set.of(
+            "class",
+            "classloader",
+            "metaclass",
+            "module",
+            "protectiondomain",
+            "declaredclasses",
+            "declaredconstructors",
+            "declaredfields",
+            "declaredmethods"
+    );
 
     public Object get(Object target, String path) {
         requirePath(path);
@@ -36,6 +50,14 @@ public final class PropertyPathAccessor {
         if (path == null || path.isBlank()) {
             throw new IllegalArgumentException("property path must not be blank");
         }
+        for (String segment : path.split("\\.")) {
+            if (segment.isBlank() || !segment.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+                throw new IllegalArgumentException("Invalid property path segment: " + segment);
+            }
+            if (FORBIDDEN_SEGMENTS.contains(segment.toLowerCase(Locale.ROOT))) {
+                throw new IllegalArgumentException("Forbidden property path segment: " + segment);
+            }
+        }
     }
 
     private Object readSingle(Object target, String property) {
@@ -44,6 +66,7 @@ public final class PropertyPathAccessor {
         }
 
         Class<?> type = target.getClass();
+        requireSafeTarget(type);
         String suffix = Character.toUpperCase(property.charAt(0)) + property.substring(1);
         Method getter = findNoArgMethod(type, "get" + suffix);
         if (getter == null) {
@@ -78,6 +101,7 @@ public final class PropertyPathAccessor {
         }
 
         Class<?> type = target.getClass();
+        requireSafeTarget(type);
         String suffix = Character.toUpperCase(property.charAt(0)) + property.substring(1);
         Method setter = findOneArgMethod(type, "set" + suffix);
         if (setter != null) {
@@ -140,5 +164,17 @@ public final class PropertyPathAccessor {
             }
         }
         return null;
+    }
+
+    private static void requireSafeTarget(Class<?> type) {
+        String name = type.getName();
+        if (Class.class.isAssignableFrom(type)
+                || ClassLoader.class.isAssignableFrom(type)
+                || name.startsWith("java.lang.reflect.")
+                || name.startsWith("java.lang.instrument.")
+                || name.startsWith("net.bytebuddy.")
+                || name.startsWith("groovy.lang.")) {
+            throw new IllegalArgumentException("Property access is forbidden for type " + name);
+        }
     }
 }

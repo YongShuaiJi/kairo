@@ -3,6 +3,7 @@ package com.example.runtimemock.platform.fencing;
 import com.example.runtimemock.platform.service.PlatformException;
 import com.example.runtimemock.platform.service.RequestContext;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -74,9 +75,10 @@ public class FencingTokenService {
                  where resource_type = ?
                    and resource_id = ?
                    and token = ?
+                   and owner = ?
                    and status = 'ISSUED'
                    and lease_expires_at > ?
-                """, Timestamp.from(now), resourceType, resourceId, token, Timestamp.from(now));
+                """, Timestamp.from(now), resourceType, resourceId, token, context.actor(), Timestamp.from(now));
         if (updated == null || updated == 0) {
             throw PlatformException.conflict("FENCING_TOKEN_INVALID",
                     "Fencing token is missing, expired, already consumed, or belongs to another resource",
@@ -100,13 +102,33 @@ public class FencingTokenService {
             upsertDbSequence(resourceKey, value);
             return value;
         }
-        Long next = jdbcTemplate.queryForObject("""
-                select coalesce(max(current_value), 0) + 1
-                  from fencing_sequence
+        int updated = jdbcTemplate.update("""
+                update fencing_sequence
+                   set current_value = current_value + 1, updated_at = ?
                  where resource_key = ?
+                """, Timestamp.from(clock.instant()), resourceKey);
+        if (updated == 0) {
+            try {
+                jdbcTemplate.update("""
+                        insert into fencing_sequence(resource_key, current_value, updated_at)
+                        values (?, 1, ?)
+                        """, resourceKey, Timestamp.from(clock.instant()));
+                return 1L;
+            } catch (DuplicateKeyException ignored) {
+                jdbcTemplate.update("""
+                        update fencing_sequence
+                           set current_value = current_value + 1, updated_at = ?
+                         where resource_key = ?
+                        """, Timestamp.from(clock.instant()), resourceKey);
+            }
+        }
+        Long value = jdbcTemplate.queryForObject("""
+                select current_value from fencing_sequence where resource_key = ?
                 """, Long.class, resourceKey);
-        long value = next == null ? 1 : next;
-        upsertDbSequence(resourceKey, value);
+        if (value == null) {
+            throw PlatformException.conflict("FENCING_SEQUENCE_FAILED",
+                    "Database did not return a fencing sequence", Map.of("resourceKey", resourceKey));
+        }
         return value;
     }
 

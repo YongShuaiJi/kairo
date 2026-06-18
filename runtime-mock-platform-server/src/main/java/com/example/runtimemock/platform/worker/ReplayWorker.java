@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 @ConditionalOnProperty(prefix = "runtime-mock.platform.replay.worker",
@@ -37,6 +38,10 @@ public class ReplayWorker {
     private final Clock clock;
     private final int batchSize;
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicBoolean paused = new AtomicBoolean(false);
+    private final AtomicLong totalExecutions = new AtomicLong();
+    private final AtomicLong totalFailures = new AtomicLong();
+    private final AtomicLong consecutiveFailures = new AtomicLong();
 
     @Autowired
     public ReplayWorker(JdbcTemplate jdbcTemplate, PlatformJdbcService eventWriter,
@@ -70,6 +75,9 @@ public class ReplayWorker {
 
     @Transactional
     public Map<String, Object> runOnce(RequestContext context) {
+        if (paused.get()) {
+            return Map.of("processed", 0, "succeeded", 0, "failed", 0, "paused", true);
+        }
         int processed = 0;
         int succeeded = 0;
         int failed = 0;
@@ -85,23 +93,37 @@ public class ReplayWorker {
             try {
                 processExecution(context, execution);
                 succeeded++;
+                totalExecutions.incrementAndGet();
+                consecutiveFailures.set(0);
             } catch (Exception e) {
                 failExecution(context, execution, e);
                 failed++;
+                long total = totalExecutions.incrementAndGet();
+                long failures = totalFailures.incrementAndGet();
+                long consecutive = consecutiveFailures.incrementAndGet();
+                if (consecutive >= 10 || (total >= 50 && failures * 5 > total)) {
+                    paused.set(true);
+                    eventWriter.recordEvent(context, "replay_worker.auto_paused", "replay_worker",
+                            "singleton", total, Map.of(), Map.of("paused", true), "PAUSED",
+                            "Replay worker exceeded failure threshold",
+                            Map.of("total", total, "failures", failures, "consecutiveFailures", consecutive));
+                    break;
+                }
             }
         }
-        return Map.of("processed", processed, "succeeded", succeeded, "failed", failed);
+        return Map.of("processed", processed, "succeeded", succeeded, "failed", failed, "paused", paused.get());
     }
 
     private void processExecution(RequestContext context, Map<String, Object> execution) throws Exception {
         String executionId = String.valueOf(execution.get("id"));
         long runningVersion = ((Number) execution.get("version")).longValue() + 1;
+        long queuedVersion = ((Number) execution.get("version")).longValue();
         Instant now = clock.instant();
         int claimed = jdbcTemplate.update("""
                 update replay_execution
                    set status = 'RUNNING', version = ?, updated_by = ?, updated_at = ?
-                 where id = ? and status = 'QUEUED'
-                """, runningVersion, context.actor(), timestamp(now), executionId);
+                 where id = ? and status = 'QUEUED' and version = ?
+                """, runningVersion, context.actor(), timestamp(now), executionId, queuedVersion);
         if (claimed == 0) {
             return;
         }
@@ -161,18 +183,24 @@ public class ReplayWorker {
                 "durationMillis", durationMillis);
         LocalObjectStore.StoredObject artifact = objectStore.putJson("replay", "replay_execution", executionId,
                 "SUMMARY_JSON", metrics, Map.of("replayPlanId", plan.get("id")));
-        jdbcTemplate.update("""
+        int batchCompleted = jdbcTemplate.update("""
                 update replay_batch
                    set status = ?, finished_at = ?
-                 where id = ?
+                 where id = ? and status = 'RUNNING'
                 """, matched == total ? "SUCCEEDED" : "FAILED", timestamp(clock.instant()), batchId);
+        if (batchCompleted == 0) {
+            throw new IllegalStateException("Replay batch state changed while worker was running: " + batchId);
+        }
         long completedVersion = runningVersion + 1;
-        jdbcTemplate.update("""
+        int executionCompleted = jdbcTemplate.update("""
                 update replay_execution
                    set status = ?, version = ?, metrics_json = ?, updated_by = ?, updated_at = ?
-                 where id = ?
+                 where id = ? and status = 'RUNNING' and version = ?
                 """, matched == total ? "SUCCEEDED" : "FAILED", completedVersion,
-                PlatformJson.write(metrics), context.actor(), timestamp(clock.instant()), executionId);
+                PlatformJson.write(metrics), context.actor(), timestamp(clock.instant()), executionId, runningVersion);
+        if (executionCompleted == 0) {
+            throw new IllegalStateException("Replay execution state changed while worker was running: " + executionId);
+        }
         Map<String, Object> updated = normalizeRow(jdbcTemplate.queryForMap(
                 "select * from replay_execution where id = ?", executionId));
         eventWriter.recordEvent(context, "replay_execution.worker_completed", "replay_execution", executionId,
@@ -217,18 +245,24 @@ public class ReplayWorker {
 
     private void failExecution(RequestContext context, Map<String, Object> execution, Exception e) {
         String executionId = String.valueOf(execution.get("id"));
-        long version = ((Number) execution.get("version")).longValue() + 1;
+        long queuedVersion = ((Number) execution.get("version")).longValue();
+        long runningVersion = queuedVersion + 1;
+        long failedVersion = runningVersion + 1;
         Map<String, Object> metrics = Map.of("error", e.getClass().getName(),
                 "message", String.valueOf(e.getMessage()));
-        jdbcTemplate.update("""
+        int updatedCount = jdbcTemplate.update("""
                 update replay_execution
                    set status = 'FAILED', version = ?, metrics_json = ?, updated_by = ?, updated_at = ?
-                 where id = ?
-                """, version, PlatformJson.write(metrics), context.actor(), timestamp(clock.instant()), executionId);
+                 where id = ? and status = 'RUNNING' and version = ?
+                """, failedVersion, PlatformJson.write(metrics), context.actor(),
+                timestamp(clock.instant()), executionId, runningVersion);
+        if (updatedCount == 0) {
+            return;
+        }
         Map<String, Object> updated = normalizeRow(jdbcTemplate.queryForMap(
                 "select * from replay_execution where id = ?", executionId));
         eventWriter.recordEvent(context, "replay_execution.worker_failed", "replay_execution", executionId,
-                version, execution, updated, "FAILED", "replay worker failed", metrics);
+                failedVersion, execution, updated, "FAILED", "replay worker failed", metrics);
     }
 
     private List<Map<String, Object>> normalizeRows(List<Map<String, Object>> rows) {
