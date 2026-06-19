@@ -19,7 +19,8 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @Component
-@ConditionalOnProperty(prefix = "runtime-mock.platform.kafka", name = "enabled", havingValue = "true")
+@ConditionalOnProperty(prefix = "runtime-mock.platform",
+        name = {"worker.enabled", "kafka.enabled"}, havingValue = "true")
 public class KafkaOutboxPublisher {
 
     private static final Logger logger = LoggerFactory.getLogger(KafkaOutboxPublisher.class);

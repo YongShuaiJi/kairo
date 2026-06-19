@@ -20,7 +20,11 @@ public final class AgentCoreLauncher {
             AgentHttpServer server = new AgentHttpServer(runtime, config.host(), config.port(), tokenManager);
             server.start();
             PlatformCommandPoller poller = null;
+            PlatformRecordingUploader recordingUploader = null;
             if (config.platformPollingEnabled()) {
+                recordingUploader = new PlatformRecordingUploader(runtime, config);
+                runtime.recordingSink(recordingUploader);
+                recordingUploader.start();
                 poller = new PlatformCommandPoller(runtime, config);
                 poller.start();
             }
@@ -30,7 +34,7 @@ public final class AgentCoreLauncher {
                     token.token(), token.expiresAt(), AgentHttpServer.PROTOCOL_VERSION));
             runtime.recordEvent("agent.register", "system", null, null,
                     "Agent registered at " + registration[0]);
-            return new AgentCoreHandle(server, poller, tokenManager);
+            return new AgentCoreHandle(server, poller, recordingUploader, tokenManager);
         } catch (RuntimeException e) {
             AgentCore.stop();
             throw e;

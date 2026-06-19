@@ -5,6 +5,7 @@ import com.example.demo.CreateOrderRequest;
 import com.example.demo.Order;
 import com.example.demo.OrderService;
 import com.example.runtimemock.agent.core.AgentRuntime;
+import com.example.runtimemock.agent.core.RecordedInvocation;
 import com.example.runtimemock.agent.server.AgentHttpServer;
 import com.example.runtimemock.api.InvokePhase;
 import com.example.runtimemock.api.MethodSelector;
@@ -34,6 +35,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -371,6 +373,34 @@ class RuntimeMockAgentIntegrationTest {
     }
 
     @Test
+    void recordingSessionInstrumentsMethodWithoutMockRuleAndCapturesOutcome() throws Exception {
+        Method method = OrderService.class.getMethod("calculateScore", int.class);
+        List<RecordedInvocation> recorded = new CopyOnWriteArrayList<>();
+        runtime.recordingSink(recorded::add);
+
+        runtime.startRecording(
+                "recording-integration",
+                method.getDeclaringClass().getName(),
+                method.getName(),
+                MethodDescriptor.of(method),
+                "test"
+        );
+
+        assertThat(new OrderService().calculateScore(7)).isEqualTo(14);
+        assertThat(recorded).hasSize(1);
+        assertThat(recorded.get(0).sessionId()).isEqualTo("recording-integration");
+        assertThat(recorded.get(0).arguments()).containsExactly(7);
+        assertThat(recorded.get(0).result()).isEqualTo(14);
+        assertThat(recorded.get(0).metadata())
+                .containsEntry("className", OrderService.class.getName())
+                .containsEntry("methodName", "calculateScore");
+
+        runtime.stopRecording("recording-integration", "test");
+        assertThat(new OrderService().calculateScore(8)).isEqualTo(16);
+        assertThat(recorded).hasSize(1);
+    }
+
+    @Test
     void resetAllRemovesRulesAndRestoresOriginalBehavior() throws Exception {
         Method method = OrderService.class.getMethod("calculateScore", int.class);
         runtime.publish(method, rule("reset-me", method, InvokePhase.BEFORE, """
@@ -416,6 +446,19 @@ class RuntimeMockAgentIntegrationTest {
             HttpResponse<String> v1Health = client.send(HttpRequest.newBuilder(URI.create(base + "/v1/health")).GET().build(),
                     HttpResponse.BodyHandlers.ofString());
             assertThat(v1Health.statusCode()).isEqualTo(200);
+
+            HttpResponse<String> console = client.send(HttpRequest.newBuilder(URI.create(base + "/")).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(console.statusCode()).isEqualTo(200);
+            assertThat(console.headers().firstValue("Content-Type")).hasValueSatisfying(
+                    value -> assertThat(value).startsWith("text/html"));
+            assertThat(console.body()).contains("Runtime Mock Console");
+
+            HttpResponse<String> consoleScript = client.send(
+                    HttpRequest.newBuilder(URI.create(base + "/app.js")).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(consoleScript.statusCode()).isEqualTo(200);
+            assertThat(consoleScript.body()).contains("Authorization", "/v1");
 
             String classId = runtime.loadedClassRepository().classId(OrderService.class);
             Method method = OrderService.class.getMethod("calculateScore", int.class);

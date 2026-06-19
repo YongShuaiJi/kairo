@@ -25,7 +25,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "runtime-mock.platform.extraction.worker.fixed-delay-ms=600000",
         "runtime-mock.platform.replay.worker.enabled=true",
         "runtime-mock.platform.replay.worker.fixed-delay-ms=600000",
-        "runtime-mock.platform.object-store.local-root=target/platform-test-objects"
+        "runtime-mock.platform.worker.enabled=true",
+        "runtime-mock.platform.recording.ingestion.enabled=true",
+        "runtime-mock.platform.object-storage.provider=memory"
 })
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -60,6 +62,10 @@ class PlatformAutomationIntegrationTest {
         assertThat(findById(getJson("/api/v1/extraction-tasks"), "extraction-task-auto").get("status").asText())
                 .isEqualTo("SUCCEEDED");
         assertThat(getJson("/api/v1/extraction-results")).hasSizeGreaterThanOrEqualTo(1);
+        assertThat(findById(getJson("/api/v1/datasets"), "dataset-auto-extract:1")
+                .get("source_type").asText()).isEqualTo("EXTRACTION_TASK");
+        assertThat(getJson("/api/v1/extraction-results").get(0).get("dataset_version_id").asText())
+                .isEqualTo("dataset-auto-extract:1");
         assertThat(getJson("/api/v1/worker-artifacts")).hasSizeGreaterThanOrEqualTo(1);
 
         createReplayFixture();
@@ -176,22 +182,46 @@ class PlatformAutomationIntegrationTest {
                 "environmentId", "env-dev",
                 "maxEvents", 10,
                 "ttlSeconds", 600,
-                "target", Map.of("protocol", "JAVA_METHOD"),
+                "target", Map.of(
+                        "protocol", "JAVA_METHOD",
+                        "className", "com.example.AutoService",
+                        "methodName", "call",
+                        "methodDescriptor", "()Ljava/lang/String;",
+                        "agentIds", java.util.List.of("agent-auto")
+                ),
                 "reason", "automation test"
         ), "system");
         transitionRecording("rec-auto", "DRAFT", 1, "WAITING_APPROVAL");
         approveSubject("approval-rec-auto", "RECORDING_SESSION", "rec-auto", 2);
         transitionRecording("rec-auto", "WAITING_APPROVAL", 2, "APPROVED");
         transitionRecording("rec-auto", "APPROVED", 3, "RECORDING");
+        assertThat(getJson("/api/v1/agent-commands").findValuesAsText("command_type"))
+                .contains("START_RECORDING");
+        JsonNode recordingBatch = postJsonAs("/api/v1/recording-sessions/rec-auto/events", Map.of(
+                "batchId", "recording-batch-auto",
+                "events", java.util.List.of(Map.of(
+                        "id", "recording-event-auto",
+                        "traceId", "trace-auto",
+                        "spanId", "span-auto",
+                        "protocol", "JAVA_METHOD",
+                        "metadata", Map.of("className", "com.example.AutoService"),
+                        "arguments", Map.of("username", "demo", "password", "must-be-redacted")
+                ))
+        ), "agent-auto", "agent");
+        assertThat(recordingBatch.get("status").asText()).isEqualTo("SEALED");
+        assertThat(recordingBatch.get("event_count").asInt()).isEqualTo(1);
+        assertThat(getJson("/api/v1/query/recording-batches?page=0&size=10").get("total").asInt())
+                .isEqualTo(1);
+        assertThat(getJson("/api/v1/query/recording-events?page=0&size=10").get("total").asInt())
+                .isEqualTo(1);
         transitionRecording("rec-auto", "RECORDING", 4, "COMPLETED");
+        assertThat(getJson("/api/v1/agent-commands").findValuesAsText("command_type"))
+                .contains("STOP_RECORDING");
         postJson("/api/v1/datasets", Map.of(
                 "datasetId", "dataset-auto",
                 "applicationId", "app-default",
                 "environmentId", "env-dev",
                 "sourceSessionId", "rec-auto",
-                "schemaHash", "schema-auto",
-                "manifestHash", "manifest-auto",
-                "maskingHash", "masking-auto",
                 "retentionPolicy", "P30D",
                 "reason", "automation test"
         ), "system");

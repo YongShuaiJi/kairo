@@ -27,13 +27,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Component
-@ConditionalOnProperty(prefix = "runtime-mock.platform.replay.worker",
-        name = "enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "runtime-mock.platform",
+        name = {"worker.enabled", "replay.worker.enabled"}, havingValue = "true")
 public class ReplayWorker {
 
     private final JdbcTemplate jdbcTemplate;
     private final PlatformJdbcService eventWriter;
-    private final LocalObjectStore objectStore;
+    private final WorkerArtifactStore objectStore;
     private final HttpClient httpClient;
     private final Clock clock;
     private final int batchSize;
@@ -45,13 +45,13 @@ public class ReplayWorker {
 
     @Autowired
     public ReplayWorker(JdbcTemplate jdbcTemplate, PlatformJdbcService eventWriter,
-                        LocalObjectStore objectStore,
+                        WorkerArtifactStore objectStore,
                         @Value("${runtime-mock.platform.replay.worker.batch-size:5}") int batchSize) {
         this(jdbcTemplate, eventWriter, objectStore, HttpClient.newHttpClient(), Clock.systemUTC(), batchSize);
     }
 
     ReplayWorker(JdbcTemplate jdbcTemplate, PlatformJdbcService eventWriter,
-                 LocalObjectStore objectStore, HttpClient httpClient, Clock clock, int batchSize) {
+                 WorkerArtifactStore objectStore, HttpClient httpClient, Clock clock, int batchSize) {
         this.jdbcTemplate = jdbcTemplate;
         this.eventWriter = eventWriter;
         this.objectStore = objectStore;
@@ -181,7 +181,7 @@ public class ReplayWorker {
                 "targetCount", total,
                 "matchedCount", matched,
                 "durationMillis", durationMillis);
-        LocalObjectStore.StoredObject artifact = objectStore.putJson("replay", "replay_execution", executionId,
+        WorkerArtifactStore.ArtifactObject artifact = objectStore.putJson("replay", "replay_execution", executionId,
                 "SUMMARY_JSON", metrics, Map.of("replayPlanId", plan.get("id")));
         int batchCompleted = jdbcTemplate.update("""
                 update replay_batch

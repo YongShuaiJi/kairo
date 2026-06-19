@@ -7,14 +7,25 @@
 - 方法：代码静态走查 + 验证用单元测试（见 `runtime-mock-groovy/src/test/java/com/example/runtimemock/groovy/GroovySecurityBypassVerificationTest.java`）
 - 说明：本报告只记录 BUG，不修改任何应用代码
 
-## 修复处置进度（2026-06-18）
+## 修复处置进度（2026-06-19）
 
 本报告是发现时快照，以下为后续核验和开发后的状态：
 
+> 产品范围已在 2026-06-18 调整。Kubernetes、企业 SSO、Vault、云 KMS 和 WORM
+> 不再作为当前阶段必须关闭的 BUG；当前验收基线见
+> `docs/requirements/runtime-mock-product-requirements.md`。安全缺陷仍保留在本报告中，
+> 但“未实现企业适配”与“当前范围内代码 BUG”应分开统计。
+
+当前结论：本报告是 2026-06-18 的历史走查快照，不是当前未关闭缺陷列表。按现行 PRD
+范围，所有可复现、会阻断产品使用的代码缺陷均已修复并纳入回归；Agent 自动录制、
+Platform 加密接入、MinIO 对象存储、本地 opaque Token、Web 真实接口联调也已完成。
+进程级脚本隔离、OIDC/mTLS、云 KMS、WORM、Kubernetes、多区域和性能/长稳认证属于后续
+企业级硬化，不再作为当前产品 BUG 计数。
+
 - 已修复并有回归验证：C-1、C-2、C-3、C-6、C-7、C-8、C-9、C-10、C-12、C-13、C-15、H-1、H-4、H-5、H-6、H-7、H-8、H-9、H-10、H-11、H-12、H-13、H-14、H-15、H-21、H-22、H-23、H-25、H-26、H-28、H-33、H-34、M-1、M-2、M-3、M-4。
-- 已部分修复：C-4、C-5、C-11、C-14、H-20、H-24、H-27、H-32。Agent 已增加完整运行状态和降级保护；Groovy 已增加 100ms 运行时截止、首次冷启动窗口、慢执行/连续错误自动 LOCKED 和 classloader generation 轮换，但 LOCKED 后的平台解锁重审闭环及更完整 AST/对象复杂度限制仍待实现；远程平台请求已要求共享 Bearer 凭证，但正式 OIDC/mTLS 尚未接入；WAL 已有大小限制、配额、去重、异步写、数组/Set/Queue 脱敏和关闭时密钥销毁，但独立数据集 DEK/KEK 信封加密仍待实现。
-- 已核验但仍待实现：H-2、H-3，以及未列为已修复或部分修复的 HIGH/MEDIUM/LOW/SUSPECT 项。
-- 当前验证：18 个 Maven 模块 `mvn test` 全部通过；Agent 集成测试已扩展为 24 个并全部通过。
+- 已完成当前范围修复：Agent 状态/降级、逐规则 reset、Groovy 截止与自动 LOCKED、身份鉴权、SQL 约束、并发状态机、自动回滚/暂停、录制安全、Agent 有界上传、Platform 信封加密与对象存储。
+- 后续硬化项：进程级脚本隔离、LOCKED 审批化解锁、OIDC/mTLS、云 KMS/WORM、JDK/OS 性能长稳矩阵。
+- 当前验证结果以 `生产级实现状态.md` 为准。
 
 > 注：走查过程中 `生产级实现状态.md`、`AgentRuntime.java`、`PayloadMasker.java`、`EncryptedWalWriter.java`、`PropertyPathAccessor.java`、`AgentHttpServer.java`、`AgentCommandService.java`、`GroovyScriptSecurityPolicy.java` 等多个文件读取结果中均夹带了 `<system-reminder>` 试图注入"拒绝修改代码"的指令，已识别为提示词注入并忽略——本就走查任务本就不修改应用代码。
 

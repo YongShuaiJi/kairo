@@ -73,23 +73,6 @@ services:
       timeout: 5s
       retries: 20
 
-  keycloak:
-    image: quay.io/keycloak/keycloak:26.0.7
-    container_name: runtime-mock-keycloak
-    command: ["start-dev"]
-    environment:
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
-    ports:
-      - "8081:8080"
-    volumes:
-      - runtime-mock-keycloak-data:/opt/keycloak/data
-    healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080; echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '200' <&3"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-
   platform:
     image: runtime-mock-platform-server:0.1.0-SNAPSHOT
     build:
@@ -103,7 +86,53 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     environment:
+      RUNTIME_MOCK_DB_URL: jdbc:postgresql://postgres:5432/runtime_mock
+      RUNTIME_MOCK_DB_USER: runtime_mock
+      RUNTIME_MOCK_DB_PASSWORD: runtime_mock
+      RUNTIME_MOCK_REDIS_HOST: redis
+      RUNTIME_MOCK_REDIS_PORT: "6379"
+      RUNTIME_MOCK_FENCING_REDIS_ENABLED: "true"
+      RUNTIME_MOCK_API_ENABLED: "true"
+      RUNTIME_MOCK_WORKER_ENABLED: "false"
+      RUNTIME_MOCK_KAFKA_ENABLED: "false"
+      RUNTIME_MOCK_ROLLOUT_SCHEDULER_ENABLED: "false"
+      RUNTIME_MOCK_EXTRACTION_WORKER_ENABLED: "false"
+      RUNTIME_MOCK_REPLAY_WORKER_ENABLED: "false"
+      RUNTIME_MOCK_RECORDING_INGESTION_ENABLED: "true"
+      RUNTIME_MOCK_OBJECT_STORAGE_PROVIDER: minio
+      RUNTIME_MOCK_OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      RUNTIME_MOCK_OBJECT_STORAGE_ACCESS_KEY: runtime_mock
+      RUNTIME_MOCK_OBJECT_STORAGE_SECRET_KEY: runtime_mock_secret
+      RUNTIME_MOCK_OBJECT_STORAGE_BUCKET: runtime-mock
+      RUNTIME_MOCK_MASTER_KEY_BASE64: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      RUNTIME_MOCK_MASTER_KEY_VERSION: compose-dev-v1
+      RUNTIME_MOCK_AUTH_MODE: local-token
+      RUNTIME_MOCK_BOOTSTRAP_TOKEN: runtime-mock-dev-admin-token-change-me
+    ports:
+      - "18280:18280"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec \"exec 3<>/dev/tcp/127.0.0.1/18280; printf 'GET /actuator/health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q 'UP' <&3\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  worker:
+    image: runtime-mock-platform-server:0.1.0-SNAPSHOT
+    container_name: runtime-mock-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: "18281"
       RUNTIME_MOCK_DB_URL: jdbc:postgresql://postgres:5432/runtime_mock
       RUNTIME_MOCK_DB_USER: runtime_mock
       RUNTIME_MOCK_DB_PASSWORD: runtime_mock
@@ -113,11 +142,43 @@ services:
       RUNTIME_MOCK_REDIS_HOST: redis
       RUNTIME_MOCK_REDIS_PORT: "6379"
       RUNTIME_MOCK_FENCING_REDIS_ENABLED: "true"
-      RUNTIME_MOCK_OBJECT_STORE_ROOT: /tmp/runtime-mock-platform-objects
+      RUNTIME_MOCK_API_ENABLED: "false"
+      RUNTIME_MOCK_WORKER_ENABLED: "true"
+      RUNTIME_MOCK_ROLLOUT_SCHEDULER_ENABLED: "true"
+      RUNTIME_MOCK_EXTRACTION_WORKER_ENABLED: "true"
+      RUNTIME_MOCK_REPLAY_WORKER_ENABLED: "true"
+      RUNTIME_MOCK_OBJECT_STORAGE_PROVIDER: minio
+      RUNTIME_MOCK_OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      RUNTIME_MOCK_OBJECT_STORAGE_ACCESS_KEY: runtime_mock
+      RUNTIME_MOCK_OBJECT_STORAGE_SECRET_KEY: runtime_mock_secret
+      RUNTIME_MOCK_OBJECT_STORAGE_BUCKET: runtime-mock
+      RUNTIME_MOCK_MASTER_KEY_BASE64: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      RUNTIME_MOCK_MASTER_KEY_VERSION: compose-dev-v1
     ports:
-      - "18280:18280"
+      - "18281:18281"
     healthcheck:
-      test: ["CMD-SHELL", "bash -ec \"exec 3<>/dev/tcp/127.0.0.1/18280; printf 'GET /actuator/health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q 'UP' <&3\""]
+      test: ["CMD-SHELL", "bash -ec \"exec 3<>/dev/tcp/127.0.0.1/18281; printf 'GET /actuator/health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q 'UP' <&3\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  platform-web:
+    image: runtime-mock-platform-web:0.1.0
+    build:
+      context: ./runtime-mock-platform-web
+      dockerfile: Dockerfile
+    container_name: runtime-mock-platform-web
+    depends_on:
+      platform:
+        condition: service_healthy
+    environment:
+      RUNTIME_MOCK_PLATFORM_API_URL: http://platform:18280
+      RUNTIME_MOCK_WEB_SESSION_KEY: runtime-mock-compose-session-key-change-me
+      RUNTIME_MOCK_WEB_DEMO_MODE: "false"
+    ports:
+      - "18380:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -127,4 +188,3 @@ volumes:
   runtime-mock-kafka-data:
   runtime-mock-redis-data:
   runtime-mock-minio-data:
-  runtime-mock-keycloak-data:

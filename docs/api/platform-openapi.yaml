@@ -4,13 +4,132 @@ info:
   version: 0.1.0
 servers:
   - url: http://127.0.0.1:18280/api/v1
+security:
+  - bearerAuth: []
 paths:
   /control/health:
     get:
       summary: Platform health and counters
+      security: []
       responses:
         "200":
           description: OK
+  /auth/me:
+    get:
+      summary: Return the authenticated subject, roles, capabilities, scopes, and token metadata
+      responses:
+        "200":
+          description: OK
+  /auth/tokens:
+    get:
+      summary: List token metadata without token hashes or plaintext
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Issue a user or Agent opaque Bearer Token
+      responses:
+        "201":
+          description: Token plaintext is returned once
+  /auth/tokens/{id}:
+    delete:
+      summary: Revoke an access token
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Revoked
+  /scripts/validate:
+    post:
+      summary: Compile and validate a Groovy rule without executing it
+      responses:
+        "200":
+          description: Validation result and diagnostics
+  /scripts/test:
+    post:
+      summary: Execute a validated Groovy rule in the bounded Platform workbench
+      responses:
+        "200":
+          description: Decision, output or exception, duration, logs, and diagnostics
+  /dashboard/overview:
+    get:
+      summary: Return dashboard counters, health, failures, and recent activity
+      responses:
+        "200":
+          description: OK
+  /query/{resource}:
+    get:
+      summary: Query a supported resource with server-side paging, search, and status filters
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+        - name: size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Paged resource rows
+  /details/{resource}/{id}:
+    get:
+      summary: Return one supported resource and its related records
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Resource detail
+  /targets/search:
+    get:
+      summary: Search application, instance, Agent, class, and method targets
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: applicationId
+          in: query
+          description: Limit results to targets already registered for this application.
+          schema:
+            type: string
+        - name: environmentId
+          in: query
+          description: Limit results to targets already registered for this environment.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Matching targets
   /control/schedulers/run-once:
     post:
       summary: Run rollout, extraction, and replay schedulers once
@@ -126,6 +245,24 @@ paths:
       responses:
         "201":
           description: Created
+  /rule-versions:
+    get:
+      summary: List immutable rule versions
+      responses:
+        "200":
+          description: OK
+  /rules/{id}/detail:
+    get:
+      summary: Return a rule with immutable versions and rollout context
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Rule detail
   /rules/{id}/versions:
     post:
       summary: Create a new immutable rule version
@@ -146,6 +283,42 @@ paths:
           description: OK
     post:
       summary: Create a rollout operation plan
+      responses:
+        "201":
+          description: Created
+  /rollout-batches:
+    get:
+      summary: List rollout batches
+      responses:
+        "200":
+          description: OK
+  /operation-plans/{id}/batches:
+    post:
+      summary: Create a rollout batch for an operation plan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Created
+  /rollout-executions:
+    get:
+      summary: List rollout instance executions
+      responses:
+        "200":
+          description: OK
+  /rollout-batches/{id}/executions:
+    post:
+      summary: Create an instance execution in a rollout batch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "201":
           description: Created
@@ -172,6 +345,24 @@ paths:
       responses:
         "201":
           description: Created
+  /recording-rule-versions:
+    get:
+      summary: List immutable recording-rule versions
+      responses:
+        "200":
+          description: OK
+  /recording-rules/{id}/versions:
+    post:
+      summary: Create a new immutable recording-rule version
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Created
   /recording-sessions:
     get:
       summary: List recording sessions
@@ -183,6 +374,30 @@ paths:
       responses:
         "201":
           description: Created
+  /recording-sessions/{id}/transition:
+    post:
+      summary: Transition a recording session and enqueue Agent start or stop commands
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated session
+  /recording-sessions/{id}/events:
+    post:
+      summary: Ingest one authenticated, bounded Agent recording batch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Idempotent batch receipt and encrypted object reference
   /datasets:
     get:
       summary: List dataset versions
@@ -262,6 +477,18 @@ paths:
       responses:
         "201":
           description: Created
+  /replay-plans/{id}/transition:
+    post:
+      summary: Transition a replay plan using expected status and version
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
   /replay-executions:
     get:
       summary: List replay executions
@@ -344,3 +571,9 @@ paths:
       responses:
         "200":
           description: OK
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque

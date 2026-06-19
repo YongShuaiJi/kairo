@@ -86,7 +86,7 @@ public final class AgentHttpServer implements AutoCloseable {
     private HttpHandler authenticated(ExchangeHandler handler) {
         return exchange -> {
             try {
-                if (!isHealthPath(exchange.getRequestURI().getPath()) && !authorized(exchange)) {
+                if (!isPublicPath(exchange.getRequestURI().getPath()) && !authorized(exchange)) {
                     write(exchange, 401, Map.of("error", "Unauthorized"));
                     return;
                 }
@@ -104,6 +104,10 @@ public final class AgentHttpServer implements AutoCloseable {
     private void route(HttpExchange exchange) throws IOException {
         String method = exchange.getRequestMethod();
         String rawPath = exchange.getRequestURI().getPath();
+        if (("GET".equals(method) || "HEAD".equals(method)) && isConsolePath(rawPath)) {
+            serveConsoleAsset(exchange, rawPath);
+            return;
+        }
         String path = normalizePath(rawPath);
         if ("GET".equals(method) && "/health".equals(path)) {
             write(exchange, 200, Map.of("status", "UP", "protocolVersion", PROTOCOL_VERSION));
@@ -227,8 +231,57 @@ public final class AgentHttpServer implements AutoCloseable {
                 && tokenManager.accepts(authorization.substring("Bearer ".length()));
     }
 
-    private boolean isHealthPath(String path) {
-        return "/health".equals(path) || "/v1/health".equals(path);
+    private boolean isPublicPath(String path) {
+        return "/health".equals(path)
+                || "/v1/health".equals(path)
+                || isConsolePath(path);
+    }
+
+    private boolean isConsolePath(String path) {
+        return "/".equals(path)
+                || "/index.html".equals(path)
+                || "/styles.css".equals(path)
+                || "/app.js".equals(path);
+    }
+
+    private void serveConsoleAsset(HttpExchange exchange, String path) throws IOException {
+        String asset = switch (path) {
+            case "/", "/index.html" -> "/web/index.html";
+            case "/styles.css" -> "/web/styles.css";
+            case "/app.js" -> "/web/app.js";
+            default -> throw new IllegalArgumentException("Unknown console asset: " + path);
+        };
+        try (InputStream inputStream = AgentHttpServer.class.getResourceAsStream(asset)) {
+            if (inputStream == null) {
+                write(exchange, 404, Map.of("error", "Console asset not found"));
+                return;
+            }
+            byte[] content = inputStream.readAllBytes();
+            exchange.getResponseHeaders().set("Content-Type", contentType(asset));
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+            exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+            if ("HEAD".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(200, -1);
+                return;
+            }
+            exchange.sendResponseHeaders(200, content.length);
+            try (OutputStream outputStream = exchange.getResponseBody()) {
+                outputStream.write(content);
+            }
+        }
+    }
+
+    private String contentType(String asset) {
+        if (asset.endsWith(".html")) {
+            return "text/html; charset=utf-8";
+        }
+        if (asset.endsWith(".css")) {
+            return "text/css; charset=utf-8";
+        }
+        if (asset.endsWith(".js")) {
+            return "application/javascript; charset=utf-8";
+        }
+        return "application/octet-stream";
     }
 
     private String normalizePath(String path) {

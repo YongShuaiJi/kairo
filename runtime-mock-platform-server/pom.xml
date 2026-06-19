@@ -15,6 +15,26 @@
 
     <dependencies>
         <dependency>
+            <groupId>com.example.runtimemock</groupId>
+            <artifactId>runtime-mock-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.example.runtimemock</groupId>
+            <artifactId>runtime-mock-groovy</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.example.runtimemock</groupId>
+            <artifactId>runtime-mock-storage-spi</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.example.runtimemock</groupId>
+            <artifactId>runtime-mock-storage-minio</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
@@ -51,7 +71,6 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
-
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>

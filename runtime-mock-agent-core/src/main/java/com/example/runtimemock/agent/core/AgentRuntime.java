@@ -37,10 +37,12 @@ public final class AgentRuntime implements AutoCloseable {
     private final GroovyScriptCompiler scriptCompiler;
     private final RulePublisher rulePublisher;
     private final RuleDispatcher ruleDispatcher;
+    private final RecordingInvocationObserver recordingObserver;
     private final ByteBuddyTransformerManager transformerManager;
     private final LoadedClassRepository loadedClassRepository;
     private final RuntimeEventBuffer eventBuffer;
     private final ConcurrentHashMap<String, PublishedRule> publishedRules = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, RecordingRegistration> activeRecordings = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> degradedClasses = new ConcurrentHashMap<>();
     private final AtomicReference<AgentState> state = new AtomicReference<>(AgentState.STARTING);
     private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
@@ -65,13 +67,14 @@ public final class AgentRuntime implements AutoCloseable {
                 new com.example.runtimemock.core.SamplingPolicy(),
                 eventBuffer,
                 java.time.Clock.systemUTC());
+        this.recordingObserver = new RecordingInvocationObserver();
         this.transformerManager = new ByteBuddyTransformerManager(instrumentation, instrumentationRegistry);
         this.loadedClassRepository = new LoadedClassRepository(instrumentation);
     }
 
     public void start() {
         try {
-            RuntimeMockBridge.install(new AgentBridgeDispatcher(ruleDispatcher));
+            RuntimeMockBridge.install(new AgentBridgeDispatcher(ruleDispatcher, recordingObserver));
             transformerManager.install();
             cleanupExecutor.scheduleWithFixedDelay(this::cleanupExpiredRules, 1, 1, TimeUnit.SECONDS);
             state.set(AgentState.ACTIVE);
@@ -99,13 +102,14 @@ public final class AgentRuntime implements AutoCloseable {
         MethodKey methodKey = MethodKey.of(method);
         RuleSet oldRuleSet = ruleRegistry.rules(methodKey);
         PublishedRule previous = publishedRules.get(rule.id());
-        boolean oldActive = hasActiveRules(oldRuleSet);
+        boolean oldActive = shouldInstrument(methodKey, oldRuleSet);
         boolean publishApplied = false;
         try {
             CompiledRule compiledRule = rulePublisher.publish(method, rule);
             publishApplied = true;
             publishedRules.put(rule.id(), new PublishedRule(method, methodKey, compiledRule.rule(), compiledRule));
-            applyInstrumentationTransition(method, signature, oldActive, hasActiveRules(ruleRegistry.rules(methodKey)));
+            applyInstrumentationTransition(method, signature, oldActive,
+                    shouldInstrument(methodKey, ruleRegistry.rules(methodKey)));
             eventBuffer.record(previous == null ? "rule.create" : "rule.update", actor, rule.id(),
                     methodKey.toString(), "Published rule version " + compiledRule.rule().version());
             return compiledRule;
@@ -162,11 +166,12 @@ public final class AgentRuntime implements AutoCloseable {
         Method method = publishedRule.method();
         MethodSignature signature = signatureOf(method);
         RuleSet oldRuleSet = ruleRegistry.rules(methodKey);
-        boolean oldActive = hasActiveRules(oldRuleSet);
+        boolean oldActive = shouldInstrument(methodKey, oldRuleSet);
         try {
             rulePublisher.remove(method, ruleId);
             publishedRules.remove(ruleId);
-            applyInstrumentationTransition(method, signature, oldActive, hasActiveRules(ruleRegistry.rules(methodKey)));
+            applyInstrumentationTransition(method, signature, oldActive,
+                    shouldInstrument(methodKey, ruleRegistry.rules(methodKey)));
             eventBuffer.record("rule.delete", actor, ruleId, methodKey.toString(), "Deleted rule");
         } catch (RuntimeException e) {
             ruleRegistry.restoreRule(methodKey, ruleId, publishedRule.compiledRule());
@@ -194,10 +199,12 @@ public final class AgentRuntime implements AutoCloseable {
         try {
             ruleRegistry.clear();
             publishedRules.clear();
+            activeRecordings.clear();
+            recordingObserver.clear();
             instrumentationRegistry.snapshot().forEach(instrumentationRegistry::unregister);
             transformerManager.close();
             transformerManager.install();
-            RuntimeMockBridge.install(new AgentBridgeDispatcher(ruleDispatcher));
+            RuntimeMockBridge.install(new AgentBridgeDispatcher(ruleDispatcher, recordingObserver));
             degradedClasses.clear();
             globallyEnabled = true;
             ruleDispatcher.enabled(true);
@@ -211,6 +218,11 @@ public final class AgentRuntime implements AutoCloseable {
     }
 
     public ResetClassResult resetClass(String classId, String actor) {
+        activeRecordings.values().stream()
+                .filter(recording -> classId.equals(recording.classId()) || classId.equals(recording.className()))
+                .map(RecordingRegistration::sessionId)
+                .toList()
+                .forEach(sessionId -> stopRecording(sessionId, actor));
         List<String> ruleIds = publishedRules.values().stream()
                 .filter(rule -> matchesClass(rule, classId))
                 .map(rule -> rule.rule().id())
@@ -239,6 +251,84 @@ public final class AgentRuntime implements AutoCloseable {
 
     public void recordEvent(String type, String actor, String ruleId, String target, String message) {
         eventBuffer.record(type, actor, ruleId, target, message);
+    }
+
+    public void recordingSink(RecordingEventSink sink) {
+        recordingObserver.sink(sink);
+    }
+
+    public RecordingRegistration startRecording(String sessionId, String classIdOrName,
+                                                String methodName, String methodDescriptor,
+                                                String actor) {
+        requireOperationalForPublish();
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalArgumentException("recording sessionId is required");
+        }
+        RecordingRegistration existing = activeRecordings.get(sessionId);
+        if (existing != null) {
+            return existing;
+        }
+        Method method = loadedClassRepository.resolveMethodTarget(
+                classIdOrName, methodName, methodDescriptor);
+        if (method.isSynthetic() || method.isBridge()) {
+            throw new IllegalArgumentException("Synthetic and bridge methods cannot be recorded: " + method);
+        }
+        MethodKey methodKey = MethodKey.of(method);
+        MethodSignature signature = signatureOf(method);
+        boolean oldActive = shouldInstrument(methodKey, ruleRegistry.rules(methodKey));
+        RecordingRegistration registration = new RecordingRegistration(
+                sessionId,
+                loadedClassRepository.classId(method.getDeclaringClass()),
+                method.getDeclaringClass().getName(),
+                method.getName(),
+                MethodDescriptor.of(method)
+        );
+        try {
+            recordingObserver.start(methodKey, registration);
+            activeRecordings.put(sessionId, registration);
+            applyInstrumentationTransition(method, signature, oldActive, true);
+            eventBuffer.record("recording.start", actor, null, methodKey.toString(),
+                    "Recording session " + sessionId + " started");
+            return registration;
+        } catch (RuntimeException e) {
+            activeRecordings.remove(sessionId);
+            recordingObserver.stop(methodKey, sessionId);
+            restoreInstrumentationState(method, signature, oldActive);
+            eventBuffer.record("recording.start.failed", actor, null, methodKey.toString(), e.getMessage());
+            throw e;
+        }
+    }
+
+    public RecordingRegistration stopRecording(String sessionId, String actor) {
+        RecordingRegistration registration = activeRecordings.remove(sessionId);
+        if (registration == null) {
+            return null;
+        }
+        Method method = loadedClassRepository.resolveMethod(
+                registration.classId(), registration.methodName(), registration.methodDescriptor());
+        MethodKey methodKey = MethodKey.of(method);
+        MethodSignature signature = signatureOf(method);
+        boolean oldActive = shouldInstrument(methodKey, ruleRegistry.rules(methodKey));
+        recordingObserver.stop(methodKey, sessionId);
+        boolean newActive = shouldInstrument(methodKey, ruleRegistry.rules(methodKey));
+        try {
+            applyInstrumentationTransition(method, signature, oldActive, newActive);
+            eventBuffer.record("recording.stop", actor, null, methodKey.toString(),
+                    "Recording session " + sessionId + " stopped");
+            return registration;
+        } catch (RuntimeException e) {
+            recordingObserver.start(methodKey, registration);
+            activeRecordings.put(sessionId, registration);
+            restoreInstrumentationState(method, signature, oldActive);
+            eventBuffer.record("recording.stop.failed", actor, null, methodKey.toString(), e.getMessage());
+            throw e;
+        }
+    }
+
+    public List<RecordingRegistration> recordings() {
+        return activeRecordings.values().stream()
+                .sorted(Comparator.comparing(RecordingRegistration::sessionId))
+                .toList();
     }
 
     public CompiledMockScript compileScript(String ruleId, long version, String script) {
@@ -324,6 +414,8 @@ public final class AgentRuntime implements AutoCloseable {
         RuntimeMockBridge.uninstall();
         ruleRegistry.clear();
         publishedRules.clear();
+        activeRecordings.clear();
+        recordingObserver.clear();
         transformerManager.close();
         scriptCompiler.close();
         cleanupExecutor.shutdownNow();
@@ -362,6 +454,10 @@ public final class AgentRuntime implements AutoCloseable {
 
     private boolean hasActiveRules(RuleSet ruleSet) {
         return ruleSet.all().stream().anyMatch(rule -> isActive(rule.rule()));
+    }
+
+    private boolean shouldInstrument(MethodKey methodKey, RuleSet ruleSet) {
+        return hasActiveRules(ruleSet) || recordingObserver.isRecording(methodKey);
     }
 
     private boolean isActive(MockRule rule) {

@@ -53,6 +53,33 @@ public final class LoadedClassRepository {
 
     public Method resolveMethod(String classId, String methodName, String methodDescriptor) {
         Class<?> type = resolveClass(classId);
+        return resolveMethod(type, methodName, methodDescriptor);
+    }
+
+    public Method resolveMethodTarget(String classIdOrName, String methodName, String methodDescriptor) {
+        if (classIdOrName == null || classIdOrName.isBlank()) {
+            throw new IllegalArgumentException("classId or className is required");
+        }
+        try {
+            return resolveMethod(classIdOrName, methodName, methodDescriptor);
+        } catch (IllegalArgumentException invalidClassId) {
+            return Arrays.stream(instrumentation.getAllLoadedClasses())
+                    .filter(type -> type.getName().equals(classIdOrName))
+                    .map(type -> {
+                        try {
+                            return resolveMethod(type, methodName, methodDescriptor);
+                        } catch (IllegalArgumentException ignored) {
+                            return null;
+                        }
+                    })
+                    .filter(Objects::nonNull)
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Method not found: "
+                            + classIdOrName + "#" + methodName + methodDescriptor));
+        }
+    }
+
+    private Method resolveMethod(Class<?> type, String methodName, String methodDescriptor) {
         return Arrays.stream(type.getDeclaredMethods())
                 .filter(method -> method.getName().equals(methodName))
                 .filter(method -> MethodDescriptor.of(method).equals(methodDescriptor))

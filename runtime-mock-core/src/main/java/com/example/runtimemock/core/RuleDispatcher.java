@@ -20,7 +20,7 @@ import java.util.concurrent.TimeoutException;
 public final class RuleDispatcher {
 
     private static final long SCRIPT_TIMEOUT_MILLIS = 100L;
-    private static final long FIRST_SCRIPT_TIMEOUT_MILLIS = 500L;
+    private static final long FIRST_SCRIPT_TIMEOUT_MILLIS = 1_000L;
     private static final ThreadPoolExecutor SCRIPT_EXECUTOR = new ThreadPoolExecutor(
             0,
             Math.max(4, Runtime.getRuntime().availableProcessors()),

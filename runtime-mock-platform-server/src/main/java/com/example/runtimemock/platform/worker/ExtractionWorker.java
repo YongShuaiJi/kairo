@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,8 +30,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Component
-@ConditionalOnProperty(prefix = "runtime-mock.platform.extraction.worker",
-        name = "enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "runtime-mock.platform",
+        name = {"worker.enabled", "extraction.worker.enabled"}, havingValue = "true")
 public class ExtractionWorker {
 
     private static final Pattern NAMED_PARAMETER = Pattern.compile(":[A-Za-z][A-Za-z0-9_]*");
@@ -45,20 +46,20 @@ public class ExtractionWorker {
 
     private final JdbcTemplate jdbcTemplate;
     private final PlatformJdbcService eventWriter;
-    private final LocalObjectStore objectStore;
+    private final WorkerArtifactStore objectStore;
     private final Clock clock;
     private final int batchSize;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     @Autowired
     public ExtractionWorker(JdbcTemplate jdbcTemplate, PlatformJdbcService eventWriter,
-                            LocalObjectStore objectStore,
+                            WorkerArtifactStore objectStore,
                             @Value("${runtime-mock.platform.extraction.worker.batch-size:5}") int batchSize) {
         this(jdbcTemplate, eventWriter, objectStore, Clock.systemUTC(), batchSize);
     }
 
     ExtractionWorker(JdbcTemplate jdbcTemplate, PlatformJdbcService eventWriter,
-                     LocalObjectStore objectStore, Clock clock, int batchSize) {
+                     WorkerArtifactStore objectStore, Clock clock, int batchSize) {
         this.jdbcTemplate = jdbcTemplate;
         this.eventWriter = eventWriter;
         this.objectStore = objectStore;
@@ -126,19 +127,25 @@ public class ExtractionWorker {
         Map<String, Object> materialized = materialize(taskId);
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> rows = (List<Map<String, Object>>) materialized.get("rows");
-        LocalObjectStore.StoredObject object = objectStore.putJson("extraction", "extraction_task", taskId,
+        WorkerArtifactStore.ArtifactObject object = objectStore.putJson("extraction", "extraction_task", taskId,
                 "ROWS_JSON", rows, Map.of("rowCount", rows.size(), "source", materialized.get("source")));
+        String datasetVersionId = createDatasetVersion(context, task, rows, object);
         jdbcTemplate.update("""
                 insert into extraction_result(
-                    id, extraction_task_id, result_type, object_uri, row_count, bytes_count, content_hash, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                    id, extraction_task_id, result_type, object_uri, row_count, bytes_count, content_hash,
+                    created_at, dataset_version_id
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, "extraction-result-" + UUID.randomUUID(), taskId, "ROWS_JSON", object.objectUri(),
-                rows.size(), object.bytesCount(), object.contentHash(), timestamp(clock.instant()));
-        Map<String, Object> metrics = Map.of(
-                "rowCount", rows.size(),
-                "bytesCount", object.bytesCount(),
-                "contentHash", object.contentHash(),
-                "source", materialized.get("source"));
+                rows.size(), object.bytesCount(), object.contentHash(), timestamp(clock.instant()),
+                datasetVersionId);
+        Map<String, Object> metrics = new LinkedHashMap<>();
+        metrics.put("rowCount", rows.size());
+        metrics.put("bytesCount", object.bytesCount());
+        metrics.put("contentHash", object.contentHash());
+        metrics.put("source", materialized.get("source"));
+        if (datasetVersionId != null) {
+            metrics.put("datasetVersionId", datasetVersionId);
+        }
         jdbcTemplate.update("""
                 update extraction_execution
                    set status = 'SUCCEEDED', finished_at = ?, metrics_json = ?
@@ -160,10 +167,82 @@ public class ExtractionWorker {
                 metrics);
     }
 
+    private String createDatasetVersion(RequestContext context, Map<String, Object> task,
+                                        List<Map<String, Object>> rows,
+                                        WorkerArtifactStore.ArtifactObject object) {
+        Object requestedDatasetId = task.get("dataset_id");
+        if (requestedDatasetId == null || String.valueOf(requestedDatasetId).isBlank()) {
+            return null;
+        }
+        String datasetId = String.valueOf(requestedDatasetId);
+        Map<String, Object> source = normalizeRow(jdbcTemplate.queryForMap("""
+                select d.application_id, d.environment_id
+                  from extraction_task t
+                  join extraction_template et on et.id = t.template_id
+                  join datasource_registration d on d.id = et.datasource_id
+                 where t.id = ?
+                """, task.get("id")));
+        Instant now = clock.instant();
+        try {
+            jdbcTemplate.update("""
+                    insert into dataset(id, name, application_id, environment_id, created_by, created_at)
+                    values (?, ?, ?, ?, ?, ?)
+                    """, datasetId, datasetId, source.get("application_id"), source.get("environment_id"),
+                    context.actor(), timestamp(now));
+        } catch (DuplicateKeyException ignored) {
+            // Existing datasets receive a new immutable version.
+        }
+        Long version = jdbcTemplate.queryForObject("""
+                select coalesce(max(version), 0) + 1
+                  from dataset_version
+                 where dataset_id = ?
+                """, Long.class, datasetId);
+        long nextVersion = version == null ? 1 : version;
+        String versionId = datasetId + ":" + nextVersion;
+        String schemaHash = PlatformJson.sha256(rows.isEmpty() ? List.of() : rows.get(0).keySet());
+        String manifestHash = object.contentHash();
+        String maskingHash = PlatformJson.sha256(Map.of(
+                "source", "EXTRACTION_TASK",
+                "taskId", task.get("id"),
+                "templateId", task.get("template_id"),
+                "templateVersion", task.get("template_version")));
+        Map<String, Object> objectReference = Map.of(
+                "objectType", "ROWS_JSON",
+                "objectUri", object.objectUri(),
+                "contentHash", object.contentHash(),
+                "bytesCount", object.bytesCount());
+        jdbcTemplate.update("""
+                insert into dataset_version(
+                    id, dataset_id, version, source_session_id, schema_hash, manifest_hash, masking_hash,
+                    retention_policy, object_references_json, created_by, created_at, source_type, source_ref
+                ) values (?, ?, ?, null, ?, ?, ?, 'P30D', ?, ?, ?, 'EXTRACTION_TASK', ?)
+                """, versionId, datasetId, nextVersion, schemaHash, manifestHash, maskingHash,
+                PlatformJson.write(List.of(objectReference)), context.actor(), timestamp(now), task.get("id"));
+        jdbcTemplate.update("""
+                insert into dataset_schema(id, dataset_version_id, schema_hash, schema_json, created_at)
+                values (?, ?, ?, ?, ?)
+                """, "dataset-schema-" + UUID.randomUUID(), versionId, schemaHash,
+                PlatformJson.write(rows.isEmpty() ? Map.of("columns", List.of())
+                        : Map.of("columns", rows.get(0).keySet())), timestamp(now));
+        jdbcTemplate.update("""
+                insert into dataset_manifest(id, dataset_version_id, manifest_hash, manifest_json, created_at)
+                values (?, ?, ?, ?, ?)
+                """, "dataset-manifest-" + UUID.randomUUID(), versionId, manifestHash,
+                PlatformJson.write(Map.of("rowCount", rows.size(), "object", objectReference)), timestamp(now));
+        jdbcTemplate.update("""
+                insert into dataset_object_reference(
+                    id, dataset_version_id, object_type, object_uri, content_hash, bytes_count, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?)
+                """, "dataset-object-" + UUID.randomUUID(), versionId, "ROWS_JSON", object.objectUri(),
+                object.contentHash(), object.bytesCount(), timestamp(now));
+        return versionId;
+    }
+
     private Map<String, Object> materialize(String taskId) throws Exception {
         Map<String, Object> task = normalizeRow(jdbcTemplate.queryForMap("""
                 select t.*, v.root_table, v.template_json, d.datasource_type, d.config_json,
-                       d.application_id, d.environment_id, q.max_rows, q.timeout_seconds
+                       d.application_id, d.environment_id, q.max_rows, q.timeout_seconds,
+                       c.provider as credential_provider, c.secret_ref as credential_secret_ref
                   from extraction_task t
                   join extraction_template_version v
                     on v.template_id = t.template_id and v.version = t.template_version
@@ -173,10 +252,12 @@ public class ExtractionWorker {
                     on d.id = et.datasource_id
                   left join extraction_quota q
                     on q.extraction_task_id = t.id
+                  left join datasource_credential_ref c
+                    on c.datasource_id = d.id
                  where t.id = ?
                 """, taskId));
         Map<String, Object> template = PlatformJson.readMap(String.valueOf(task.get("template_json")));
-        Map<String, Object> datasource = PlatformJson.readMap(String.valueOf(task.get("config_json")));
+        Map<String, Object> datasource = resolveDatasourceConfig(task);
         Map<String, Object> parameters = PlatformJson.readMap(String.valueOf(task.get("parameters_json")));
         if ("TEST_FIXTURE".equals(String.valueOf(task.get("datasource_type")))) {
             List<Map<String, Object>> inlineRows = rowsFromValue(template.get("rows"));
@@ -193,6 +274,28 @@ public class ExtractionWorker {
             return Map.of("rows", queryJdbc(task, template, datasource, parameters), "source", jdbcUrl);
         }
         throw new IllegalArgumentException("Datasource requires jdbcUrl; inline rows are only allowed for TEST_FIXTURE");
+    }
+
+    private Map<String, Object> resolveDatasourceConfig(Map<String, Object> task) {
+        Map<String, Object> datasource =
+                new LinkedHashMap<>(PlatformJson.readMap(String.valueOf(task.get("config_json"))));
+        Object secretRefValue = task.get("credential_secret_ref");
+        if (secretRefValue == null || String.valueOf(secretRefValue).isBlank()) {
+            return datasource;
+        }
+        String provider = String.valueOf(task.get("credential_provider"));
+        if (!"LOCAL_ENV".equalsIgnoreCase(provider)) {
+            throw new IllegalArgumentException(
+                    "Unsupported datasource credential provider: " + provider + "; use LOCAL_ENV");
+        }
+        String secretRef = String.valueOf(secretRefValue);
+        String secret = System.getenv(secretRef);
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Datasource credential environment variable is not configured: " + secretRef);
+        }
+        datasource.putAll(PlatformJson.readMap(secret));
+        return datasource;
     }
 
     private List<Map<String, Object>> queryJdbc(Map<String, Object> task, Map<String, Object> template,

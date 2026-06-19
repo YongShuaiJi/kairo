@@ -63,20 +63,58 @@ public class PlatformJdbcService {
     }
 
     public Map<String, Object> health() {
-        return Map.of(
-                "status", "UP",
-                "storage", "postgresql",
-                "recordingSessionCount", count("recording_session"),
-                "datasetVersionCount", count("dataset_version"),
-                "replayPlanCount", count("replay_plan"),
-                "approvalCount", count("approval_request"),
-                "outboxPendingCount", countWhere("outbox_event", "status = 'NEW'")
-        );
+        long started = System.nanoTime();
+        jdbcTemplate.queryForObject("select 1", Integer.class);
+        long latencyMs = java.time.Duration.ofNanos(System.nanoTime() - started).toMillis();
+        Map<String, Object> services = new LinkedHashMap<>();
+        services.put("platformApi", Map.of("status", "UP", "latencyMs", 0));
+        services.put("postgresql", Map.of("status", "UP", "latencyMs", latencyMs));
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("status", "UP");
+        result.put("checkedAt", clock.instant().toString());
+        result.put("storage", "postgresql");
+        result.put("services", services);
+        result.put("recordingSessionCount", count("recording_session"));
+        result.put("datasetVersionCount", count("dataset_version"));
+        result.put("replayPlanCount", count("replay_plan"));
+        result.put("approvalCount", count("approval_request"));
+        result.put("outboxPendingCount", countWhere("outbox_event", "status = 'NEW'"));
+        return result;
     }
 
     public List<Map<String, Object>> list(String table, String orderBy) {
         return normalizeRows(jdbcTemplate.queryForList(
                 "select * from " + table + " order by " + orderBy + " limit 1000"));
+    }
+
+    public List<Map<String, Object>> listFencingTokens() {
+        return normalizeRows(jdbcTemplate.queryForList("""
+                select id, resource_type, resource_id, purpose, sequence, owner, status,
+                       lease_expires_at, created_at, consumed_at, correlation_id
+                  from fencing_token
+                 order by created_at desc, id
+                 limit 1000
+                """));
+    }
+
+    public List<Map<String, Object>> listAgents() {
+        return normalizeRows(jdbcTemplate.queryForList("""
+                select id, instance_id, sidecar_id, status, agent_version, bootstrap_version,
+                       listen_host, listen_port, capabilities_json, last_heartbeat_at, created_at, updated_at
+                  from agent_instance
+                 order by created_at, id
+                 limit 1000
+                """));
+    }
+
+    public List<Map<String, Object>> listDatasources() {
+        return normalizeRows(jdbcTemplate.queryForList("""
+                select id, application_id, environment_id, datasource_type, name, status,
+                       created_by, created_at, updated_at
+                  from datasource_registration
+                 order by created_at, id
+                 limit 1000
+                """));
     }
 
     @Transactional
@@ -177,12 +215,14 @@ public class PlatformJdbcService {
         auditAndOutbox(context, "agent_instance.create", "agent_instance", id, 1,
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "create agent"),
                 Map.of("status", requiredString(request, "status", "ACTIVE")));
-        return getById("agent_instance", id);
+        return safeAgent(getById("agent_instance", id));
     }
 
     @Transactional
     public Map<String, Object> recordAgentHeartbeat(String id, RequestContext context, Map<String, Object> request) {
-        rbacService.require(context, "AGENT_MANAGE");
+        if (!(id.equals(context.actor()) && "agent".equals(context.identitySource()))) {
+            rbacService.require(context, "AGENT_MANAGE");
+        }
         getById("agent_instance", id);
         Instant now = clock.instant();
         String status = requiredString(request, "status", "ACTIVE");
@@ -199,7 +239,7 @@ public class PlatformJdbcService {
         auditAndOutbox(context, "agent_instance.heartbeat", "agent_instance", id, 1,
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "agent heartbeat"),
                 Map.of("status", status));
-        return getById("agent_instance", id);
+        return safeAgent(getById("agent_instance", id));
     }
 
     @Transactional
@@ -452,7 +492,7 @@ public class PlatformJdbcService {
         auditAndOutbox(context, "datasource_registration.create", "datasource_registration", id, 1,
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "create datasource"),
                 Map.of("datasourceType", requiredString(request, "datasourceType", "POSTGRESQL")));
-        return getById("datasource_registration", id);
+        return safeDatasource(getById("datasource_registration", id));
     }
 
     @Transactional
@@ -696,23 +736,62 @@ public class PlatformJdbcService {
         ensureDataset(datasetId, request, context);
         long version = nextDatasetVersion(datasetId);
         String id = datasetId + ":" + version;
+        List<Object> objectReferences = new ArrayList<>(optionalList(request, "objectReferences"));
+        List<Map<String, Object>> recordingBatches = normalizeRows(jdbcTemplate.queryForList("""
+                select id, object_uri, event_count, bytes_count
+                  from recording_batch
+                 where recording_session_id = ? and status = 'SEALED'
+                 order by created_at, id
+                """, sourceSessionId));
+        if (objectReferences.isEmpty()) {
+            recordingBatches.forEach(batch -> objectReferences.add(Map.of(
+                    "objectType", "JSONL_ENCRYPTED",
+                    "objectUri", batch.get("object_uri"),
+                    "contentHash", hash(Map.of(
+                            "batchId", batch.get("id"),
+                            "objectUri", batch.get("object_uri")
+                    )),
+                    "bytesCount", batch.get("bytes_count")
+            )));
+        }
+        Map<String, Object> schema = request.containsKey("schema")
+                ? optionalMap(request, "schema")
+                : Map.of(
+                        "format", "application/x-ndjson",
+                        "eventModel", "runtime-mock.recording-event.v1"
+                );
+        Map<String, Object> manifest = request.containsKey("manifest")
+                ? optionalMap(request, "manifest")
+                : Map.of(
+                        "sourceSessionId", sourceSessionId,
+                        "batchCount", recordingBatches.size(),
+                        "eventCount", recordingBatches.stream()
+                                .mapToLong(batch -> ((Number) batch.get("event_count")).longValue())
+                                .sum(),
+                        "objects", objectReferences
+                );
+        String schemaHash = optionalString(request, "schemaHash", hash(schema));
+        String manifestHash = optionalString(request, "manifestHash", hash(manifest));
+        String maskingHash = optionalString(request, "maskingHash", hash("default-sensitive-fields-v1"));
         jdbcTemplate.update("""
                 insert into dataset_version(
                     id, dataset_id, version, source_session_id, schema_hash, manifest_hash, masking_hash,
-                    retention_policy, object_references_json, created_by, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    retention_policy, object_references_json, created_by, created_at, source_type, source_ref
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 id,
                 datasetId,
                 version,
                 sourceSessionId,
-                requiredString(request, "schemaHash", null),
-                requiredString(request, "manifestHash", null),
-                requiredString(request, "maskingHash", null),
+                schemaHash,
+                manifestHash,
+                maskingHash,
                 requiredString(request, "retentionPolicy", "P30D"),
-                json(optionalList(request, "objectReferences")),
+                json(objectReferences),
                 context.actor(),
-                timestamp(clock.instant())
+                timestamp(clock.instant()),
+                "RECORDING_SESSION",
+                sourceSessionId
         );
         Instant now = clock.instant();
         jdbcTemplate.update("""
@@ -723,13 +802,13 @@ public class PlatformJdbcService {
                 insert into dataset_schema(id, dataset_version_id, schema_hash, schema_json, created_at)
                 values (?, ?, ?, ?, ?)
                 """, "dataset-schema-" + UUID.randomUUID(), id,
-                requiredString(request, "schemaHash", null), jsonValue(request, "schema", Map.of()), timestamp(now));
+                schemaHash, json(schema), timestamp(now));
         jdbcTemplate.update("""
                 insert into dataset_manifest(id, dataset_version_id, manifest_hash, manifest_json, created_at)
                 values (?, ?, ?, ?, ?)
                 """, "dataset-manifest-" + UUID.randomUUID(), id,
-                requiredString(request, "manifestHash", null), jsonValue(request, "manifest", Map.of()), timestamp(now));
-        for (Object item : optionalList(request, "objectReferences")) {
+                manifestHash, json(manifest), timestamp(now));
+        for (Object item : objectReferences) {
             Map<String, Object> objectRef = asMap(item, "objectReferences");
             jdbcTemplate.update("""
                     insert into dataset_object_reference(
@@ -738,7 +817,7 @@ public class PlatformJdbcService {
                     """, "dataset-object-" + UUID.randomUUID(), id,
                     requiredString(objectRef, "objectType", "JSONL"),
                     requiredString(objectRef, "objectUri", null),
-                    requiredString(objectRef, "contentHash", requiredString(request, "manifestHash", null)),
+                    requiredString(objectRef, "contentHash", manifestHash),
                     optionalLong(objectRef, "bytesCount", 0),
                     timestamp(now));
         }
@@ -1282,6 +1361,18 @@ public class PlatformJdbcService {
         Map<String, Object> normalized = new LinkedHashMap<>();
         row.forEach((key, value) -> normalized.put(key.toLowerCase(Locale.ROOT), value));
         return normalized;
+    }
+
+    private Map<String, Object> safeAgent(Map<String, Object> agent) {
+        Map<String, Object> safe = new LinkedHashMap<>(agent);
+        safe.remove("token_hash");
+        return safe;
+    }
+
+    private Map<String, Object> safeDatasource(Map<String, Object> datasource) {
+        Map<String, Object> safe = new LinkedHashMap<>(datasource);
+        safe.remove("config_json");
+        return safe;
     }
 
     private long count(String table) {

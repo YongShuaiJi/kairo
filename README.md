@@ -10,15 +10,18 @@ Java runtime method mock and fault-injection MVP based on Java Instrumentation, 
 - `runtime-mock-groovy`: save-time Groovy compilation, script class cache, and runtime script base class.
 - `runtime-mock-core`: immutable rule sets, atomic rule registry, dispatcher, validation, sampling, hit limits, fail-open, and reentry guard.
 - `runtime-mock-agent-core`: Byte Buddy transformer manager and value/void method advice.
-- `runtime-mock-agent-server`: local JDK `HttpServer` API for health, JVM info, class/method discovery, script compile, rules, metrics, events, reset, and optional platform command polling.
+- `runtime-mock-agent-server`: local JDK `HttpServer` API, embedded local console, runtime lifecycle, and optional platform command polling.
 - `runtime-mock-agent-core-modern`: shaded modern core assembly loaded by the thin bootstrap agent on JDK 17/21.
 - `runtime-mock-agent-bootstrap`: thin `premain` and `agentmain` entrypoints that reflectively load an isolated core jar.
 - `runtime-mock-attach-cli`: dynamic attach command implemented through reflective JDK Attach API access.
 - `runtime-mock-ops`: local emergency operations CLI.
-- `runtime-mock-sidecar`: production recording safety primitives, including masking/tokenization and encrypted WAL.
-- `runtime-mock-web`: static operations console assets.
-- `runtime-mock-control-server`: lightweight control server that hosts the web console, proxies Agent API calls, and exposes early `/api/v1` control-plane resources.
-- `runtime-mock-platform-server`: Spring Boot 3 / Java 21 production control plane with PostgreSQL/Flyway, Redis fencing, RBAC, approval, audit hash chain, outbox/Kafka publishing, agent command queue, rollout executor, extraction worker, and replay worker.
+- `runtime-mock-sidecar`: recording safety library for masking/tokenization and encrypted WAL. It is a library boundary, not a deployed sidecar service.
+- `runtime-mock-storage-spi`: cloud-neutral object storage contract.
+- `runtime-mock-storage-minio`: MinIO object storage adapter.
+- `runtime-mock-platform-server`: Spring Boot 3 / Java 21 platform image. It runs as either the API role
+  or the asynchronous Worker role and uses PostgreSQL, Redis, Kafka and encrypted MinIO storage.
+- `runtime-mock-platform-web`: independent Next.js / React 19 central management UI with TypeScript,
+  Tailwind CSS, shadcn/ui, Lucide icons, Monaco Editor, and Runtime Mock domain components.
 - `runtime-mock-demo`: Spring Boot-compatible demo domain and `OrderService`.
 - `runtime-mock-integration-tests`: JVM integration tests using dynamic Byte Buddy attachment.
 
@@ -36,8 +39,6 @@ runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar
 runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar
 runtime-mock-attach-cli/target/runtime-mock-attach.jar
 runtime-mock-ops/target/runtime-mock-ops.jar
-runtime-mock-sidecar/target/runtime-mock-sidecar-0.1.0-SNAPSHOT.jar
-runtime-mock-control-server/target/runtime-mock-control-server.jar
 runtime-mock-platform-server/target/runtime-mock-platform-server-0.1.0-SNAPSHOT.jar
 ```
 
@@ -87,7 +88,9 @@ runtime.start();
 
 ## Agent HTTP API
 
-All endpoints except `/health` and `/v1/health` require `X-Agent-Token: <token>` or `Authorization: Bearer <token>`.
+All JSON endpoints except `/health` and `/v1/health` require `X-Agent-Token: <token>` or
+`Authorization: Bearer <token>`. The loopback-only HTML console is public, but it must submit the
+Agent token before it can call an API.
 
 ```text
 GET  /health
@@ -133,20 +136,16 @@ java -jar runtime-mock-ops/target/runtime-mock-ops.jar reset-all \
   --token dev
 ```
 
-## Control Console
-
-```bash
-java -jar runtime-mock-control-server/target/runtime-mock-control-server.jar \
-  --port 18180 \
-  --agent http://127.0.0.1:18080 \
-  --token dev
-```
+## Local Agent Console
 
 Open:
 
 ```text
-http://127.0.0.1:18180/
+http://127.0.0.1:18080/
 ```
+
+The console is served directly by `runtime-mock-agent-server`; there is no additional proxy or
+in-memory control-plane process.
 
 ## Local demo target
 
@@ -155,7 +154,7 @@ For a quick end-to-end fault-injection exercise, start the bundled Spring Boot d
 ```bash
 java \
   -javaagent:/Users/jiyongshuai/code/runtime-mock/runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar=coreJar=/Users/jiyongshuai/code/runtime-mock/runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar,bootstrapJar=/Users/jiyongshuai/code/runtime-mock/runtime-mock-bootstrap-api/target/runtime-mock-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev \
-  -jar runtime-mock-demo/target/runtime-mock-demo-0.1.0-SNAPSHOT.jar \
+  -jar runtime-mock-demo/target/runtime-mock-demo-0.1.0-SNAPSHOT-exec.jar \
   --server.port=18090
 ```
 
@@ -167,24 +166,9 @@ curl -X POST http://127.0.0.1:18090/demo/orders \
   -d '{"userId":"u1","amount":12.34}'
 ```
 
-Then open the console, connect to `http://127.0.0.1:18080` with token `dev`, search `OrderService`, select a method such as `createOrder`, and publish a fault script.
-
-Implemented local control-plane endpoints:
-
-```text
-GET  /api/v1/control/health
-GET  /api/v1/audits
-GET  /api/v1/recording-sessions
-POST /api/v1/recording-sessions
-POST /api/v1/recording-sessions/{id}/transition
-GET  /api/v1/datasets
-POST /api/v1/datasets
-GET  /api/v1/replay-plans
-POST /api/v1/replay-plans
-POST /api/v1/replay-plans/{id}/transition
-```
-
-Other `/api/*` paths still proxy to the local Agent API for console compatibility.
+Then open the console, enter token `dev`, search `OrderService`, select a method such as
+`createOrder`, and publish a fault script. Persistent control-plane resources are available only
+from `runtime-mock-platform-server`.
 
 ## Production Platform Server
 
@@ -204,11 +188,44 @@ Docker-assisted local platform:
 ./scripts/platform-down.sh
 ```
 
+The central Web console is available at:
+
+```text
+http://127.0.0.1:18380/
+```
+
+Use the Compose development token `runtime-mock-dev-admin-token-change-me`. The Web process is an
+independent Next.js deployment and connects to Platform API through its same-origin BFF.
+
+The default architecture deliberately does not require Kubernetes, Keycloak, Vault, or a cloud KMS.
+Compose runs a Platform API process and a separate Worker process from the same image. Authentication
+uses revocable opaque Bearer Tokens whose hashes are stored in PostgreSQL.
+
+Design and requirements:
+
+```text
+docs/architecture/simplified-platform-architecture.md
+docs/architecture/runtime-mock-platform-web-design.md
+docs/architecture/refactor-migration-plan.md
+docs/architecture/module-boundary-governance.md
+docs/requirements/runtime-mock-product-requirements.md
+```
+
 Primary platform endpoints:
 
 ```text
 GET  /api/v1/control/health
 POST /api/v1/control/schedulers/run-once
+GET  /api/v1/auth/me
+GET  /api/v1/auth/tokens
+POST /api/v1/auth/tokens
+DELETE /api/v1/auth/tokens/{id}
+POST /api/v1/scripts/validate
+POST /api/v1/scripts/test
+GET  /api/v1/dashboard/overview
+GET  /api/v1/query/{resource}
+GET  /api/v1/details/{resource}/{id}
+GET  /api/v1/targets/search
 GET  /api/v1/fencing-tokens
 POST /api/v1/fencing-tokens
 GET  /api/v1/instances
@@ -225,6 +242,7 @@ POST /api/v1/agent-commands/{id}/ack
 GET  /api/v1/rules
 POST /api/v1/rules
 POST /api/v1/rules/{id}/versions
+GET  /api/v1/rules/{id}/detail
 GET  /api/v1/operation-plans
 POST /api/v1/operation-plans
 POST /api/v1/operation-plans/{id}/transition
@@ -236,6 +254,7 @@ POST /api/v1/recording-rules/{id}/versions
 GET  /api/v1/recording-sessions
 POST /api/v1/recording-sessions
 POST /api/v1/recording-sessions/{id}/transition
+POST /api/v1/recording-sessions/{id}/events
 GET  /api/v1/datasets
 POST /api/v1/datasets
 GET  /api/v1/datasources
@@ -273,7 +292,7 @@ docs/api/error-codes.md
 docs/ops/platform-docker.md
 ```
 
-## Current MVP Behavior
+## Current Product Behavior
 
 - Supports BEFORE, RETURN, and THROWS Groovy rules.
 - Supports argument replacement, early return, early throw, return replacement, return-to-throw, throw replacement, and throw-to-return.
@@ -287,17 +306,21 @@ docs/ops/platform-docker.md
 - Groovy scripts are compiled on publish/save, never on the hot path.
 - Bootstrap and bridge jars are compiled as Java 8 bytecode; the modern core jar targets JDK 17/21.
 - Groovy save-time security uses `SecureASTCustomizer`, receiver/import/method/property restrictions, source limits, and loop/method/class/package bans.
+- Groovy runtime execution is bounded; repeated timeout/error conditions lock unsafe rules while business calls remain fail-open.
 - The Spring Boot platform server persists control-plane state with PostgreSQL/Flyway and covers assets, agents, commands, rules, rollouts, recording, datasets, extraction, replay, approvals, Redis-backed fencing, audit hash chain, and outbox events.
 - Rollout execution can enqueue idempotent Agent commands, Agents can poll and ack commands, and ack results advance rollout execution/batch/operation state.
-- Extraction and replay workers can run in-process from the platform scheduler and create durable result rows plus local object-store artifacts.
+- Recording-session transitions automatically issue Agent start/stop commands. The Agent observes matched invocations, batches them through a bounded uploader, and the Platform masks, encrypts, indexes, and stores them in MinIO.
+- Extraction and replay run in the dedicated Worker role and create durable result rows plus encrypted MinIO artifacts.
 - Sidecar core supports sensitive payload masking/tokenization and AES-GCM encrypted WAL records.
+- The independent Next.js Web console provides authenticated dashboards, resource lists/details, recording views, and a Monaco rule workbench backed by real Platform APIs.
 
 ## Current Limits
 
 - The agent now uses a thin Java 8 bootstrap jar and a shaded modern core jar. The legacy JDK 8/11 core packaging is still pending.
-- Groovy security is an AST-level first pass, not a complete sandbox with bounded iteration counters, runtime timeouts, or automatic LOCKED workflow.
+- Groovy security combines AST restrictions and bounded runtime execution, but it is not process-level isolation. Only trusted administrators should be allowed to author production rules.
 - Dynamic attach can emit JDK warnings on modern Java; prefer `-javaagent` for stable environments.
-- The legacy `runtime-mock-control-server` remains for the static console and local Agent proxy path; production state lives in `runtime-mock-platform-server`.
-- OIDC/JWT validation is not fully wired yet; current platform RBAC uses seeded local users and role bindings through `X-Actor`.
-- Sidecar currently provides data-safety primitives only; gRPC mTLS streaming, queue ingestion, token rotation, and object storage upload workers are still pending.
+- The former local `runtime-mock-control-server` and single-consumer `runtime-mock-web` modules were removed. The Agent serves its local console directly, and all persistent control-plane state lives in `runtime-mock-platform-server`.
+- Platform authentication uses revocable opaque user/Agent Bearer Tokens. OIDC remains an optional future identity-provider adapter.
+- `runtime-mock-sidecar` remains a reusable recording-safety library, not a required deployed process. The active recording path is Agent uploader to authenticated Platform ingestion and encrypted object storage.
 - Extraction and Replay workers are implemented for platform-managed execution, sample-row/JDBC extraction, synthetic/HTTP replay, and result artifacts; remaining production hardening includes SQL plan review, MySQL driver packaging, distributed worker scaling, richer comparison policies, and cleanup execution.
+- Kubernetes, enterprise SSO, cloud KMS, cloud object-storage adapters, performance certification, and multi-region operation are optional future integrations rather than dependencies of the current product.

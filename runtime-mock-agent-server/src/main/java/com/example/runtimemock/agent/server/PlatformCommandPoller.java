@@ -93,6 +93,8 @@ final class PlatformCommandPoller implements AutoCloseable {
                 runtime.resetAll("platform");
                 yield Map.of("resetAll", true);
             }
+            case "START_RECORDING" -> startRecording(payload);
+            case "STOP_RECORDING" -> stopRecording(payload);
             case "REFRESH_RUNTIME_STATE" -> Map.of("refreshed", true);
             default -> throw new IllegalArgumentException("Unsupported platform command: " + commandType);
         };
@@ -102,6 +104,45 @@ final class PlatformCommandPoller implements AutoCloseable {
         AgentHttpServer.RuleRequest request = AgentHttpServer.RuleRequest.from(ruleNode);
         runtime.publish(request.classId(), request.toRule(runtime.methods(request.classId())), "platform");
         return Map.of("ruleId", request.id(), "version", request.version(), "classId", request.classId());
+    }
+
+    private Map<String, Object> startRecording(JsonNode payload) {
+        JsonNode target = payload.path("target");
+        String sessionId = requiredText(payload, "sessionId");
+        String classTarget = text(target, "classId", text(target, "className", null));
+        String methodName = text(target, "methodName", null);
+        String methodDescriptor = text(target, "methodDescriptor",
+                target.path("matcher").path("descriptor").asText(null));
+        var registration = runtime.startRecording(
+                sessionId, classTarget, methodName, methodDescriptor, "platform");
+        return Map.of(
+                "sessionId", registration.sessionId(),
+                "classId", registration.classId(),
+                "className", registration.className(),
+                "methodName", registration.methodName(),
+                "methodDescriptor", registration.methodDescriptor()
+        );
+    }
+
+    private Map<String, Object> stopRecording(JsonNode payload) {
+        String sessionId = requiredText(payload, "sessionId");
+        var registration = runtime.stopRecording(sessionId, "platform");
+        return Map.of("sessionId", sessionId, "stopped", registration != null);
+    }
+
+    private String requiredText(JsonNode node, String name) {
+        String value = text(node, name, null);
+        if (value == null) {
+            throw new IllegalArgumentException(name + " is required");
+        }
+        return value;
+    }
+
+    private String text(JsonNode node, String name, String fallback) {
+        JsonNode value = node.path(name);
+        return value.isMissingNode() || value.isNull() || value.asText().isBlank()
+                ? fallback
+                : value.asText();
     }
 
     private JsonNode post(String path, Object body) throws IOException, InterruptedException {

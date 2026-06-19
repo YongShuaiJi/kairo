@@ -32,14 +32,27 @@ management:
 
 runtime-mock:
   platform:
+    api:
+      enabled: ${RUNTIME_MOCK_API_ENABLED:true}
+    worker:
+      enabled: ${RUNTIME_MOCK_WORKER_ENABLED:false}
     kafka:
       enabled: ${RUNTIME_MOCK_KAFKA_ENABLED:false}
     fencing:
       redis-enabled: ${RUNTIME_MOCK_FENCING_REDIS_ENABLED:false}
       key-prefix: ${RUNTIME_MOCK_FENCING_KEY_PREFIX:runtime-mock:fencing:}
       default-ttl-seconds: ${RUNTIME_MOCK_FENCING_DEFAULT_TTL_SECONDS:300}
-    object-store:
-      local-root: ${RUNTIME_MOCK_OBJECT_STORE_ROOT:./data/platform-objects}
+    object-storage:
+      provider: ${RUNTIME_MOCK_OBJECT_STORAGE_PROVIDER:minio}
+      endpoint: ${RUNTIME_MOCK_OBJECT_STORAGE_ENDPOINT:http://127.0.0.1:9000}
+      access-key: ${RUNTIME_MOCK_OBJECT_STORAGE_ACCESS_KEY:runtime_mock}
+      secret-key: ${RUNTIME_MOCK_OBJECT_STORAGE_SECRET_KEY:}
+      bucket: ${RUNTIME_MOCK_OBJECT_STORAGE_BUCKET:runtime-mock}
+      create-bucket: ${RUNTIME_MOCK_OBJECT_STORAGE_CREATE_BUCKET:true}
+    encryption:
+      master-key-base64: ${RUNTIME_MOCK_MASTER_KEY_BASE64:}
+      master-key-file: ${RUNTIME_MOCK_MASTER_KEY_FILE:}
+      key-version: ${RUNTIME_MOCK_MASTER_KEY_VERSION:local-v1}
     rollout:
       scheduler:
         enabled: ${RUNTIME_MOCK_ROLLOUT_SCHEDULER_ENABLED:true}
@@ -55,6 +68,10 @@ runtime-mock:
         enabled: ${RUNTIME_MOCK_REPLAY_WORKER_ENABLED:true}
         fixed-delay-ms: ${RUNTIME_MOCK_REPLAY_WORKER_FIXED_DELAY_MS:5000}
         batch-size: ${RUNTIME_MOCK_REPLAY_WORKER_BATCH_SIZE:5}
+    recording:
+      ingestion:
+        enabled: ${RUNTIME_MOCK_RECORDING_INGESTION_ENABLED:false}
+        max-batch-events: ${RUNTIME_MOCK_RECORDING_MAX_BATCH_EVENTS:500}
     outbox:
       batch-size: ${RUNTIME_MOCK_OUTBOX_BATCH_SIZE:50}
       max-attempts: ${RUNTIME_MOCK_OUTBOX_MAX_ATTEMPTS:10}
@@ -66,6 +83,7 @@ runtime-mock:
         initial-delay-ms: ${RUNTIME_MOCK_OUTBOX_INITIAL_DELAY_MS:2000}
         fixed-delay-ms: ${RUNTIME_MOCK_OUTBOX_FIXED_DELAY_MS:5000}
     auth:
-      header-actor: X-Actor
-      header-roles: X-Roles
-      shared-secret: ${RUNTIME_MOCK_PLATFORM_AUTH_SHARED_SECRET:}
+      mode: ${RUNTIME_MOCK_AUTH_MODE:local-token}
+      bootstrap-token: ${RUNTIME_MOCK_BOOTSTRAP_TOKEN:}
+      bootstrap-actor: ${RUNTIME_MOCK_BOOTSTRAP_ACTOR:system}
+      bootstrap-ttl-days: ${RUNTIME_MOCK_BOOTSTRAP_TTL_DAYS:365}

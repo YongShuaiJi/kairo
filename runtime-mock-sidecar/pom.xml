@@ -11,7 +11,7 @@
     </parent>
 
     <artifactId>runtime-mock-sidecar</artifactId>
-    <name>Runtime Mock Sidecar</name>
+    <name>Runtime Mock Recording Safety Core</name>
 
     <dependencies>
         <dependency>

@@ -94,6 +94,18 @@ public final class AgentLaunchConfig {
         return longValue("platformCommandLeaseSeconds", 30L);
     }
 
+    public int recordingQueueCapacity() {
+        return intValue("recordingQueueCapacity", 10_000);
+    }
+
+    public int recordingBatchSize() {
+        return intValue("recordingBatchSize", 100);
+    }
+
+    public long recordingFlushIntervalMillis() {
+        return longValue("recordingFlushIntervalMillis", 500L);
+    }
+
     private String stringValue(String name, String defaultValue) {
         String value = values.get(name);
         return value == null || value.isBlank() ? defaultValue : value;

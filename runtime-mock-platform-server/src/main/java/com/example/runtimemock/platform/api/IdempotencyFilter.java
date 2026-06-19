@@ -50,7 +50,10 @@ final class IdempotencyFilter extends OncePerRequestFilter {
             return;
         }
         byte[] requestBody = request.getInputStream().readAllBytes();
-        String actor = header(request, "X-Actor", "system");
+        Object contextValue = request.getAttribute(RequestContextFactory.REQUEST_CONTEXT_ATTRIBUTE);
+        String actor = contextValue instanceof com.example.runtimemock.platform.service.RequestContext context
+                ? context.actor()
+                : "anonymous";
         String requestHash = PlatformJson.sha256(Map.of(
                 "actor", actor,
                 "method", request.getMethod(),
@@ -89,11 +92,6 @@ final class IdempotencyFilter extends OncePerRequestFilter {
                     Timestamp.from(now), Timestamp.from(now.plusSeconds(86_400)));
         }
         wrappedResponse.copyBodyToResponse();
-    }
-
-    private String header(HttpServletRequest request, String name, String fallback) {
-        String value = request.getHeader(name);
-        return value == null || value.isBlank() ? fallback : value;
     }
 
     private static final class CachedBodyRequest extends HttpServletRequestWrapper {

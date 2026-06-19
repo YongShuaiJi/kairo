@@ -11,6 +11,14 @@ spring:
 
 runtime-mock:
   platform:
+    auth:
+      mode: header-dev
+    worker:
+      enabled: false
+    object-storage:
+      provider: memory
+    encryption:
+      master-key-base64: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     kafka:
       enabled: false
     rollout:

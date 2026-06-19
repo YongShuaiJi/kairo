@@ -4,6 +4,11 @@
 
 本文档基于当前 `runtime-mock` 工程的实际代码重构原始需求、技术设计与任务拆解。它不是纯概念方案，而是当前实现的基线说明，包含已完成能力、实际架构、接口协议、验收覆盖、运行方式、限制以及生产级 100% 完成所需的后续工作。
 
+> 结构更新（2026-06-18）：本文档中的 `runtime-mock-control-server` 和
+> `runtime-mock-web` 章节属于早期本地控制面历史记录。重复的内存控制面已删除，
+> 静态控制台已并入 `runtime-mock-agent-server`。当前模块边界以
+> `docs/architecture/module-boundary-governance.md` 为准。
+
 文档状态：
 
 - 当前工程版本：`0.1.0-SNAPSHOT`
@@ -54,8 +59,9 @@ runtime-mock
 ├── runtime-mock-attach-cli
 ├── runtime-mock-ops
 ├── runtime-mock-sidecar
-├── runtime-mock-web
-├── runtime-mock-control-server
+├── runtime-mock-storage-spi
+├── runtime-mock-storage-minio
+├── runtime-mock-platform-server
 ├── runtime-mock-demo
 └── runtime-mock-integration-tests
 ```
@@ -70,14 +76,15 @@ runtime-mock
 | `runtime-mock-groovy` | Groovy 保存时编译、脚本 ClassLoader、脚本基类、AST 安全策略、脚本执行 |
 | `runtime-mock-core` | 规则注册、不可变 RuleSet、调度器、类型校验、采样、命中限制、重入保护、日志限制 |
 | `runtime-mock-agent-core` | Agent 运行时、Byte Buddy Transformer、Advice、类搜索、方法搜索、指标与事件 |
-| `runtime-mock-agent-server` | Agent 本地 HTTP API，基于 JDK `HttpServer` |
+| `runtime-mock-agent-server` | Agent 本地 HTTP API、内嵌控制台和 Platform 命令轮询 |
 | `runtime-mock-agent-core-modern` | JDK 17/21 modern core shaded assembly |
 | `runtime-mock-agent-bootstrap` | Java 8 thin bootstrap，`premain`、`agentmain`、参数解析、隔离 ClassLoader 加载 Core |
 | `runtime-mock-attach-cli` | 动态 Attach 命令行工具 |
 | `runtime-mock-ops` | 本机 emergency operations CLI |
-| `runtime-mock-sidecar` | 录制数据安全底座：脱敏、稳定 tokenization、AES-GCM 加密 WAL |
-| `runtime-mock-web` | 静态 Web 控制台资源 |
-| `runtime-mock-control-server` | 控制台静态资源服务、Agent API 代理、早期 `/api/v1` 控制面资源 |
+| `runtime-mock-sidecar` | 录制数据安全领域库：脱敏、稳定 tokenization、AES-GCM 加密 WAL；不是微服务 |
+| `runtime-mock-storage-spi` | 云无关对象存储契约 |
+| `runtime-mock-storage-minio` | MinIO 对象存储适配器 |
+| `runtime-mock-platform-server` | PostgreSQL 权威控制面；同一产物支持 API 与 Worker 角色 |
 | `runtime-mock-demo` | Spring Boot 兼容 Demo 业务对象与 `OrderService` |
 | `runtime-mock-integration-tests` | JVM 集成测试，覆盖核心验收场景 |
 
@@ -90,7 +97,6 @@ runtime-mock
 ```mermaid
 flowchart TB
     Browser["Web Console"]
-    Control["runtime-mock-control-server<br/>Static UI + Agent API Proxy"]
     AgentHttp["runtime-mock-agent-server<br/>JDK HttpServer"]
     AgentCore["runtime-mock-agent-core<br/>AgentRuntime + Byte Buddy"]
     Core["runtime-mock-core<br/>RuleRegistry + RuleDispatcher"]
@@ -100,8 +106,7 @@ flowchart TB
     Advice["Byte Buddy Advice<br/>ValueMethodAdvice / VoidMethodAdvice"]
     Biz["Business Method"]
 
-    Browser --> Control
-    Control --> AgentHttp
+    Browser --> AgentHttp
     AgentHttp --> AgentCore
     AgentCore --> Core
     Core --> Groovy
@@ -115,7 +120,7 @@ flowchart TB
 核心调用链：
 
 1. 用户在控制台选择 JVM、类、方法和 Groovy 脚本。
-2. 控制台通过 `runtime-mock-control-server` 代理请求到 Agent HTTP API。
+2. 控制台由 `runtime-mock-agent-server` 直接托管，并使用 Bearer Token 调用同源 Agent API。
 3. Agent HTTP Server 校验 token，解析规则请求。
 4. `AgentRuntime` 解析目标 classId 与方法 descriptor，编译 Groovy，构建 `CompiledRule`。
 5. `RuleRegistry` 原子替换目标方法的不可变 `RuleSet`。
@@ -590,26 +595,15 @@ Authorization: Bearer <token>
 
 ---
 
-# 十一、控制端和 Web UI
+# 十一、本地 Agent Web UI
 
-当前控制端由两个模块组成：
-
-- `runtime-mock-web`：静态 HTML、CSS、JavaScript。
-- `runtime-mock-control-server`：JDK HttpServer，托管静态资源并把 `/api/**` 请求代理到 Agent。
-
-启动命令：
-
-```bash
-java -jar runtime-mock-control-server/target/runtime-mock-control-server.jar \
-  --port 18180 \
-  --agent http://127.0.0.1:18080 \
-  --token dev
-```
+本地控制台资源已经并入 `runtime-mock-agent-server`。Agent 启动本地 HTTP API 后即可访问，
+不再启动额外代理进程，也不再维护第二套内存控制面。
 
 访问地址：
 
 ```text
-http://127.0.0.1:18180/
+http://127.0.0.1:18080/
 ```
 
 本地演示目标程序：
@@ -617,7 +611,7 @@ http://127.0.0.1:18180/
 ```bash
 java \
   -javaagent:/Users/jiyongshuai/code/runtime-mock/runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar=coreJar=/Users/jiyongshuai/code/runtime-mock/runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar,bootstrapJar=/Users/jiyongshuai/code/runtime-mock/runtime-mock-bootstrap-api/target/runtime-mock-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev \
-  -jar runtime-mock-demo/target/runtime-mock-demo-0.1.0-SNAPSHOT.jar \
+  -jar runtime-mock-demo/target/runtime-mock-demo-0.1.0-SNAPSHOT-exec.jar \
   --server.port=18090
 ```
 
@@ -711,8 +705,7 @@ runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar
 runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar
 runtime-mock-attach-cli/target/runtime-mock-attach.jar
 runtime-mock-ops/target/runtime-mock-ops.jar
-runtime-mock-sidecar/target/runtime-mock-sidecar-0.1.0-SNAPSHOT.jar
-runtime-mock-control-server/target/runtime-mock-control-server.jar
+runtime-mock-platform-server/target/runtime-mock-platform-server-0.1.0-SNAPSHOT.jar
 ```
 
 ## 13.3 当前测试覆盖

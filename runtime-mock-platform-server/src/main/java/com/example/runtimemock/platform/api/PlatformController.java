@@ -1,11 +1,13 @@
 package com.example.runtimemock.platform.api;
 
 import com.example.runtimemock.platform.command.AgentCommandService;
+import com.example.runtimemock.platform.recording.RecordingSessionCommandService;
 import com.example.runtimemock.platform.service.PlatformJdbcService;
 import com.example.runtimemock.platform.service.PlatformMaintenanceService;
 import com.example.runtimemock.platform.service.RequestContext;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -20,19 +22,24 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1")
+@ConditionalOnProperty(prefix = "runtime-mock.platform.api", name = "enabled",
+        havingValue = "true", matchIfMissing = true)
 public final class PlatformController {
 
     private final PlatformJdbcService service;
     private final AgentCommandService agentCommandService;
     private final PlatformMaintenanceService maintenanceService;
+    private final RecordingSessionCommandService recordingSessionCommandService;
     private final RequestContextFactory requestContextFactory;
 
     public PlatformController(PlatformJdbcService service, AgentCommandService agentCommandService,
                               PlatformMaintenanceService maintenanceService,
+                              RecordingSessionCommandService recordingSessionCommandService,
                               RequestContextFactory requestContextFactory) {
         this.service = service;
         this.agentCommandService = agentCommandService;
         this.maintenanceService = maintenanceService;
+        this.recordingSessionCommandService = recordingSessionCommandService;
         this.requestContextFactory = requestContextFactory;
     }
 
@@ -48,7 +55,7 @@ public final class PlatformController {
 
     @GetMapping("/fencing-tokens")
     public List<Map<String, Object>> fencingTokens() {
-        return service.list("fencing_token", "created_at, id");
+        return service.listFencingTokens();
     }
 
     @PostMapping("/fencing-tokens")
@@ -84,7 +91,7 @@ public final class PlatformController {
 
     @GetMapping("/agents")
     public List<Map<String, Object>> agents() {
-        return service.list("agent_instance", "created_at, id");
+        return service.listAgents();
     }
 
     @PostMapping("/agents")
@@ -225,7 +232,7 @@ public final class PlatformController {
 
     @GetMapping("/datasources")
     public List<Map<String, Object>> datasources() {
-        return service.list("datasource_registration", "created_at, id");
+        return service.listDatasources();
     }
 
     @PostMapping("/datasources")
@@ -326,7 +333,7 @@ public final class PlatformController {
     public Map<String, Object> transitionRecordingSession(@PathVariable String id,
                                                           HttpServletRequest httpRequest,
                                                           @Valid @RequestBody Map<String, Object> request) {
-        return service.transitionRecordingSession(id, context(httpRequest), request);
+        return recordingSessionCommandService.transition(id, context(httpRequest), request);
     }
 
     @GetMapping("/datasets")

@@ -23,8 +23,8 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
-@ConditionalOnProperty(prefix = "runtime-mock.platform.rollout.scheduler",
-        name = "enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "runtime-mock.platform",
+        name = {"worker.enabled", "rollout.scheduler.enabled"}, havingValue = "true")
 public class RolloutExecutor {
 
     private final JdbcTemplate jdbcTemplate;

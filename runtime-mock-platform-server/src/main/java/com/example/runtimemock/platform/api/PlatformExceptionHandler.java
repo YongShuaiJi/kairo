@@ -4,6 +4,7 @@ import com.example.runtimemock.platform.service.PlatformException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -30,6 +31,17 @@ final class PlatformExceptionHandler {
                 "Request validation failed",
                 correlationId(request),
                 Map.of("errorCount", exception.getErrorCount()),
+                false
+        ));
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    ResponseEntity<ApiError> notFound(NoResourceFoundException exception, HttpServletRequest request) {
+        return ResponseEntity.status(404).body(new ApiError(
+                "ROUTE_NOT_FOUND",
+                "API route not found: " + exception.getResourcePath(),
+                correlationId(request),
+                Map.of(),
                 false
         ));
     }
