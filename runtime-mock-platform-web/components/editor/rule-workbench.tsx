@@ -42,6 +42,9 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NumberInput } from "@/components/ui/number-input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react").then((module) => module.Editor), {
@@ -241,7 +244,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
   const [busy, setBusy] = useState<"validate" | "test" | "save" | null>(null);
   const [dirty, setDirty] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
-  const [leftWidth, setLeftWidth] = useState(250);
+  const [leftWidth, setLeftWidth] = useState(300);
   const [monacoReady, setMonacoReady] = useState(false);
   const [instances, setInstances] = useState<PlatformRecord[]>([]);
   const [metadataLoading, setMetadataLoading] = useState(true);
@@ -602,8 +605,14 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
   }
 
   return (
-    <div className={cn(focusMode && "fixed inset-0 z-50 bg-slate-950 p-3")}>
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+    <div
+      data-testid="rule-workbench"
+      className={cn(
+        "flex min-h-0 flex-col",
+        focusMode ? "fixed inset-0 z-50 h-screen overflow-hidden bg-slate-950 p-3" : "lg:h-full lg:overflow-hidden",
+      )}
+    >
+      <div className="mb-4 flex shrink-0 flex-wrap items-center gap-3">
         <Button variant="ghost" size="icon" className={cn(focusMode && "text-slate-300 hover:bg-white/10 hover:text-white")} asChild><Link href="/rules"><ArrowLeft /></Link></Button>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -621,15 +630,26 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
         </div>
       </div>
 
-      <div className={cn("overflow-clip rounded-xl border bg-white shadow-sm", focusMode ? "h-[calc(100vh-86px)] border-white/10 bg-slate-900 shadow-2xl" : "h-[calc(100vh-170px)] min-h-[620px] max-h-[820px] border-slate-200")}>
+      <div
+        data-testid="rule-workbench-frame"
+        className={cn(
+          "min-h-0 overflow-clip rounded-xl border bg-white shadow-sm",
+          focusMode
+            ? "flex-1 border-white/10 bg-slate-900 shadow-2xl"
+            : "h-[720px] min-h-[620px] border-slate-200 lg:h-auto lg:min-h-0 lg:flex-1",
+        )}
+      >
         <div
-          className="grid h-full"
+          className="grid h-full min-h-0 overflow-hidden"
           style={{
             gridTemplateColumns: `${focusMode ? 0 : leftWidth}px minmax(460px,1fr) ${focusMode || !sideOpen ? 0 : 300}px`,
-            gridTemplateRows: bottomOpen && !focusMode ? "minmax(340px,1fr) 240px" : "minmax(0,1fr) 0px",
+            gridTemplateRows: bottomOpen && !focusMode ? "minmax(240px,1fr) minmax(180px,34%)" : "minmax(0,1fr) 0px",
           }}
         >
-          <aside className={cn("scrollbar-thin overflow-y-auto border-r bg-slate-50/70", focusMode && "invisible")}>
+          <aside
+            data-testid="rule-config-scroll"
+            className={cn("scrollbar-thin min-h-0 overflow-y-auto overscroll-contain border-r bg-slate-50/70", focusMode && "invisible")}
+          >
             <div className="flex items-center justify-between border-b bg-white px-4 py-3"><span className="flex items-center gap-2 text-sm font-semibold"><Focus className="size-4 text-indigo-600" />目标与策略</span><ChevronDown className="size-4 text-slate-400" /></div>
             <div className="space-y-4 p-4">
               <div>
@@ -641,34 +661,38 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                   <span className="mb-1.5 block text-xs font-medium text-slate-600">规则名称</span>
                   <Input id="rule-name" placeholder="例如：支付超时故障注入" value={name} onChange={(event) => { setName(event.target.value); setDirty(true); }} />
                 </label>
-                <label className="mt-3 block" htmlFor="rule-application">
+                <div className="mt-3 block">
                   <span className="mb-1.5 block text-xs font-medium text-slate-600">应用</span>
-                  <select
-                    id="rule-application"
+                  <Select
                     value={applicationId}
-                    onChange={(event) => changeApplication(event.target.value)}
+                    onValueChange={changeApplication}
                     disabled={metadataLoading || Boolean(metadataError)}
-                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
                   >
-                    <option value="">{metadataLoading ? "正在加载应用…" : "请选择应用"}</option>
-                    {applicationId && !applications.includes(applicationId) ? <option value={applicationId}>{applicationId}</option> : null}
-                    {applications.map((application) => <option key={application} value={application}>{application}</option>)}
-                  </select>
-                </label>
-                <label className="mt-3 block" htmlFor="rule-environment">
+                    <SelectTrigger id="rule-application" aria-label="应用">
+                      <SelectValue placeholder={metadataLoading ? "正在加载应用…" : "请选择应用"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {applicationId && !applications.includes(applicationId) ? <SelectItem value={applicationId}>{applicationId}</SelectItem> : null}
+                      {applications.map((application) => <SelectItem key={application} value={application}>{application}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="mt-3 block">
                   <span className="mb-1.5 block text-xs font-medium text-slate-600">环境</span>
-                  <select
-                    id="rule-environment"
+                  <Select
                     value={environmentId}
-                    onChange={(event) => changeEnvironment(event.target.value)}
+                    onValueChange={changeEnvironment}
                     disabled={!applicationId}
-                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
                   >
-                    <option value="">{applicationId ? "请选择环境" : "请先选择应用"}</option>
-                    {environmentId && !environments.includes(environmentId) ? <option value={environmentId}>{environmentId}</option> : null}
-                    {environments.map((environment) => <option key={environment} value={environment}>{environment}</option>)}
-                  </select>
-                </label>
+                    <SelectTrigger id="rule-environment" aria-label="环境">
+                      <SelectValue placeholder={applicationId ? "请选择环境" : "请先选择应用"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {environmentId && !environments.includes(environmentId) ? <SelectItem value={environmentId}>{environmentId}</SelectItem> : null}
+                      {environments.map((environment) => <SelectItem key={environment} value={environment}>{environment}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
                 {metadataError ? (
                   <div className="mt-3 rounded-lg border border-red-100 bg-red-50 p-3 text-xs leading-5 text-red-700">
                     {metadataError}。请先确认 Platform API 可用。
@@ -764,29 +788,58 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                   <p className="rounded-lg border border-dashed p-3 text-xs leading-5 text-slate-400">选择目标方法后设置执行阶段与安全边界。</p>
                 ) : (
                   <>
-                    <label className="block" htmlFor="rule-phase">
+                    <div className="block">
                       <span className="mb-1.5 block text-xs font-medium text-slate-600">执行阶段</span>
-                      <select id="rule-phase" value={executionPhase} onChange={(event) => changePhase(event.target.value as InvokePhase | "")} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-indigo-500">
-                        <option value="">请选择执行阶段</option>
-                        <option value="BEFORE">调用前</option>
-                        <option value="RETURN">正常返回后</option>
-                        <option value="THROWS">抛出异常时</option>
-                      </select>
-                    </label>
-                    <div className="mt-3 grid grid-cols-2 gap-3">
-                      <label><span className="mb-1.5 block text-xs font-medium text-slate-600">风险等级</span><select value={riskLevel} onChange={(event) => { setRiskLevel(event.target.value); setDirty(true); }} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm"><option>LOW</option><option>MEDIUM</option><option>HIGH</option></select></label>
-                      <label><span className="mb-1.5 block text-xs font-medium text-slate-600">命中上限</span><Input type="number" min="1" value={maxHits} onChange={(event) => { setMaxHits(event.target.value); setDirty(true); }} /></label>
+                      <Select value={executionPhase} onValueChange={(value) => changePhase(value as InvokePhase)}>
+                        <SelectTrigger id="rule-phase" aria-label="执行阶段">
+                          <SelectValue placeholder="请选择执行阶段" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="BEFORE">调用前</SelectItem>
+                          <SelectItem value="RETURN">正常返回后</SelectItem>
+                          <SelectItem value="THROWS">抛出异常时</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                    <label className="mt-3 block"><span className="mb-1.5 block text-xs font-medium text-slate-600">有效期（秒）</span><Input type="number" min="1" value={ttlSeconds} onChange={(event) => { setTtlSeconds(event.target.value); setDirty(true); }} /></label>
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <div>
+                        <span className="mb-1.5 block text-xs font-medium text-slate-600">风险等级</span>
+                        <Select value={riskLevel} onValueChange={(value) => { setRiskLevel(value); setDirty(true); }}>
+                          <SelectTrigger aria-label="风险等级">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="LOW">低风险</SelectItem>
+                            <SelectItem value="MEDIUM">中风险</SelectItem>
+                            <SelectItem value="HIGH">高风险</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div><span className="mb-1.5 block text-xs font-medium text-slate-600">命中上限</span><NumberInput aria-label="命中上限" min={1} value={maxHits} onValueChange={(value) => { setMaxHits(value); setDirty(true); }} /></div>
+                    </div>
+                    <div className="mt-3 block"><span className="mb-1.5 block text-xs font-medium text-slate-600">有效期（秒）</span><NumberInput aria-label="有效期（秒）" min={1} step={60} value={ttlSeconds} onValueChange={(value) => { setTtlSeconds(value); setDirty(true); }} /></div>
                   </>
                 )}
               </div>
-              <input aria-label="左侧面板宽度" type="range" min="220" max="380" value={leftWidth} onChange={(event) => setLeftWidth(Number(event.target.value))} className="w-full accent-indigo-600" />
+              <div className="rounded-lg border border-slate-200/80 bg-white/70 px-3 py-2">
+                <div className="mb-1.5 flex items-center justify-between text-[10px] text-slate-400">
+                  <span>配置区宽度</span>
+                  <span>{leftWidth}px</span>
+                </div>
+                <Slider
+                  aria-label="左侧面板宽度"
+                  min={220}
+                  max={380}
+                  step={10}
+                  value={[leftWidth]}
+                  onValueChange={([value]) => setLeftWidth(value)}
+                />
+              </div>
             </div>
           </aside>
 
           <section
-            className={cn("min-w-0 border-r", focusMode ? "border-white/10 bg-slate-900" : "border-slate-200 bg-[#f8fafd]")}
+            className={cn("min-h-0 min-w-0 overflow-hidden border-r", focusMode ? "border-white/10 bg-slate-900" : "border-slate-200 bg-[#f8fafd]")}
             data-testid="rule-editor-surface"
             data-editor-theme={focusMode ? "dark" : "light"}
           >
@@ -804,7 +857,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                 <span className={cn("ml-1 flex items-center gap-1.5", focusMode ? "text-slate-500" : "text-slate-400")}><Braces className="size-3.5" />Groovy · UTF-8</span>
               </div>
             </div>
-            <div className="relative h-[calc(100%-44px)]">
+            <div className="relative min-h-0 h-[calc(100%-44px)]">
               {editorEnabled && monacoReady ? (
                 <MonacoEditor
                   height="100%"
@@ -836,7 +889,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
             </div>
           </section>
 
-          <aside className={cn("scrollbar-thin overflow-y-auto bg-white", (focusMode || !sideOpen) && "invisible")}>
+          <aside className={cn("scrollbar-thin min-h-0 overflow-y-auto overscroll-contain bg-white", (focusMode || !sideOpen) && "invisible")}>
             <div className="flex h-11 border-b">
               <button onClick={() => setSideTab("diagnostics")} className={cn("flex-1 border-b-2 text-xs font-medium", sideTab === "diagnostics" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}>诊断 ({diagnostics.length})</button>
               <button onClick={() => setSideTab("context")} className={cn("flex-1 border-b-2 text-xs font-medium", sideTab === "context" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}>上下文</button>
@@ -870,16 +923,16 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
             )}
           </aside>
 
-          <section className={cn("col-span-3 min-w-0 border-t bg-white", (!bottomOpen || focusMode) && "invisible")}>
+          <section className={cn("col-span-3 min-h-0 min-w-0 overflow-hidden border-t bg-white", (!bottomOpen || focusMode) && "invisible")}>
             <div className="flex h-10 items-center border-b px-3">
               <button onClick={() => setBottomTab("test")} className={cn("flex h-full items-center gap-2 border-b-2 px-3 text-xs font-medium", bottomTab === "test" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}><Beaker className="size-3.5" />试运行</button>
               <button onClick={() => setBottomTab("diff")} className={cn("flex h-full items-center gap-2 border-b-2 px-3 text-xs font-medium", bottomTab === "diff" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}><FileDiff className="size-3.5" />版本 Diff</button>
               <div className="ml-auto flex items-center gap-2 text-[10px] text-slate-400"><Clock3 className="size-3" />服务端执行上限 1000 ms</div>
             </div>
             {bottomTab === "test" ? (
-              <div className="grid h-[200px] grid-cols-2 divide-x">
-                <div className="p-3"><div className="mb-2 flex items-center justify-between"><span className="text-xs font-medium text-slate-600">受控输入（JSON）</span><Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(testInput)}><Copy />复制</Button></div><Textarea value={testInput} onChange={(event) => setTestInput(event.target.value)} className="h-[138px] resize-none font-mono text-xs" /></div>
-                <div className="scrollbar-thin overflow-y-auto bg-slate-50/70 p-3 text-xs text-slate-600">
+              <div className="grid h-[calc(100%-40px)] min-h-0 grid-cols-2 divide-x">
+                <div className="min-h-0 overflow-y-auto overscroll-contain p-3"><div className="mb-2 flex items-center justify-between"><span className="text-xs font-medium text-slate-600">受控输入（JSON）</span><Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(testInput)}><Copy />复制</Button></div><Textarea value={testInput} onChange={(event) => setTestInput(event.target.value)} className="min-h-24 h-[calc(100%-36px)] resize-none font-mono text-xs" /></div>
+                <div className="scrollbar-thin min-h-0 overflow-y-auto overscroll-contain bg-slate-50/70 p-3 text-xs text-slate-600">
                   {!testResult ? <div className="flex h-full flex-col items-center justify-center text-slate-400"><div className="mb-3 flex size-10 items-center justify-center rounded-xl border border-slate-200 bg-white shadow-sm"><TerminalSquare className="size-5 text-slate-500" /></div><span>点击“试运行”查看输出、异常、日志和对象差异</span></div> : (
                     <>
                       <div className="mb-3 flex items-center gap-2">{testResult.status === "SUCCESS" ? <CheckCircle2 className="size-4 text-emerald-500" /> : <XCircle className="size-4 text-red-500" />}<span className="font-semibold text-slate-800">{testResult.status}</span><span className="ml-auto text-slate-400">{testResult.durationMs} ms</span></div>
@@ -890,14 +943,14 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                 </div>
               </div>
             ) : (
-              <div className="h-[200px]">
+              <div className="h-[calc(100%-40px)] min-h-0">
                 {monacoReady ? <MonacoDiffEditor original={previousScript} modified={script} language="groovy-runtime-mock" theme="runtime-mock-light" options={{ readOnly: true, renderSideBySide: true, minimap: { enabled: false }, automaticLayout: true, fontSize: 11, lineHeight: 17 }} /> : null}
               </div>
             )}
           </section>
         </div>
       </div>
-      <div className={cn("mt-2 flex items-center text-[10px]", focusMode ? "text-slate-600" : "text-slate-400")}><Sparkles className="mr-1 size-3" />Ctrl/⌘ + S 保存 · 拖动左侧滑块可调整配置区宽度 · 所有脚本校验和执行都由 Platform API 完成</div>
+      <div className={cn("mt-2 flex shrink-0 items-center text-[10px]", focusMode ? "text-slate-600" : "text-slate-400")}><Sparkles className="mr-1 size-3" />Ctrl/⌘ + S 保存 · 拖动左侧滑块可调整配置区宽度 · 所有脚本校验和执行都由 Platform API 完成</div>
     </div>
   );
 }

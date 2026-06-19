@@ -16,6 +16,8 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
+import { NumberInput } from "@/components/ui/number-input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -292,18 +294,32 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
           </DialogHeader>
           <form onSubmit={(event) => { event.preventDefault(); createMutation.mutate(); }} className="space-y-4">
             {(activeForm?.fields ?? []).map((field) => (
-              <label key={field.key} className="block">
+              <div key={field.key} className="block">
                 <span className="mb-1.5 block text-sm font-medium text-slate-700">{field.label}{field.required ? <span className="text-red-500"> *</span> : null}</span>
                 {field.type === "json" || field.type === "textarea" ? (
-                  <Textarea required={field.required} value={form[field.key] ?? ""} onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.placeholder} className={field.type === "json" ? "min-h-24 font-mono text-xs" : ""} />
+                  <Textarea aria-label={field.label} required={field.required} value={form[field.key] ?? ""} onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.placeholder} className={field.type === "json" ? "min-h-24 font-mono text-xs" : ""} />
                 ) : field.type === "select" ? (
-                  <select required={field.required} value={form[field.key] ?? ""} onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))} className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-indigo-500">
-                    {field.options?.map((option) => <option key={option} value={option}>{humanize(option)}</option>)}
-                  </select>
+                  <Select value={form[field.key] ?? ""} onValueChange={(value) => setForm((current) => ({ ...current, [field.key]: value }))}>
+                    <SelectTrigger aria-label={field.label}>
+                      <SelectValue placeholder={field.placeholder ?? `请选择${field.label}`} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {field.options?.map((option) => <SelectItem key={option} value={option}>{humanize(option)}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                ) : field.type === "number" ? (
+                  <NumberInput
+                    aria-label={field.label}
+                    required={field.required}
+                    min={0}
+                    value={form[field.key] ?? ""}
+                    onValueChange={(value) => setForm((current) => ({ ...current, [field.key]: value }))}
+                    placeholder={field.placeholder}
+                  />
                 ) : (
-                  <Input type={field.type === "number" ? "number" : "text"} required={field.required} value={form[field.key] ?? ""} onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.placeholder} />
+                  <Input aria-label={field.label} type="text" required={field.required} value={form[field.key] ?? ""} onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.placeholder} />
                 )}
-              </label>
+              </div>
             ))}
             <DialogFooter>
               <Button type="button" variant="secondary" onClick={() => setCreating(false)}>取消</Button>

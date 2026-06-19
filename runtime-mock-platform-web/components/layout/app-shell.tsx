@@ -69,6 +69,7 @@ const navigation = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const workspaceRoute = pathname.startsWith("/rules/");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -184,7 +185,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="min-h-screen">
+    <div className={cn("min-h-screen", workspaceRoute && "lg:h-screen lg:overflow-hidden")}>
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 bg-slate-950 lg:block">{sidebar}</aside>
       {mobileOpen ? (
         <div className="fixed inset-0 z-50 lg:hidden">
@@ -196,8 +197,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       ) : null}
 
-      <div className="lg:pl-64">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-slate-200/80 bg-white/85 px-4 backdrop-blur-xl sm:px-6">
+      <div className={cn("lg:pl-64", workspaceRoute && "lg:flex lg:h-screen lg:min-h-0 lg:flex-col lg:overflow-hidden")}>
+        <header className={cn("sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-slate-200/80 bg-white/85 px-4 backdrop-blur-xl sm:px-6", workspaceRoute && "lg:relative lg:shrink-0")}>
           <Button aria-label="打开导航菜单" variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)}><Menu /></Button>
           <button onClick={() => setCommandOpen(true)} className="flex h-9 w-full max-w-md items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 text-left text-sm text-slate-400 hover:border-slate-300 hover:bg-white">
             <Search className="size-4" />
@@ -234,11 +235,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
         {user?.demo ? (
-          <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-xs text-amber-800">
+          <div className={cn("border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-xs text-amber-800", workspaceRoute && "lg:shrink-0")}>
             当前使用演示数据。写操作不会影响真实 Platform API。
           </div>
         ) : null}
-        <main className="mx-auto max-w-[1600px] p-4 sm:p-6 lg:p-8">{children}</main>
+        <main data-testid="app-main" className={cn("mx-auto w-full max-w-[1600px] p-4 sm:p-6 lg:p-8", workspaceRoute && "lg:min-h-0 lg:flex-1 lg:overflow-hidden")}>{children}</main>
       </div>
 
       <Dialog open={commandOpen} onOpenChange={setCommandOpen}>
