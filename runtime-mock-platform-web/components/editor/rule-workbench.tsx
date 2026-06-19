@@ -89,35 +89,44 @@ function defineEditorThemes(monaco: Monaco) {
     base: "vs",
     inherit: true,
     rules: [
-      { token: "comment", foreground: "8491A8", fontStyle: "italic" },
+      { token: "comment", foreground: "8A96AA", fontStyle: "italic" },
       { token: "keyword", foreground: "5B4FF0", fontStyle: "bold" },
-      { token: "string", foreground: "B45309" },
-      { token: "number", foreground: "047857" },
-      { token: "identifier", foreground: "25324A" },
-      { token: "delimiter", foreground: "64748B" },
+      { token: "string", foreground: "A84D16" },
+      { token: "number", foreground: "087C64" },
+      { token: "identifier", foreground: "26334D" },
+      { token: "delimiter", foreground: "66758E" },
       { token: "operator", foreground: "7C3AED" },
     ],
     colors: {
-      "editor.background": "#FBFCFE",
-      "editor.foreground": "#25324A",
-      "editorLineNumber.foreground": "#A4AEC0",
+      "editor.background": "#F8FAFD",
+      "editor.foreground": "#26334D",
+      "editorLineNumber.foreground": "#AAB4C5",
       "editorLineNumber.activeForeground": "#5B4FF0",
-      "editorGutter.background": "#F8FAFC",
-      "editor.lineHighlightBackground": "#F1F5FF",
-      "editor.selectionBackground": "#DDE4FF",
+      "editorGutter.background": "#F4F7FB",
+      "editor.lineHighlightBackground": "#EEF2FF",
+      "editor.lineHighlightBorder": "#00000000",
+      "editor.selectionBackground": "#DDE3FF",
       "editor.inactiveSelectionBackground": "#E9EDFA",
       "editorCursor.foreground": "#5B4FF0",
-      "editorIndentGuide.background1": "#E5EAF2",
+      "editorIndentGuide.background1": "#E4E9F2",
       "editorIndentGuide.activeBackground1": "#C5CCDB",
+      "editorWhitespace.foreground": "#D7DEE9",
       "editorBracketMatch.background": "#EEF0FF",
       "editorBracketMatch.border": "#7C6FF6",
+      "editorOverviewRuler.border": "#00000000",
+      "editor.foldBackground": "#E9EDFF80",
       "editorWidget.background": "#FFFFFF",
       "editorWidget.border": "#E2E8F0",
+      "editorWidget.foreground": "#26334D",
       "editorSuggestWidget.background": "#FFFFFF",
       "editorSuggestWidget.border": "#E2E8F0",
       "editorSuggestWidget.selectedBackground": "#EEF0FF",
+      "editorSuggestWidget.highlightForeground": "#5B4FF0",
       "editorHoverWidget.background": "#FFFFFF",
       "editorHoverWidget.border": "#E2E8F0",
+      "scrollbarSlider.background": "#94A3B833",
+      "scrollbarSlider.hoverBackground": "#94A3B855",
+      "scrollbarSlider.activeBackground": "#64748B66",
     },
   });
   monaco.editor.defineTheme("runtime-mock-focus", {
@@ -424,10 +433,23 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
     );
   }, [diagnostics]);
 
+  useEffect(() => {
+    if (!monacoRef.current) return;
+    const theme = focusMode ? "runtime-mock-focus" : "runtime-mock-light";
+    defineEditorThemes(monacoRef.current);
+    monacoRef.current.editor.setTheme(theme);
+  }, [focusMode]);
+
+  function editorWillMount(monaco: Monaco) {
+    defineEditorThemes(monaco);
+    monaco.editor.setTheme(focusMode ? "runtime-mock-focus" : "runtime-mock-light");
+  }
+
   function editorMount(editorInstance: editor.IStandaloneCodeEditor, monaco: Monaco) {
     editorRef.current = editorInstance;
     monacoRef.current = monaco;
     defineEditorThemes(monaco);
+    monaco.editor.setTheme(focusMode ? "runtime-mock-focus" : "runtime-mock-light");
     disposables.current = registerGroovy(monaco);
     editorInstance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => void save());
   }
@@ -764,11 +786,11 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
           </aside>
 
           <section
-            className={cn("min-w-0 border-r", focusMode ? "border-white/10 bg-slate-900" : "border-slate-200 bg-[#fbfcfe]")}
+            className={cn("min-w-0 border-r", focusMode ? "border-white/10 bg-slate-900" : "border-slate-200 bg-[#f8fafd]")}
             data-testid="rule-editor-surface"
             data-editor-theme={focusMode ? "dark" : "light"}
           >
-            <div className={cn("flex h-11 items-center border-b px-3 text-xs", focusMode ? "border-white/10 bg-[#111a2d] text-slate-300" : "border-slate-200 bg-slate-50/90 text-slate-600")}>
+            <div className={cn("flex h-11 items-center border-b px-3 text-xs", focusMode ? "border-white/10 bg-[#111a2d] text-slate-300" : "border-slate-200 bg-white/85 text-slate-600")}>
               <Code2 className={cn("mr-2 size-4", focusMode ? "text-indigo-300" : "text-indigo-600")} />
               <span className="font-mono">rule.groovy</span>
               {executionPhase ? <Badge variant="neutral" className={cn("ml-3", focusMode && "border-white/10 bg-white/10 text-slate-300")}>{phaseLabel(executionPhase)}</Badge> : null}
@@ -789,10 +811,11 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                   language="groovy-runtime-mock"
                   value={script}
                   onChange={markDirty}
+                  beforeMount={editorWillMount}
                   onMount={editorMount}
                   path={`runtime-mock://rules/${ruleId ?? "new"}/draft.groovy`}
                   theme={focusMode ? "runtime-mock-focus" : "runtime-mock-light"}
-                  options={{ minimap: { enabled: false }, fontSize: 13, lineHeight: 22, fontLigatures: true, tabSize: 4, insertSpaces: true, automaticLayout: true, padding: { top: 16, bottom: 16 }, scrollBeyondLastLine: false, bracketPairColorization: { enabled: true }, suggest: { showSnippets: true }, wordWrap: "on", renderLineHighlight: "all", overviewRulerBorder: false, hideCursorInOverviewRuler: true, foldingHighlight: false }}
+                  options={{ minimap: { enabled: false }, fontFamily: "'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace", fontSize: 13, lineHeight: 22, fontLigatures: true, tabSize: 4, insertSpaces: true, automaticLayout: true, padding: { top: 16, bottom: 16 }, scrollBeyondLastLine: false, bracketPairColorization: { enabled: true }, suggest: { showSnippets: true }, wordWrap: "on", renderLineHighlight: "all", overviewRulerBorder: false, hideCursorInOverviewRuler: true, foldingHighlight: false, smoothScrolling: true }}
                 />
               ) : editorEnabled ? (
                 <div className={cn("flex h-full items-center justify-center text-sm", focusMode ? "bg-slate-900 text-slate-500" : "bg-slate-50 text-slate-400")}><Loader2 className="mr-2 size-4 animate-spin" />正在初始化本地代码编辑器…</div>
