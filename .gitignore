@@ -70,6 +70,13 @@ Desktop.ini
 coverage/
 *.exec
 
+# Node / Next.js output
+node_modules/
+.next/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
 # Local container overrides and volumes
 docker-compose.override.yml
 .docker/

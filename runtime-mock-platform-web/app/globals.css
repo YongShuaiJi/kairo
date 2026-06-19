@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4f6f9;
+  --foreground: #111827;
+  --surface: #ffffff;
+  --surface-subtle: #f8fafc;
+  --surface-strong: #eef2f7;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --primary: #4f46e5;
+  --primary-strong: #3730a3;
+  --primary-soft: #eef2ff;
+  --success: #059669;
+  --success-soft: #ecfdf5;
+  --warning: #d97706;
+  --warning-soft: #fffbeb;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --info: #0284c7;
+  --info-soft: #f0f9ff;
+  --sidebar: #111827;
+  --sidebar-muted: #94a3b8;
+  --sidebar-active: rgba(99, 102, 241, 0.2);
+  --radius: 0.75rem;
+  --runtime-font-sans: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --runtime-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--runtime-font-sans);
+  --font-mono: var(--runtime-font-mono);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 85% -10%, rgb(99 102 241 / 0.08), transparent 28rem),
+    var(--background);
+  color: var(--foreground);
+  font-family: var(--runtime-font-sans);
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(79 70 229 / 0.85);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgb(79 70 229 / 0.22);
+}
+
+.mono {
+  font-family: var(--runtime-font-mono);
+}
+
+.surface {
+  border: 1px solid var(--border);
+  background: rgb(255 255 255 / 0.9);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 10px 30px rgb(15 23 42 / 0.035);
+  backdrop-filter: blur(14px);
+}
+
+.soft-grid {
+  background-image:
+    linear-gradient(rgb(148 163 184 / 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(148 163 184 / 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.scrollbar-thin {
+  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-width: thin;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

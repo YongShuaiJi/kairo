@@ -1,0 +1,328 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, ChevronLeft, ChevronRight, Copy, Plus, RefreshCw, Search, X } from "lucide-react";
+import { toast } from "sonner";
+import { platformFetch } from "@/lib/api/client";
+import type { PlatformRecord, SessionUser } from "@/lib/api/types";
+import { resourceConfigs, type ResourceColumn, type ResourceForm } from "@/lib/resource-config";
+import { formatBytes, formatDate, humanize, shortId } from "@/lib/utils";
+import { PageHeader } from "@/components/layout/page-header";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
+
+type PagedResult = { items: PlatformRecord[]; page: number; size: number; total: number };
+
+function valueOf(record: PlatformRecord, key: string) {
+  const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+  return record[key] ?? record[snake];
+}
+
+function statusVariant(status: string) {
+  const value = status.toUpperCase();
+  if (["UP", "ONLINE", "ACTIVE", "READY", "RUNNING", "SUCCESS", "SUCCEEDED", "COMPLETED", "APPROVED", "PUBLISHED", "AVAILABLE", "HEALTHY", "MATCHED", "ACKED"].includes(value)) return "success" as const;
+  if (["PENDING", "WAITING_APPROVAL", "SCHEDULED", "BUILDING", "RETRYING", "RECORDING", "PARTIAL", "MEDIUM", "QUEUED"].includes(value)) return "warning" as const;
+  if (["FAILED", "OFFLINE", "REJECTED", "ERROR", "HIGH", "DIFF", "CANCELLED"].includes(value)) return "danger" as const;
+  if (["DRAFT", "PAUSED", "ARCHIVED", "LOW", "ROLLED_BACK"].includes(value)) return "neutral" as const;
+  return "info" as const;
+}
+
+function Cell({ value, column }: { value: unknown; column: ResourceColumn }) {
+  if (value === null || value === undefined || value === "") return <span className="text-slate-300">—</span>;
+  if (column.kind === "status") return <Badge variant={statusVariant(String(value))}>{humanize(String(value))}</Badge>;
+  if (column.kind === "date") return <span className="whitespace-nowrap text-slate-500">{formatDate(String(value))}</span>;
+  if (column.kind === "bytes") return <span>{formatBytes(Number(value))}</span>;
+  if (column.kind === "progress") {
+    const progress = Number(value);
+    return <div className="flex min-w-28 items-center gap-2"><div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.min(100, progress)}%` }} /></div><span className="w-8 text-right text-xs text-slate-500">{progress}%</span></div>;
+  }
+  const rendered = Array.isArray(value) ? value.join(", ") : typeof value === "object" ? JSON.stringify(value) : String(value);
+  return <span className={column.kind === "mono" ? "font-mono text-xs text-slate-600" : ""}>{rendered}</span>;
+}
+
+function initialForm(form: ResourceForm | undefined) {
+  return Object.fromEntries((form?.fields ?? []).map((field) => [field.key, field.defaultValue ?? ""]));
+}
+
+export function ResourcePage({ resourceKey }: { resourceKey: string }) {
+  const config = resourceConfigs[resourceKey];
+  const queryClient = useQueryClient();
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
+  const [activeEndpoint, setActiveEndpoint] = useState(config.endpoint);
+  const [selected, setSelected] = useState<PlatformRecord | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [created, setCreated] = useState<PlatformRecord | null>(null);
+
+  const activeTab = config.tabs?.find((tab) => tab.endpoint === activeEndpoint);
+  const columns = activeTab?.columns.length ? activeTab.columns : config.columns;
+  const activeForm = activeTab?.form ?? (activeEndpoint === config.endpoint ? config.form : undefined);
+  const [form, setForm] = useState<Record<string, string>>(() => initialForm(activeForm));
+
+  useEffect(() => {
+    setPage(0);
+    setForm(initialForm(activeForm));
+  }, [activeEndpoint, activeForm]);
+
+  const session = useQuery({
+    queryKey: ["session"],
+    queryFn: async () => {
+      const response = await fetch("/api/auth/session");
+      if (!response.ok) throw new Error("会话已失效");
+      return response.json() as Promise<SessionUser>;
+    },
+  });
+  const can = (capability: string) =>
+    Boolean(session.data?.capabilities?.includes("ADMIN") || session.data?.capabilities?.includes(capability));
+  const transitionCapability: Record<string, string> = {
+    "operation-plans": "ROLLOUT_MANAGE",
+    "recording-sessions": "RECORD_ARGUMENTS",
+    "extraction-tasks": "DATA_EXTRACT",
+    "replay-plans": "IMPORT_TO_TEST",
+    "replay-executions": "REPLAY_EXECUTE",
+  };
+
+  const resourceQuery = useQuery({
+    queryKey: ["resource", activeEndpoint, page, query],
+    queryFn: () => platformFetch<PagedResult>(`query/${activeEndpoint}?page=${page}&size=25&q=${encodeURIComponent(query.trim())}`),
+    refetchInterval: activeEndpoint === "agents" ? 15_000 : false,
+  });
+  const rows = resourceQuery.data?.items ?? [];
+
+  const detailQuery = useQuery({
+    queryKey: ["detail", activeEndpoint, selected?.id],
+    queryFn: () => platformFetch<PlatformRecord>(`details/${activeEndpoint}/${selected?.id}`),
+    enabled: Boolean(selected?.id),
+  });
+  const detail = detailQuery.data ?? selected;
+  const allowedActions = Array.isArray(detail?.allowed_actions) ? detail.allowed_actions.map(String) : [];
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      if (!activeForm) throw new Error("当前视图不支持创建");
+      const endpoint = activeForm.buildEndpoint?.(form) ?? activeEndpoint;
+      const payload = activeForm.buildPayload?.(form) ?? form;
+      return platformFetch<PlatformRecord>(endpoint, {
+        method: "POST",
+        body: JSON.stringify(payload),
+        idempotencyKey: crypto.randomUUID(),
+      });
+    },
+    onSuccess: (result) => {
+      toast.success(`${activeTab?.label ?? config.singular}已创建`);
+      setCreating(false);
+      setCreated(result);
+      setForm(initialForm(activeForm));
+      void queryClient.invalidateQueries({ queryKey: ["resource", activeEndpoint] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "创建失败"),
+  });
+
+  async function decide(decision: "APPROVED" | "REJECTED") {
+    if (!detail?.id) return;
+    try {
+      await platformFetch(`approvals/${detail.id}/decisions`, {
+        method: "POST",
+        body: JSON.stringify({ decision, reason: decision === "APPROVED" ? "通过 Web 控制台批准" : "通过 Web 控制台拒绝" }),
+        idempotencyKey: crypto.randomUUID(),
+      });
+      toast.success(decision === "APPROVED" ? "审批已通过" : "审批已拒绝");
+      setSelected(null);
+      await queryClient.invalidateQueries({ queryKey: ["resource", activeEndpoint] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "审批操作失败");
+    }
+  }
+
+  async function transition(targetStatus: string) {
+    if (!detail?.id || !detail.status || detail.version === undefined) return;
+    const resourceType: Record<string, string> = {
+      "operation-plans": "operation_plan",
+      "recording-sessions": "recording_session",
+      "extraction-tasks": "extraction_task",
+      "replay-plans": "replay_plan",
+      "replay-executions": "replay_execution",
+    };
+    const transitionPath: Record<string, string> = {
+      "operation-plans": "operation-plans",
+      "recording-sessions": "recording-sessions",
+      "extraction-tasks": "extraction-tasks",
+      "replay-plans": "replay-plans",
+      "replay-executions": "replay-executions",
+    };
+    try {
+      const token = await platformFetch<{ token: string }>("fencing-tokens", {
+        method: "POST",
+        body: JSON.stringify({ resourceType: resourceType[activeEndpoint], resourceId: detail.id, purpose: `Web transition to ${targetStatus}`, ttlSeconds: 300, reason: `Web transition to ${targetStatus}` }),
+        idempotencyKey: crypto.randomUUID(),
+      });
+      await platformFetch(`${transitionPath[activeEndpoint]}/${detail.id}/transition`, {
+        method: "POST",
+        body: JSON.stringify({ expectedStatus: detail.status, expectedVersion: detail.version, targetStatus, fencingToken: token.token, reason: `Web transition to ${targetStatus}` }),
+        idempotencyKey: crypto.randomUUID(),
+      });
+      toast.success(`状态已更新为 ${humanize(targetStatus)}`);
+      setSelected(null);
+      await queryClient.invalidateQueries({ queryKey: ["resource", activeEndpoint] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "状态更新失败");
+    }
+  }
+
+  const createAction = (() => {
+    if (config.createHref) {
+      return can("RULE_MANAGE") ? <Button asChild><Link href={config.createHref}><Plus />{config.createLabel ?? `创建${config.singular}`}</Link></Button> : null;
+    }
+    if (!activeForm || !can(activeForm.capability)) return null;
+    return <Button onClick={() => setCreating(true)}><Plus />{activeForm.createLabel ?? config.createLabel ?? `创建${activeTab?.label ?? config.singular}`}</Button>;
+  })();
+
+  return (
+    <>
+      <PageHeader
+        eyebrow={config.eyebrow}
+        title={config.title}
+        description={config.description}
+        actions={<><Button variant="secondary" onClick={() => resourceQuery.refetch()} disabled={resourceQuery.isFetching}><RefreshCw className={resourceQuery.isFetching ? "animate-spin" : ""} />刷新</Button>{createAction}</>}
+      />
+
+      {config.tabs ? (
+        <div className="mb-4 flex gap-1 overflow-x-auto rounded-xl border bg-white p-1">
+          {config.tabs.map((tab) => (
+            <button key={tab.endpoint} onClick={() => setActiveEndpoint(tab.endpoint)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition ${activeEndpoint === tab.endpoint ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>{tab.label}</button>
+          ))}
+        </div>
+      ) : null}
+
+      <Card className="overflow-hidden">
+        <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center">
+          <div className="relative max-w-md flex-1">
+            <Search className="absolute left-3 top-2.5 size-4 text-slate-400" />
+            <Input value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }} placeholder={`搜索${activeTab?.label ?? config.title}…`} className="pl-9" />
+          </div>
+          <div className="text-xs text-slate-400 sm:ml-auto">共 {resourceQuery.data?.total ?? 0} 条</div>
+        </div>
+
+        {resourceQuery.isLoading ? (
+          <div className="space-y-3 p-5">{[1, 2, 3, 4].map((item) => <Skeleton key={item} className="h-12 w-full" />)}</div>
+        ) : resourceQuery.isError ? (
+          <div className="flex min-h-72 flex-col items-center justify-center p-8 text-center">
+            <div className="mb-3 rounded-full bg-red-50 p-3 text-red-600"><X className="size-5" /></div>
+            <h3 className="font-semibold text-slate-900">加载失败</h3>
+            <p className="mt-1 text-sm text-slate-500">{resourceQuery.error instanceof Error ? resourceQuery.error.message : "无法读取数据"}</p>
+            <Button className="mt-4" variant="secondary" onClick={() => resourceQuery.refetch()}>重新加载</Button>
+          </div>
+        ) : !rows.length ? (
+          <EmptyState icon={config.icon} title={`暂无${activeTab?.label ?? config.singular}`} description={query ? "没有找到匹配的数据，请调整搜索条件。" : "当前还没有数据，可以从右上角的主操作开始。"} />
+        ) : (
+          <div className="scrollbar-thin overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead className="bg-slate-50/80 text-xs font-medium uppercase tracking-wide text-slate-500">
+                <tr>{columns.map((column) => <th key={column.key} className="px-4 py-3">{column.label}</th>)}<th className="w-16 px-4 py-3"><span className="sr-only">操作</span></th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rows.map((record, index) => (
+                  <tr key={String(record.id ?? index)} onClick={() => setSelected(record)} className="cursor-pointer bg-white transition hover:bg-indigo-50/35">
+                    {columns.map((column, columnIndex) => (
+                      <td key={column.key} className="max-w-72 px-4 py-3.5">
+                        {columnIndex === 0 ? <div className="font-medium text-slate-900"><Cell value={valueOf(record, column.key)} column={column} /></div> : <Cell value={valueOf(record, column.key)} column={column} />}
+                      </td>
+                    ))}
+                    <td className="px-4 py-3.5 text-right"><Button variant="ghost" size="icon" aria-label="查看详情"><ChevronRight /></Button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {(resourceQuery.data?.total ?? 0) > 25 ? (
+          <div className="flex items-center justify-end gap-2 border-t p-3">
+            <Button variant="secondary" size="sm" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}><ChevronLeft />上一页</Button>
+            <span className="text-xs text-slate-500">第 {page + 1} 页</span>
+            <Button variant="secondary" size="sm" disabled={(page + 1) * 25 >= (resourceQuery.data?.total ?? 0)} onClick={() => setPage((value) => value + 1)}>下一页<ChevronRight /></Button>
+          </div>
+        ) : null}
+      </Card>
+
+      <Dialog open={Boolean(selected)} onOpenChange={(open) => !open && setSelected(null)}>
+        <DialogContent className="right-0 left-auto top-0 h-screen max-h-screen w-full max-w-xl translate-x-0 translate-y-0 rounded-none p-0 sm:rounded-l-2xl">
+          <div className="border-b p-6 pr-14">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-600">{activeTab?.label ?? config.singular}详情</p>
+            <DialogTitle className="mt-2 text-xl">{String(detail?.name ?? detail?.subject_id ?? detail?.id ?? "详情")}</DialogTitle>
+            <DialogDescription className="mt-1">详情来自独立查询接口；敏感凭据和 Token 不会回显。</DialogDescription>
+          </div>
+          <div className="scrollbar-thin flex-1 overflow-y-auto p-6">
+            {detailQuery.isLoading ? <div className="space-y-3">{[1, 2, 3, 4].map((item) => <Skeleton key={item} className="h-12" />)}</div> : (
+              <div className="grid gap-3">
+                {detail ? Object.entries(detail).filter(([key]) => key !== "allowed_actions").map(([key, value]) => (
+                  <div key={key} className="grid grid-cols-[130px_1fr] gap-4 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2.5 text-sm">
+                    <span className="text-slate-500">{humanize(key)}</span>
+                    <span className={`break-all whitespace-pre-wrap text-slate-800 ${key.toLowerCase().includes("id") ? "font-mono text-xs" : ""}`}>{value === null ? "—" : typeof value === "object" ? JSON.stringify(value, null, 2) : String(value)}</span>
+                  </div>
+                )) : null}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 border-t bg-white p-4">
+            <span className="mr-auto font-mono text-xs text-slate-400">{detail?.id ? shortId(String(detail.id)) : ""}</span>
+            {config.key === "approvals" && String(detail?.status).toUpperCase() === "WAITING_APPROVAL" && can("APPROVE") ? (
+              <><Button variant="secondary" onClick={() => decide("REJECTED")}><X />拒绝</Button><Button onClick={() => decide("APPROVED")}><Check />批准</Button></>
+            ) : null}
+            {can(transitionCapability[activeEndpoint] ?? "__UNAVAILABLE__")
+              ? allowedActions.map((action) => <Button key={action} variant={action.includes("CANCEL") || action === "FAILED" ? "secondary" : "default"} onClick={() => transition(action)}>{humanize(action)}</Button>)
+              : null}
+            {config.key === "rules" && detail?.id ? <Button asChild><Link href={`/rules/${detail.id}`}>创建新版本</Link></Button> : null}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={creating} onOpenChange={setCreating}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{activeForm?.createLabel ?? config.createLabel ?? `创建${activeTab?.label ?? config.singular}`}</DialogTitle>
+            <DialogDescription>字段与 Platform API DTO 完全一致；JSON 字段会在提交前解析。</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(event) => { event.preventDefault(); createMutation.mutate(); }} className="space-y-4">
+            {(activeForm?.fields ?? []).map((field) => (
+              <label key={field.key} className="block">
+                <span className="mb-1.5 block text-sm font-medium text-slate-700">{field.label}{field.required ? <span className="text-red-500"> *</span> : null}</span>
+                {field.type === "json" || field.type === "textarea" ? (
+                  <Textarea required={field.required} value={form[field.key] ?? ""} onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.placeholder} className={field.type === "json" ? "min-h-24 font-mono text-xs" : ""} />
+                ) : field.type === "select" ? (
+                  <select required={field.required} value={form[field.key] ?? ""} onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))} className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-indigo-500">
+                    {field.options?.map((option) => <option key={option} value={option}>{humanize(option)}</option>)}
+                  </select>
+                ) : (
+                  <Input type={field.type === "number" ? "number" : "text"} required={field.required} value={form[field.key] ?? ""} onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.placeholder} />
+                )}
+              </label>
+            ))}
+            <DialogFooter>
+              <Button type="button" variant="secondary" onClick={() => setCreating(false)}>取消</Button>
+              <Button type="submit" disabled={createMutation.isPending}>{createMutation.isPending ? "正在提交…" : "确认创建"}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(created?.token)} onOpenChange={(open) => !open && setCreated(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Token 已签发</DialogTitle>
+            <DialogDescription>这是唯一一次显示明文 Token，请立即复制并安全保存。</DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 font-mono text-xs break-all text-amber-950">{String(created?.token ?? "")}</div>
+          <DialogFooter><Button onClick={async () => { await navigator.clipboard.writeText(String(created?.token ?? "")); toast.success("Token 已复制"); }}><Copy />复制 Token</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
