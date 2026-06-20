@@ -7,8 +7,8 @@ import { Check, ChevronLeft, ChevronRight, Copy, Plus, RefreshCw, Search, X } fr
 import { toast } from "sonner";
 import { platformFetch } from "@/lib/api/client";
 import type { PlatformRecord, SessionUser } from "@/lib/api/types";
-import { resourceConfigs, type ResourceColumn, type ResourceForm } from "@/lib/resource-config";
-import { formatBytes, formatDate, humanize, shortId } from "@/lib/utils";
+import { resourceConfigs, type ResourceColumn, type ResourceField, type ResourceForm } from "@/lib/resource-config";
+import { actionLabel, fieldLabel, formatBytes, formatDate, humanize, shortId } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,12 +46,96 @@ function Cell({ value, column }: { value: unknown; column: ResourceColumn }) {
     const progress = Number(value);
     return <div className="flex min-w-28 items-center gap-2"><div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.min(100, progress)}%` }} /></div><span className="w-8 text-right text-xs text-slate-500">{progress}%</span></div>;
   }
-  const rendered = Array.isArray(value) ? value.join(", ") : typeof value === "object" ? JSON.stringify(value) : String(value);
+  const rendered = Array.isArray(value)
+    ? value.map((item) => humanize(item)).join(", ")
+    : typeof value === "object"
+      ? humanize(value)
+      : column.kind === "mono"
+        ? String(value)
+        : humanize(value);
   return <span className={column.kind === "mono" ? "font-mono text-xs text-slate-600" : ""}>{rendered}</span>;
 }
 
 function initialForm(form: ResourceForm | undefined) {
   return Object.fromEntries((form?.fields ?? []).map((field) => [field.key, field.defaultValue ?? ""]));
+}
+
+function resourceOptionValue(source: ResourceField["source"], record: PlatformRecord) {
+  if (source === "rule-versions") return String(valueOf(record, "version") ?? "");
+  return String(valueOf(record, "id") ?? "");
+}
+
+function resourceOptionLabel(source: ResourceField["source"], record: PlatformRecord) {
+  const id = String(valueOf(record, "id") ?? "");
+  const name = String(valueOf(record, "name") ?? id);
+  if (source === "environments") {
+    const type = String(valueOf(record, "type") ?? name);
+    return `${humanize(type)}（${shortId(id)}）`;
+  }
+  if (source === "rule-versions") {
+    return `版本 ${String(valueOf(record, "version") ?? "—")} · ${humanize(valueOf(record, "status"))}`;
+  }
+  return `${name}（${shortId(id)}）`;
+}
+
+function ResourceSelectField({
+  field,
+  form,
+  onValueChange,
+}: {
+  field: ResourceField;
+  form: Record<string, string>;
+  onValueChange: (value: string) => void;
+}) {
+  const dependenciesReady = (field.dependsOn ?? []).every((key) => Boolean(form[key]));
+  const optionsQuery = useQuery({
+    queryKey: ["resource-field-options", field.source, ...((field.dependsOn ?? []).map((key) => form[key] ?? ""))],
+    queryFn: () => platformFetch<PagedResult>(`query/${field.source}?page=0&size=200&q=`),
+    enabled: Boolean(field.source && dependenciesReady),
+  });
+  const options = (optionsQuery.data?.items ?? []).filter((record) => {
+    if (field.source === "environments") {
+      const applicationField = field.dependsOn?.find((key) => key.toLowerCase().includes("application")) ?? "applicationId";
+      return String(valueOf(record, "applicationId") ?? "") === form[applicationField]
+        && ["DEV", "SIT", "UAT", "PROD"].includes(String(valueOf(record, "type") ?? "").toUpperCase());
+    }
+    if (field.source === "rules") {
+      return String(valueOf(record, "applicationId") ?? "") === form.applicationId
+        && String(valueOf(record, "environmentId") ?? "") === form.environmentId;
+    }
+    if (field.source === "rule-versions") {
+      return String(valueOf(record, "ruleId") ?? "") === form.resourceId;
+    }
+    return true;
+  });
+  const dependencyLabel = (field.dependsOn ?? []).map((key) => fieldLabel(key)).join("、");
+
+  return (
+    <Select value={form[field.key] ?? ""} onValueChange={onValueChange} disabled={!dependenciesReady || optionsQuery.isLoading}>
+      <SelectTrigger aria-label={field.label}>
+        <SelectValue placeholder={
+          !dependenciesReady
+            ? `请先选择${dependencyLabel}`
+            : optionsQuery.isLoading
+              ? `正在加载${field.label}…`
+              : `请选择${field.label}`
+        } />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((record, index) => {
+          const value = resourceOptionValue(field.source, record);
+          return value ? (
+            <SelectItem key={`${String(record.id ?? index)}-${value}`} value={value}>
+              {resourceOptionLabel(field.source, record)}
+            </SelectItem>
+          ) : null;
+        })}
+        {!optionsQuery.isLoading && dependenciesReady && !options.length ? (
+          <div className="px-3 py-5 text-center text-xs text-slate-400">暂无可选择的{field.label}</div>
+        ) : null}
+      </SelectContent>
+    </Select>
+  );
 }
 
 export function ResourcePage({ resourceKey }: { resourceKey: string }) {
@@ -63,6 +147,7 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
   const [selected, setSelected] = useState<PlatformRecord | null>(null);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<PlatformRecord | null>(null);
+  const [assignmentEnvironment, setAssignmentEnvironment] = useState("");
 
   const activeTab = config.tabs?.find((tab) => tab.endpoint === activeEndpoint);
   const columns = activeTab?.columns.length ? activeTab.columns : config.columns;
@@ -106,6 +191,36 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
   });
   const detail = detailQuery.data ?? selected;
   const allowedActions = Array.isArray(detail?.allowed_actions) ? detail.allowed_actions.map(String) : [];
+  const detailApplicationId = String(valueOf(detail ?? {}, "applicationId") ?? "");
+  const detailEnvironmentId = String(valueOf(detail ?? {}, "environmentId") ?? "");
+
+  useEffect(() => {
+    setAssignmentEnvironment("");
+  }, [selected?.id]);
+
+  const assignmentOptionsQuery = useQuery({
+    queryKey: ["instance-environment-options", detailApplicationId],
+    queryFn: () => platformFetch<PagedResult>("query/environments?page=0&size=200&q="),
+    enabled: config.key === "applications" && Boolean(selected?.id && detailApplicationId && !detailEnvironmentId),
+  });
+  const assignmentOptions = (assignmentOptionsQuery.data?.items ?? []).filter((record) =>
+    String(valueOf(record, "applicationId") ?? "") === detailApplicationId
+      && ["DEV", "SIT", "UAT", "PROD"].includes(String(valueOf(record, "type") ?? "").toUpperCase()),
+  );
+
+  const assignmentMutation = useMutation({
+    mutationFn: () => platformFetch(`instances/${detail?.id}/environment`, {
+      method: "POST",
+      body: JSON.stringify({ environmentId: assignmentEnvironment }),
+      idempotencyKey: crypto.randomUUID(),
+    }),
+    onSuccess: async () => {
+      toast.success("环境分配成功");
+      setSelected(null);
+      await queryClient.invalidateQueries({ queryKey: ["resource", activeEndpoint] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "环境分配失败"),
+  });
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -146,6 +261,7 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
 
   async function transition(targetStatus: string) {
     if (!detail?.id || !detail.status || detail.version === undefined) return;
+    const reason = `通过 Web 控制台执行：${actionLabel(targetStatus)}`;
     const resourceType: Record<string, string> = {
       "operation-plans": "operation_plan",
       "recording-sessions": "recording_session",
@@ -163,12 +279,12 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
     try {
       const token = await platformFetch<{ token: string }>("fencing-tokens", {
         method: "POST",
-        body: JSON.stringify({ resourceType: resourceType[activeEndpoint], resourceId: detail.id, purpose: `Web transition to ${targetStatus}`, ttlSeconds: 300, reason: `Web transition to ${targetStatus}` }),
+        body: JSON.stringify({ resourceType: resourceType[activeEndpoint], resourceId: detail.id, purpose: reason, ttlSeconds: 300, reason }),
         idempotencyKey: crypto.randomUUID(),
       });
       await platformFetch(`${transitionPath[activeEndpoint]}/${detail.id}/transition`, {
         method: "POST",
-        body: JSON.stringify({ expectedStatus: detail.status, expectedVersion: detail.version, targetStatus, fencingToken: token.token, reason: `Web transition to ${targetStatus}` }),
+        body: JSON.stringify({ expectedStatus: detail.status, expectedVersion: detail.version, targetStatus, fencingToken: token.token, reason }),
         idempotencyKey: crypto.randomUUID(),
       });
       toast.success(`状态已更新为 ${humanize(targetStatus)}`);
@@ -186,6 +302,25 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
     if (!activeForm || !can(activeForm.capability)) return null;
     return <Button onClick={() => setCreating(true)}><Plus />{activeForm.createLabel ?? config.createLabel ?? `创建${activeTab?.label ?? config.singular}`}</Button>;
   })();
+
+  function changeFormField(key: string, value: string) {
+    setForm((current) => {
+      const next = { ...current, [key]: value };
+      const cleared = new Set([key]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const field of activeForm?.fields ?? []) {
+          if ((field.dependsOn ?? []).some((dependency) => cleared.has(dependency)) && next[field.key]) {
+            next[field.key] = "";
+            cleared.add(field.key);
+            changed = true;
+          }
+        }
+      }
+      return next;
+    });
+  }
 
   return (
     <>
@@ -266,10 +401,31 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
               <div className="grid gap-3">
                 {detail ? Object.entries(detail).filter(([key]) => key !== "allowed_actions").map(([key, value]) => (
                   <div key={key} className="grid grid-cols-[130px_1fr] gap-4 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2.5 text-sm">
-                    <span className="text-slate-500">{humanize(key)}</span>
-                    <span className={`break-all whitespace-pre-wrap text-slate-800 ${key.toLowerCase().includes("id") ? "font-mono text-xs" : ""}`}>{value === null ? "—" : typeof value === "object" ? JSON.stringify(value, null, 2) : String(value)}</span>
+                    <span className="text-slate-500">{fieldLabel(key)}</span>
+                    <span className={`break-all whitespace-pre-wrap text-slate-800 ${key.toLowerCase().includes("id") ? "font-mono text-xs" : ""}`}>
+                      {key.toLowerCase().endsWith("_at") || key.toLowerCase().endsWith("at")
+                        ? formatDate(value)
+                        : humanize(value)}
+                    </span>
                   </div>
                 )) : null}
+                {config.key === "applications" && detail?.id && !detailEnvironmentId ? (
+                  <div className="mt-2 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+                    <p className="text-sm font-semibold text-indigo-950">为实例分配环境</p>
+                    <p className="mt-1 text-xs leading-5 text-indigo-700">Agent 已完成真实运行时注册，选择 DEV、SIT、UAT 或 PROD 后才会参与目标发现和规则发布。</p>
+                    <Select value={assignmentEnvironment} onValueChange={setAssignmentEnvironment} disabled={assignmentOptionsQuery.isLoading}>
+                      <SelectTrigger className="mt-3 bg-white" aria-label="分配环境">
+                        <SelectValue placeholder={assignmentOptionsQuery.isLoading ? "正在加载环境…" : "请选择环境"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {assignmentOptions.map((record, index) => {
+                          const value = String(valueOf(record, "id") ?? "");
+                          return value ? <SelectItem key={String(record.id ?? index)} value={value}>{resourceOptionLabel("environments", record)}</SelectItem> : null;
+                        })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : null}
               </div>
             )}
           </div>
@@ -279,8 +435,13 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
               <><Button variant="secondary" onClick={() => decide("REJECTED")}><X />拒绝</Button><Button onClick={() => decide("APPROVED")}><Check />批准</Button></>
             ) : null}
             {can(transitionCapability[activeEndpoint] ?? "__UNAVAILABLE__")
-              ? allowedActions.map((action) => <Button key={action} variant={action.includes("CANCEL") || action === "FAILED" ? "secondary" : "default"} onClick={() => transition(action)}>{humanize(action)}</Button>)
+              ? allowedActions.map((action) => <Button key={action} variant={action.includes("CANCEL") || action === "FAILED" ? "secondary" : "default"} onClick={() => transition(action)}>{actionLabel(action)}</Button>)
               : null}
+            {config.key === "applications" && detail?.id && !detailEnvironmentId ? (
+              <Button onClick={() => assignmentMutation.mutate()} disabled={!assignmentEnvironment || assignmentMutation.isPending}>
+                {assignmentMutation.isPending ? "正在分配…" : "确认分配环境"}
+              </Button>
+            ) : null}
             {config.key === "rules" && detail?.id ? <Button asChild><Link href={`/rules/${detail.id}`}>创建新版本</Link></Button> : null}
           </div>
         </DialogContent>
@@ -294,12 +455,16 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
           </DialogHeader>
           <form onSubmit={(event) => { event.preventDefault(); createMutation.mutate(); }} className="space-y-4">
             {(activeForm?.fields ?? []).map((field) => (
-              <div key={field.key} className="block">
+              field.type === "hidden" ? (
+                <input key={field.key} type="hidden" name={field.key} value={form[field.key] ?? ""} />
+              ) : <div key={field.key} className="block">
                 <span className="mb-1.5 block text-sm font-medium text-slate-700">{field.label}{field.required ? <span className="text-red-500"> *</span> : null}</span>
                 {field.type === "json" || field.type === "textarea" ? (
-                  <Textarea aria-label={field.label} required={field.required} value={form[field.key] ?? ""} onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.placeholder} className={field.type === "json" ? "min-h-24 font-mono text-xs" : ""} />
+                  <Textarea aria-label={field.label} required={field.required} value={form[field.key] ?? ""} onChange={(event) => changeFormField(field.key, event.target.value)} placeholder={field.placeholder} className={field.type === "json" ? "min-h-24 font-mono text-xs" : ""} />
+                ) : field.type === "resource" ? (
+                  <ResourceSelectField field={field} form={form} onValueChange={(value) => changeFormField(field.key, value)} />
                 ) : field.type === "select" ? (
-                  <Select value={form[field.key] ?? ""} onValueChange={(value) => setForm((current) => ({ ...current, [field.key]: value }))}>
+                  <Select value={form[field.key] ?? ""} onValueChange={(value) => changeFormField(field.key, value)}>
                     <SelectTrigger aria-label={field.label}>
                       <SelectValue placeholder={field.placeholder ?? `请选择${field.label}`} />
                     </SelectTrigger>
@@ -313,11 +478,11 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
                     required={field.required}
                     min={0}
                     value={form[field.key] ?? ""}
-                    onValueChange={(value) => setForm((current) => ({ ...current, [field.key]: value }))}
+                    onValueChange={(value) => changeFormField(field.key, value)}
                     placeholder={field.placeholder}
                   />
                 ) : (
-                  <Input aria-label={field.label} type="text" required={field.required} value={form[field.key] ?? ""} onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.placeholder} />
+                  <Input aria-label={field.label} type="text" required={field.required} value={form[field.key] ?? ""} onChange={(event) => changeFormField(field.key, event.target.value)} placeholder={field.placeholder} />
                 )}
               </div>
             ))}

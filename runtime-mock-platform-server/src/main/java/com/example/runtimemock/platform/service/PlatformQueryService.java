@@ -14,6 +14,8 @@ import java.util.TreeMap;
 public final class PlatformQueryService {
 
     private static final Map<String, ResourceDefinition> RESOURCES = Map.ofEntries(
+            resource("applications", "application", "created_at desc, id", "id", "name", "project_id"),
+            resource("environments", "environment", "created_at desc, id", "id", "name", "type", "application_id"),
             resource("instances", "instance", "updated_at desc, id", "id", "hostname", "application_id", "environment_id", "status"),
             resource("sidecars", "sidecar_instance", "updated_at desc, id", "id", "endpoint", "status", "sidecar_version"),
             selectedResource("agents", "agent_instance",

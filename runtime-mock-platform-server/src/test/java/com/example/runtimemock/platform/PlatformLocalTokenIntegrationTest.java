@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -39,6 +40,32 @@ class PlatformLocalTokenIntegrationTest {
 
     @Autowired
     ObjectMapper objectMapper;
+
+    @Test
+    void returnsUtf8ChineseErrorsFromSecurityAndIdempotencyFilters() throws Exception {
+        var unauthorized = mockMvc.perform(get("/api/v1/auth/me"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andReturn()
+                .getResponse();
+
+        assertThat(unauthorized.getCharacterEncoding()).isEqualToIgnoringCase("UTF-8");
+        assertThat(unauthorized.getContentAsString()).contains("需要提供有效的 Bearer Token");
+
+        var invalidIdempotencyKey = mockMvc.perform(post("/api/v1/rules")
+                        .header("Authorization", "Bearer bootstrap-test-token")
+                        .header("Idempotency-Key", "")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andReturn()
+                .getResponse();
+
+        assertThat(invalidIdempotencyKey.getCharacterEncoding()).isEqualToIgnoringCase("UTF-8");
+        assertThat(invalidIdempotencyKey.getContentAsString())
+                .contains("Idempotency-Key 不能为空且长度不能超过 255 个字符");
+    }
 
     @Test
     void requiresBearerTokenAndScopesAgentTokens() throws Exception {

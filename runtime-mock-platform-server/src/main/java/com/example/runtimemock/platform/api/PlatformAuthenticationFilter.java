@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)
@@ -40,6 +41,7 @@ final class PlatformAuthenticationFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
         } catch (PlatformException e) {
             response.setStatus(e.status());
+            response.setCharacterEncoding(StandardCharsets.UTF_8.name());
             response.setContentType("application/json");
             response.getWriter().write("""
                     {"code":"%s","message":"%s","retryable":false}

@@ -28,7 +28,7 @@ final class PlatformExceptionHandler {
     ResponseEntity<ApiError> validation(MethodArgumentNotValidException exception, HttpServletRequest request) {
         return ResponseEntity.badRequest().body(new ApiError(
                 "VALIDATION_FAILED",
-                "Request validation failed",
+                "请求参数校验失败",
                 correlationId(request),
                 Map.of("errorCount", exception.getErrorCount()),
                 false
@@ -39,7 +39,7 @@ final class PlatformExceptionHandler {
     ResponseEntity<ApiError> notFound(NoResourceFoundException exception, HttpServletRequest request) {
         return ResponseEntity.status(404).body(new ApiError(
                 "ROUTE_NOT_FOUND",
-                "API route not found: " + exception.getResourcePath(),
+                "未找到 API 路由：" + exception.getResourcePath(),
                 correlationId(request),
                 Map.of(),
                 false
@@ -50,7 +50,7 @@ final class PlatformExceptionHandler {
     ResponseEntity<ApiError> unexpected(Exception exception, HttpServletRequest request) {
         return ResponseEntity.internalServerError().body(new ApiError(
                 "INTERNAL_ERROR",
-                exception.getClass().getName() + ": " + exception.getMessage(),
+                "服务器内部错误，请根据关联 ID 查看服务端日志",
                 correlationId(request),
                 Map.of(),
                 false

@@ -10,6 +10,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -51,6 +54,9 @@ final class PlatformCommandPoller implements AutoCloseable {
     }
 
     private void pollOnce() throws Exception {
+        post("/api/v1/agents/" + config.platformAgentId() + "/heartbeat",
+                Map.of("status", runtime.jvmInfo().status(),
+                        "metrics", runtime.metrics()));
         JsonNode command = post("/api/v1/agents/" + config.platformAgentId() + "/commands/next",
                 Map.of("leaseSeconds", config.platformCommandLeaseSeconds()));
         if ("NO_COMMAND".equals(command.path("status").asText())) {
@@ -95,6 +101,7 @@ final class PlatformCommandPoller implements AutoCloseable {
             }
             case "START_RECORDING" -> startRecording(payload);
             case "STOP_RECORDING" -> stopRecording(payload);
+            case "DISCOVER_TARGETS" -> discoverTargets(payload);
             case "REFRESH_RUNTIME_STATE" -> Map.of("refreshed", true);
             default -> throw new IllegalArgumentException("Unsupported platform command: " + commandType);
         };
@@ -102,8 +109,41 @@ final class PlatformCommandPoller implements AutoCloseable {
 
     private Map<String, Object> applyRule(JsonNode ruleNode) {
         AgentHttpServer.RuleRequest request = AgentHttpServer.RuleRequest.from(ruleNode);
-        runtime.publish(request.classId(), request.toRule(runtime.methods(request.classId())), "platform");
+        runtime.publishTarget(request.classId(), request.toRule(List.of()), "platform");
         return Map.of("ruleId", request.id(), "version", request.version(), "classId", request.classId());
+    }
+
+    private Map<String, Object> discoverTargets(JsonNode payload) {
+        String query = text(payload, "query", "");
+        int limit = Math.min(200, Math.max(1, payload.path("limit").asInt(100)));
+        List<Map<String, Object>> targets = new ArrayList<>();
+        for (var classInfo : runtime.searchClasses(query, limit)) {
+            for (var method : runtime.methods(classInfo.classId())) {
+                if (!query.isBlank()
+                        && !classInfo.className().toLowerCase().contains(query.toLowerCase())
+                        && !method.name().toLowerCase().contains(query.toLowerCase())) {
+                    continue;
+                }
+                Map<String, Object> target = new LinkedHashMap<>();
+                target.put("classId", classInfo.classId());
+                target.put("className", classInfo.className());
+                target.put("classLoaderId", classInfo.classLoaderId());
+                target.put("classLoaderClassName", classInfo.classLoaderClassName());
+                target.put("modifiable", classInfo.modifiable());
+                target.put("methodName", method.name());
+                target.put("descriptor", method.descriptor());
+                target.put("returnType", method.returnType());
+                target.put("parameterTypes", method.parameterTypes());
+                target.put("exceptionTypes", method.exceptionTypes());
+                target.put("static", method.isStatic());
+                target.put("private", method.isPrivate());
+                targets.add(target);
+                if (targets.size() >= limit) {
+                    return Map.of("targets", targets, "truncated", true);
+                }
+            }
+        }
+        return Map.of("targets", targets, "truncated", false);
     }
 
     private Map<String, Object> startRecording(JsonNode payload) {

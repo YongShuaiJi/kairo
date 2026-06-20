@@ -77,6 +77,20 @@ public final class PlatformController {
         return service.createInstance(context(httpRequest), request);
     }
 
+    @PostMapping("/agent-registrations/self")
+    @ResponseStatus(HttpStatus.CREATED)
+    public Map<String, Object> registerAgentRuntime(HttpServletRequest httpRequest,
+                                                    @Valid @RequestBody Map<String, Object> request) {
+        return service.registerAgentRuntime(context(httpRequest), request);
+    }
+
+    @PostMapping("/instances/{id}/environment")
+    public Map<String, Object> assignInstanceEnvironment(@PathVariable String id,
+                                                         HttpServletRequest httpRequest,
+                                                         @Valid @RequestBody Map<String, Object> request) {
+        return service.assignInstanceEnvironment(id, context(httpRequest), request);
+    }
+
     @GetMapping("/sidecars")
     public List<Map<String, Object>> sidecars() {
         return service.list("sidecar_instance", "created_at, id");

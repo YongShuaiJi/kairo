@@ -26,8 +26,10 @@ export type ResourceField = {
   placeholder?: string;
   required?: boolean;
   defaultValue?: string;
-  type?: "text" | "number" | "textarea" | "json" | "select";
+  type?: "text" | "number" | "textarea" | "json" | "select" | "resource" | "hidden";
   options?: string[];
+  source?: "applications" | "environments" | "rules" | "rule-versions";
+  dependsOn?: string[];
 };
 
 export type ResourceForm = {
@@ -73,10 +75,18 @@ const json = (key: string, label: string, defaultValue = "{}"): ResourceField =>
 const select = (key: string, label: string, options: string[], defaultValue = options[0]): ResourceField => ({
   key, label, options, defaultValue, required: true, type: "select",
 });
+const resource = (
+  key: string,
+  label: string,
+  source: NonNullable<ResourceField["source"]>,
+  dependsOn: string[] = [],
+): ResourceField => ({
+  key, label, source, dependsOn, required: true, type: "resource",
+});
 const parseJson = (value: string, fallback: unknown = {}) => value.trim() ? JSON.parse(value) : fallback;
 const base = (form: Record<string, string>) => ({
-  applicationId: form.applicationId || "app-default",
-  environmentId: form.environmentId || "env-dev",
+  applicationId: form.applicationId,
+  environmentId: form.environmentId,
 });
 
 export const resourceConfigs: Record<string, ResourceConfig> = {
@@ -96,18 +106,7 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
       { key: "status", label: "状态", kind: "status" },
       { key: "updatedAt", label: "更新时间", kind: "date" },
     ],
-    form: {
-      capability: "INSTANCE_MANAGE",
-      fields: [
-        text("applicationId", "应用 ID", "app-default"),
-        text("environmentId", "环境 ID", "env-dev"),
-        text("hostname", "主机名"),
-        text("processId", "进程 ID", "unknown"),
-        text("runtime", "运行时", "java-21"),
-        json("labels", "标签 JSON", "{}"),
-      ],
-      buildPayload: (form) => ({ ...base(form), hostname: form.hostname, processId: form.processId, runtime: form.runtime, labels: parseJson(form.labels), reason: "Web 注册实例" }),
-    },
+    readOnly: true,
   },
   agents: {
     key: "agents",
@@ -165,11 +164,11 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
     form: {
       capability: "ROLLOUT_MANAGE",
       fields: [
-        text("applicationId", "应用 ID", "app-default"),
-        text("environmentId", "环境 ID", "env-dev"),
-        select("resourceType", "资源类型", ["rule"]),
-        text("resourceId", "规则 ID"),
-        number("resourceVersion", "规则版本", "1"),
+        resource("applicationId", "应用", "applications"),
+        resource("environmentId", "环境", "environments", ["applicationId"]),
+        { key: "resourceType", label: "资源类型", defaultValue: "rule", type: "hidden" },
+        resource("resourceId", "规则", "rules", ["applicationId", "environmentId"]),
+        resource("resourceVersion", "规则版本", "rule-versions", ["resourceId"]),
         json("strategy", "发布策略 JSON", '{"mode":"canary","observeSeconds":60}'),
         json("rollout", "批次与回滚 JSON", '{"mode":"SEQUENTIAL","batchPolicy":{"batchSize":1},"rollbackPolicy":{"automatic":true}}'),
       ],
@@ -187,13 +186,6 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
           { key: "status", label: "状态", kind: "status" },
           { key: "updatedAt", label: "更新时间", kind: "date" },
         ],
-        form: {
-          capability: "ROLLOUT_MANAGE",
-          createLabel: "创建灰度批次",
-          fields: [text("operationPlanId", "发布计划 ID"), number("batchOrder", "批次顺序", "1"), json("targetSelector", "目标选择器 JSON", '{"labels":{}}')],
-          buildEndpoint: (form) => `operation-plans/${form.operationPlanId}/batches`,
-          buildPayload: (form) => ({ batchOrder: Number(form.batchOrder), targetSelector: parseJson(form.targetSelector), reason: "Web 创建灰度批次" }),
-        },
       },
       {
         label: "实例执行",
@@ -205,13 +197,6 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
           { key: "commandId", label: "命令", kind: "mono" },
           { key: "status", label: "状态", kind: "status" },
         ],
-        form: {
-          capability: "ROLLOUT_MANAGE",
-          createLabel: "创建实例执行",
-          fields: [text("rolloutBatchId", "灰度批次 ID"), text("instanceId", "实例 ID"), text("expectedAgentVersion", "预期 Agent 版本", "unknown"), number("expectedRuleVersion", "预期规则版本", "1")],
-          buildEndpoint: (form) => `rollout-batches/${form.rolloutBatchId}/executions`,
-          buildPayload: (form) => ({ instanceId: form.instanceId, expectedAgentVersion: form.expectedAgentVersion, expectedRuleVersion: Number(form.expectedRuleVersion), reason: "Web 创建实例执行" }),
-        },
       },
     ],
   },
@@ -235,8 +220,8 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
     form: {
       capability: "RECORD_ARGUMENTS",
       fields: [
-        text("applicationId", "应用 ID", "app-default"),
-        text("environmentId", "环境 ID", "env-dev"),
+        resource("applicationId", "应用", "applications"),
+        resource("environmentId", "环境", "environments", ["applicationId"]),
         number("maxEvents", "最大事件数", "10000"),
         number("ttlSeconds", "有效期（秒）", "900"),
         json("target", "录制目标 JSON", '{"protocol":"JAVA_METHOD","className":"","methodName":"","methodDescriptor":""}'),
@@ -259,7 +244,7 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
         form: {
           capability: "RECORD_ARGUMENTS",
           createLabel: "创建录制规则",
-          fields: [text("name", "规则名称"), text("applicationId", "应用 ID", "app-default"), text("environmentId", "环境 ID", "env-dev"), json("target", "目标 JSON", '{"className":"","methodName":""}'), json("sampling", "采样 JSON", '{"rate":0.001}'), json("quota", "配额 JSON", '{"maxEvents":10000,"maxBytes":1073741824}')],
+          fields: [text("name", "规则名称"), resource("applicationId", "应用", "applications"), resource("environmentId", "环境", "environments", ["applicationId"]), json("target", "目标 JSON", '{"className":"","methodName":""}'), json("sampling", "采样 JSON", '{"rate":0.001}'), json("quota", "配额 JSON", '{"maxEvents":10000,"maxBytes":1073741824}')],
           buildPayload: (form) => ({ name: form.name, ...base(form), protocol: "JAVA_METHOD", target: parseJson(form.target), sampling: parseJson(form.sampling), quota: parseJson(form.quota), reason: "Web 创建录制规则" }),
         },
       },
@@ -306,7 +291,7 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
     ],
     form: {
       capability: "IMPORT_TO_TEST",
-      fields: [text("name", "数据集名称"), text("datasetId", "数据集 ID"), text("sourceSessionId", "已完成录制会话 ID"), text("schemaHash", "Schema 哈希（留空自动生成）", "", false), text("manifestHash", "Manifest 哈希（留空自动生成）", "", false), text("maskingHash", "脱敏策略哈希（留空使用平台策略）", "", false), text("applicationId", "应用 ID", "app-default"), text("environmentId", "环境 ID", "env-dev")],
+      fields: [text("name", "数据集名称"), text("datasetId", "数据集 ID"), text("sourceSessionId", "已完成录制会话 ID"), text("schemaHash", "Schema 哈希（留空自动生成）", "", false), text("manifestHash", "Manifest 哈希（留空自动生成）", "", false), text("maskingHash", "脱敏策略哈希（留空使用平台策略）", "", false), resource("applicationId", "应用", "applications"), resource("environmentId", "环境", "environments", ["applicationId"])],
       buildPayload: (form) => ({ name: form.name, datasetId: form.datasetId, sourceSessionId: form.sourceSessionId, ...(form.schemaHash ? { schemaHash: form.schemaHash } : {}), ...(form.manifestHash ? { manifestHash: form.manifestHash } : {}), ...(form.maskingHash ? { maskingHash: form.maskingHash } : {}), ...base(form), retentionPolicy: "P30D", reason: "Web 创建数据集版本" }),
     },
     tabs: [
@@ -324,7 +309,7 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
         form: {
           capability: "DATA_EXTRACT",
           createLabel: "注册数据源",
-          fields: [text("name", "数据源名称"), select("datasourceType", "数据源类型", ["POSTGRESQL", "MYSQL", "TEST_FIXTURE"]), text("applicationId", "应用 ID", "app-default"), text("environmentId", "环境 ID", "env-dev"), json("config", "连接配置 JSON", "{}"), text("secretRef", "凭据引用", "", false)],
+          fields: [text("name", "数据源名称"), select("datasourceType", "数据源类型", ["POSTGRESQL", "MYSQL", "TEST_FIXTURE"]), resource("applicationId", "应用", "applications"), resource("environmentId", "环境", "environments", ["applicationId"]), json("config", "连接配置 JSON", "{}"), text("secretRef", "凭据引用", "", false)],
           buildPayload: (form) => ({ name: form.name, datasourceType: form.datasourceType, ...base(form), config: parseJson(form.config), ...(form.secretRef ? { credential: { provider: "LOCAL_ENV", secretRef: form.secretRef } } : {}), reason: "Web 注册数据源" }),
         },
       },
@@ -386,7 +371,7 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
     ],
     form: {
       capability: "IMPORT_TO_TEST",
-      fields: [text("datasetId", "数据集 ID"), number("datasetVersion", "数据集版本", "1"), text("targetApplication", "目标应用"), text("targetEnvironment", "目标环境", "test"), text("sideEffectPolicyHash", "副作用策略哈希"), text("comparisonPolicyHash", "比较策略哈希"), json("executionPolicy", "执行策略 JSON", '{"qps":1,"concurrency":1}')],
+      fields: [text("datasetId", "数据集 ID"), number("datasetVersion", "数据集版本", "1"), resource("targetApplication", "目标应用", "applications"), resource("targetEnvironment", "目标环境", "environments", ["targetApplication"]), text("sideEffectPolicyHash", "副作用策略哈希"), text("comparisonPolicyHash", "比较策略哈希"), json("executionPolicy", "执行策略 JSON", '{"qps":1,"concurrency":1}')],
       buildPayload: (form) => ({ datasetId: form.datasetId, datasetVersion: Number(form.datasetVersion), targetApplication: form.targetApplication, targetEnvironment: form.targetEnvironment, sideEffectPolicyHash: form.sideEffectPolicyHash, comparisonPolicyHash: form.comparisonPolicyHash, executionPolicy: parseJson(form.executionPolicy), reason: "Web 创建回放计划" }),
     },
     tabs: [

@@ -46,7 +46,8 @@ final class IdempotencyFilter extends OncePerRequestFilter {
                                     FilterChain filterChain) throws ServletException, IOException {
         String key = request.getHeader("Idempotency-Key");
         if (key.isBlank() || key.length() > 255) {
-            response.sendError(400, "Invalid Idempotency-Key");
+            writeError(response, 400, "INVALID_IDEMPOTENCY_KEY",
+                    "Idempotency-Key 不能为空且长度不能超过 255 个字符");
             return;
         }
         byte[] requestBody = request.getInputStream().readAllBytes();
@@ -68,10 +69,12 @@ final class IdempotencyFilter extends OncePerRequestFilter {
             Map<String, Object> record = existing.get(0);
             if (!actor.equals(String.valueOf(record.get("actor")))
                     || !requestHash.equals(String.valueOf(record.get("request_hash")))) {
-                response.sendError(409, "Idempotency-Key was already used for a different request");
+                writeError(response, 409, "IDEMPOTENCY_KEY_CONFLICT",
+                        "该 Idempotency-Key 已用于其他请求，请更换后重试");
                 return;
             }
             response.setStatus(((Number) record.get("response_status")).intValue());
+            response.setCharacterEncoding(StandardCharsets.UTF_8.name());
             response.setContentType("application/json");
             response.getWriter().write(String.valueOf(record.get("response_json")));
             return;
@@ -92,6 +95,16 @@ final class IdempotencyFilter extends OncePerRequestFilter {
                     Timestamp.from(now), Timestamp.from(now.plusSeconds(86_400)));
         }
         wrappedResponse.copyBodyToResponse();
+    }
+
+    private void writeError(HttpServletResponse response, int status, String code, String message)
+            throws IOException {
+        response.setStatus(status);
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        response.setContentType("application/json");
+        response.getWriter().write("""
+                {"code":"%s","message":"%s","retryable":false}
+                """.formatted(code, message).trim());
     }
 
     private static final class CachedBodyRequest extends HttpServletRequestWrapper {

@@ -136,6 +136,12 @@ public class PlatformJdbcService {
         rbacService.require(context, "INSTANCE_MANAGE");
         Instant now = clock.instant();
         String id = optionalString(request, "id", "instance-" + UUID.randomUUID());
+        String applicationId = requiredString(request, "applicationId", null);
+        String environmentId = optionalString(request, "environmentId", null);
+        requireExists("application", applicationId);
+        if (environmentId != null) {
+            validateEnvironment(applicationId, environmentId);
+        }
         jdbcTemplate.update("""
                 insert into instance(
                     id, application_id, environment_id, hostname, process_id, runtime, status,
@@ -143,8 +149,8 @@ public class PlatformJdbcService {
                 ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 id,
-                requiredString(request, "applicationId", "app-default"),
-                requiredString(request, "environmentId", "env-dev"),
+                applicationId,
+                environmentId,
                 requiredString(request, "hostname", null),
                 requiredString(request, "processId", "unknown"),
                 requiredString(request, "runtime", "java"),
@@ -158,6 +164,162 @@ public class PlatformJdbcService {
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "create instance"),
                 Map.of("hostname", requiredString(request, "hostname", null)));
         return getById("instance", id);
+    }
+
+    @Transactional
+    public Map<String, Object> registerAgentRuntime(RequestContext context, Map<String, Object> request) {
+        rbacService.require(context, "AGENT_MANAGE");
+        String applicationId = requiredString(request, "applicationId", null);
+        requireExists("application", applicationId);
+        String environmentId = optionalString(request, "environmentId", null);
+        if (environmentId != null) {
+            validateEnvironment(applicationId, environmentId);
+        }
+        String processStartId = requiredString(request, "processStartId", null);
+        Instant now = clock.instant();
+        Instant leaseExpiresAt = now.plusSeconds(30);
+        List<Map<String, Object>> existingInstances = jdbcTemplate.queryForList(
+                "select * from instance where process_start_id = ?", processStartId);
+        String instanceId;
+        if (existingInstances.isEmpty()) {
+            instanceId = "instance-" + UUID.randomUUID();
+            jdbcTemplate.update("""
+                    insert into instance(
+                        id, application_id, environment_id, hostname, process_id, runtime, status,
+                        labels_json, last_seen_at, created_at, updated_at, process_start_id,
+                        jvm_started_at, java_version, load_mode, agent_version, capabilities_json,
+                        lease_expires_at, registration_status
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    instanceId,
+                    applicationId,
+                    environmentId,
+                    requiredString(request, "hostname", null),
+                    requiredString(request, "processId", null),
+                    requiredString(request, "runtime", "java"),
+                    environmentId == null ? "PENDING_ASSIGNMENT" : "ACTIVE",
+                    jsonValue(request, "labels", Map.of()),
+                    timestamp(now),
+                    timestamp(now),
+                    timestamp(now),
+                    processStartId,
+                    timestamp(Instant.ofEpochMilli(optionalLong(request, "jvmStartedAtEpochMillis",
+                            now.toEpochMilli()))),
+                    requiredString(request, "javaVersion", "unknown"),
+                    requiredString(request, "loadMode", "unknown"),
+                    requiredString(request, "agentVersion", "unknown"),
+                    jsonValue(request, "capabilities", List.of()),
+                    timestamp(leaseExpiresAt),
+                    environmentId == null ? "PENDING_ASSIGNMENT" : "ASSIGNED");
+        } else {
+            Map<String, Object> existing = normalizeRow(existingInstances.get(0));
+            instanceId = String.valueOf(existing.get("id"));
+            jdbcTemplate.update("""
+                    update instance
+                       set application_id = ?,
+                           environment_id = coalesce(?, environment_id),
+                           hostname = ?,
+                           process_id = ?,
+                           runtime = ?,
+                           status = case when coalesce(?, environment_id) is null
+                                         then 'PENDING_ASSIGNMENT' else 'ACTIVE' end,
+                           last_seen_at = ?,
+                           updated_at = ?,
+                           java_version = ?,
+                           load_mode = ?,
+                           agent_version = ?,
+                           capabilities_json = ?,
+                           lease_expires_at = ?,
+                           registration_status = case when coalesce(?, environment_id) is null
+                                                      then 'PENDING_ASSIGNMENT' else 'ASSIGNED' end
+                     where id = ?
+                    """, applicationId, environmentId,
+                    requiredString(request, "hostname", null),
+                    requiredString(request, "processId", null),
+                    requiredString(request, "runtime", "java"),
+                    environmentId,
+                    timestamp(now), timestamp(now),
+                    requiredString(request, "javaVersion", "unknown"),
+                    requiredString(request, "loadMode", "unknown"),
+                    requiredString(request, "agentVersion", "unknown"),
+                    jsonValue(request, "capabilities", List.of()),
+                    timestamp(leaseExpiresAt), environmentId, instanceId);
+        }
+
+        List<Map<String, Object>> existingAgents = jdbcTemplate.queryForList(
+                "select * from agent_instance where instance_id = ? order by created_at limit 1", instanceId);
+        String agentId;
+        if (existingAgents.isEmpty()) {
+            agentId = "agent-" + UUID.randomUUID();
+            jdbcTemplate.update("""
+                    insert into agent_instance(
+                        id, instance_id, sidecar_id, status, agent_version, bootstrap_version,
+                        listen_host, listen_port, token_hash, capabilities_json,
+                        last_heartbeat_at, created_at, updated_at, lease_expires_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, agentId, instanceId, null, "ACTIVE",
+                    requiredString(request, "agentVersion", "unknown"),
+                    requiredString(request, "bootstrapVersion", "embedded"),
+                    requiredString(request, "listenHost", "127.0.0.1"),
+                    (int) optionalLong(request, "listenPort", 0),
+                    "platform-authenticated",
+                    jsonValue(request, "capabilities", List.of()),
+                    timestamp(now), timestamp(now), timestamp(now), timestamp(leaseExpiresAt));
+        } else {
+            agentId = String.valueOf(normalizeRow(existingAgents.get(0)).get("id"));
+            jdbcTemplate.update("""
+                    update agent_instance
+                       set status = 'ACTIVE',
+                           agent_version = ?,
+                           bootstrap_version = ?,
+                           listen_host = ?,
+                           listen_port = ?,
+                           capabilities_json = ?,
+                           last_heartbeat_at = ?,
+                           updated_at = ?,
+                           lease_expires_at = ?
+                     where id = ?
+                    """, requiredString(request, "agentVersion", "unknown"),
+                    requiredString(request, "bootstrapVersion", "embedded"),
+                    requiredString(request, "listenHost", "127.0.0.1"),
+                    (int) optionalLong(request, "listenPort", 0),
+                    jsonValue(request, "capabilities", List.of()),
+                    timestamp(now), timestamp(now), timestamp(leaseExpiresAt), agentId);
+            jdbcTemplate.update("delete from agent_capability where agent_id = ?", agentId);
+        }
+        insertAgentCapabilities(agentId, optionalList(request, "capabilities"), now);
+        auditAndOutbox(context, "agent_instance.self_register", "agent_instance", agentId, 1,
+                "", hash(request), "SUCCESS", "Agent 运行时自动注册",
+                Map.of("instanceId", instanceId, "applicationId", applicationId,
+                        "environmentAssigned", environmentId != null));
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("instanceId", instanceId);
+        result.put("agentId", agentId);
+        result.put("applicationId", applicationId);
+        result.put("environmentId", environmentId);
+        result.put("status", environmentId == null ? "PENDING_ASSIGNMENT" : "ACTIVE");
+        result.put("leaseExpiresAt", leaseExpiresAt.toString());
+        return result;
+    }
+
+    @Transactional
+    public Map<String, Object> assignInstanceEnvironment(String instanceId, RequestContext context,
+                                                         Map<String, Object> request) {
+        rbacService.require(context, "INSTANCE_MANAGE");
+        Map<String, Object> instance = getById("instance", instanceId);
+        String environmentId = requiredString(request, "environmentId", null);
+        validateEnvironment(String.valueOf(instance.get("application_id")), environmentId);
+        Instant now = clock.instant();
+        jdbcTemplate.update("""
+                update instance
+                   set environment_id = ?, status = 'ACTIVE', registration_status = 'ASSIGNED',
+                       updated_at = ?
+                 where id = ?
+                """, environmentId, timestamp(now), instanceId);
+        auditAndOutbox(context, "instance.assign_environment", "instance", instanceId, 1,
+                hash(instance), hash(Map.of("environmentId", environmentId)), "SUCCESS",
+                "分配运行环境", Map.of("environmentId", environmentId));
+        return getById("instance", instanceId);
     }
 
     @Transactional
@@ -226,11 +388,18 @@ public class PlatformJdbcService {
         getById("agent_instance", id);
         Instant now = clock.instant();
         String status = requiredString(request, "status", "ACTIVE");
+        Instant leaseExpiresAt = now.plusSeconds(30);
         jdbcTemplate.update("""
                 update agent_instance
-                   set status = ?, last_heartbeat_at = ?, updated_at = ?
+                   set status = ?, last_heartbeat_at = ?, updated_at = ?, lease_expires_at = ?
                  where id = ?
-                """, status, timestamp(now), timestamp(now), id);
+                """, status, timestamp(now), timestamp(now), timestamp(leaseExpiresAt), id);
+        jdbcTemplate.update("""
+                update instance
+                   set status = case when environment_id is null then 'PENDING_ASSIGNMENT' else 'ACTIVE' end,
+                       last_seen_at = ?, updated_at = ?, lease_expires_at = ?
+                 where id = (select instance_id from agent_instance where id = ?)
+                """, timestamp(now), timestamp(now), timestamp(leaseExpiresAt), id);
         jdbcTemplate.update("""
                 insert into agent_heartbeat(id, agent_id, status, metrics_json, received_at)
                 values (?, ?, ?, ?, ?)
@@ -247,6 +416,7 @@ public class PlatformJdbcService {
         rbacService.require(context, "RULE_MANAGE");
         Instant now = clock.instant();
         String id = optionalString(request, "id", "rule-" + UUID.randomUUID());
+        ApplicationEnvironment scope = requireApplicationEnvironment(request);
         jdbcTemplate.update("""
                 insert into rule(
                     id, application_id, environment_id, name, status, current_draft_version, latest_version,
@@ -254,8 +424,8 @@ public class PlatformJdbcService {
                 ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 id,
-                requiredString(request, "applicationId", "app-default"),
-                requiredString(request, "environmentId", "env-dev"),
+                scope.applicationId(),
+                scope.environmentId(),
                 requiredString(request, "name", null),
                 requiredString(request, "status", "DRAFT"),
                 1L,
@@ -294,6 +464,14 @@ public class PlatformJdbcService {
         rbacService.require(context, "ROLLOUT_MANAGE");
         Instant now = clock.instant();
         String id = optionalString(request, "id", "operation-" + UUID.randomUUID());
+        String applicationId = requiredString(request, "applicationId", null);
+        String environmentId = requiredString(request, "environmentId", null);
+        String resourceType = requiredString(request, "resourceType", null);
+        String resourceId = requiredString(request, "resourceId", null);
+        long resourceVersion = requiredLong(request, "resourceVersion");
+        requireExists("application", applicationId);
+        validateEnvironment(applicationId, environmentId);
+        validateRolloutResource(applicationId, environmentId, resourceType, resourceId, resourceVersion);
         jdbcTemplate.update("""
                 insert into operation_plan(
                     id, application_id, environment_id, plan_type, resource_type, resource_id, resource_version,
@@ -301,12 +479,12 @@ public class PlatformJdbcService {
                 ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 id,
-                requiredString(request, "applicationId", "app-default"),
-                requiredString(request, "environmentId", "env-dev"),
+                applicationId,
+                environmentId,
                 requiredString(request, "planType", "RULE_ROLLOUT"),
-                requiredString(request, "resourceType", null),
-                requiredString(request, "resourceId", null),
-                requiredLong(request, "resourceVersion"),
+                resourceType,
+                resourceId,
+                resourceVersion,
                 OperationPlanStatus.DRAFT.name(),
                 1L,
                 jsonValue(request, "strategy", Map.of()),
@@ -316,6 +494,7 @@ public class PlatformJdbcService {
                 context.actor(),
                 timestamp(now));
         createRolloutPlanIfPresent(id, request, now);
+        createInitialRolloutBatch(id, context, request, now);
         auditAndOutbox(context, "operation_plan.create", "operation_plan", id, 1,
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "create operation plan"),
                 Map.of("status", OperationPlanStatus.DRAFT.name()));
@@ -325,7 +504,8 @@ public class PlatformJdbcService {
     @Transactional
     public Map<String, Object> transitionOperationPlan(String id, RequestContext context, Map<String, Object> request) {
         rbacService.require(context, "ROLLOUT_MANAGE");
-        Map<String, Object> current = getById("operation_plan", id);
+        Map<String, Object> original = getById("operation_plan", id);
+        Map<String, Object> current = original;
         OperationPlanStatus expectedStatus = enumValue(request, "expectedStatus", OperationPlanStatus.class);
         OperationPlanStatus targetStatus = enumValue(request, "targetStatus", OperationPlanStatus.class);
         long expectedVersion = requiredLong(request, "expectedVersion");
@@ -337,25 +517,54 @@ public class PlatformJdbcService {
                     "Cannot transition operation plan from " + currentStatus + " to " + targetStatus,
                     Map.of("id", id, "currentStatus", currentStatus.name(), "targetStatus", targetStatus.name()));
         }
-        if (targetStatus == OperationPlanStatus.APPROVED) {
-            requireApprovedApproval("OPERATION_PLAN", id, currentVersion, current);
-        }
         String fencingToken = requiredString(request, "fencingToken", null);
         fencingTokenService.consume(context, "operation_plan", id, fencingToken);
+        String reason = requiredString(request, "reason", null);
+        if (targetStatus == OperationPlanStatus.APPROVED) {
+            current = ensureSelfApprovalForOperation(id, current, context, reason);
+            currentVersion = ((Number) current.get("version")).longValue();
+            requireApprovedApproval("OPERATION_PLAN", id, currentVersion, current);
+        }
         long newVersion = currentVersion + 1;
         Instant now = clock.instant();
-        jdbcTemplate.update("""
-                update operation_plan
-                   set status = ?, version = ?, updated_by = ?, updated_at = ?
-                 where id = ? and status = ? and version = ?
-                """, targetStatus.name(), newVersion, context.actor(), timestamp(now),
+        String approvalId = targetStatus == OperationPlanStatus.WAITING_APPROVAL
+                ? "approval-" + UUID.randomUUID()
+                : optionalString(current, "approval_id", null);
+        if (targetStatus == OperationPlanStatus.WAITING_APPROVAL) {
+            // approval_id has a foreign key to approval_request. Insert the approval
+            // shell first, then bind it to the versioned operation plan below.
+            createApprovalRecord(approvalId, "OPERATION_PLAN", id, newVersion,
+                    current, context.actor(), reason, now);
+        }
+        int updated = jdbcTemplate.update("""
+                    update operation_plan
+                       set status = ?, version = ?, approval_id = ?, updated_by = ?, updated_at = ?
+                     where id = ? and status = ? and version = ?
+                    """, targetStatus.name(), newVersion, approvalId, context.actor(), timestamp(now),
                 id, expectedStatus.name(), expectedVersion);
+        if (updated == 0) {
+            throw PlatformException.conflict("RESOURCE_VERSION_CONFLICT",
+                    "发布计划状态或版本已发生变化，请刷新后重试",
+                    Map.of("id", id, "expectedStatus", expectedStatus.name(),
+                            "expectedVersion", expectedVersion));
+        }
+        Map<String, Object> updatedPlan = getById("operation_plan", id);
+        if (targetStatus == OperationPlanStatus.WAITING_APPROVAL) {
+            jdbcTemplate.update("""
+                    update approval_request
+                       set subject_hash = ?, updated_at = ?
+                     where id = ?
+                    """, hash(updatedPlan), timestamp(now), approvalId);
+        }
+        if (targetStatus == OperationPlanStatus.APPROVED) {
+            approveRuleVersionForOperation(updatedPlan, context, now);
+        }
         auditAndOutbox(context, "operation_plan.transition", "operation_plan", id, newVersion,
-                hash(current), hash(Map.of("status", targetStatus.name(), "version", newVersion)),
-                "SUCCESS", requiredString(request, "reason", null),
+                hash(original), hash(updatedPlan),
+                "SUCCESS", reason,
                 Map.of("from", expectedStatus.name(), "to", targetStatus.name(),
                         "fencingToken", fencingToken));
-        return getById("operation_plan", id);
+        return updatedPlan;
     }
 
     @Transactional
@@ -417,14 +626,15 @@ public class PlatformJdbcService {
         rbacService.require(context, "RECORD_ARGUMENTS");
         Instant now = clock.instant();
         String id = optionalString(request, "id", "recording-rule-" + UUID.randomUUID());
+        ApplicationEnvironment scope = requireApplicationEnvironment(request);
         jdbcTemplate.update("""
                 insert into recording_rule(
                     id, application_id, environment_id, name, status, current_draft_version, latest_version,
                     created_by, created_at, updated_by, updated_at
                 ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, id,
-                requiredString(request, "applicationId", "app-default"),
-                requiredString(request, "environmentId", "env-dev"),
+                scope.applicationId(),
+                scope.environmentId(),
                 requiredString(request, "name", null),
                 requiredString(request, "status", "DRAFT"),
                 1L,
@@ -464,14 +674,15 @@ public class PlatformJdbcService {
         rbacService.require(context, "DATA_EXTRACT");
         Instant now = clock.instant();
         String id = optionalString(request, "id", "datasource-" + UUID.randomUUID());
+        ApplicationEnvironment scope = requireApplicationEnvironment(request);
         jdbcTemplate.update("""
                 insert into datasource_registration(
                     id, application_id, environment_id, datasource_type, name, status, config_json,
                     created_by, created_at, updated_at
                 ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, id,
-                requiredString(request, "applicationId", "app-default"),
-                requiredString(request, "environmentId", "env-dev"),
+                scope.applicationId(),
+                scope.environmentId(),
                 requiredString(request, "datasourceType", "POSTGRESQL"),
                 requiredString(request, "name", null),
                 requiredString(request, "status", "ACTIVE"),
@@ -640,6 +851,7 @@ public class PlatformJdbcService {
         rbacService.require(context, "RECORD_ARGUMENTS");
         Instant now = clock.instant();
         String id = optionalString(request, "id", "rec-" + UUID.randomUUID());
+        ApplicationEnvironment scope = requireApplicationEnvironment(request);
         long ttlSeconds = optionalLong(request, "ttlSeconds", 900);
         if (ttlSeconds < 1 || ttlSeconds > 7_200) {
             throw PlatformException.badRequest("INVALID_TTL", "ttlSeconds must be between 1 and 7200");
@@ -655,8 +867,8 @@ public class PlatformJdbcService {
                 ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 id,
-                requiredString(request, "applicationId", "app-default"),
-                requiredString(request, "environmentId", "env-dev"),
+                scope.applicationId(),
+                scope.environmentId(),
                 RecordingSessionStatus.DRAFT.name(),
                 1L,
                 maxEvents,
@@ -934,12 +1146,7 @@ public class PlatformJdbcService {
         );
         List<?> approvers = optionalList(request, "approvers");
         if (approvers.isEmpty()) {
-            throw PlatformException.badRequest("APPROVER_REQUIRED",
-                    "At least one approver different from the requester is required");
-        }
-        if (approvers.stream().map(String::valueOf).anyMatch(context.actor()::equals)) {
-            throw PlatformException.badRequest("SELF_APPROVER_FORBIDDEN",
-                    "Requester cannot be included as an approver");
+            approvers = List.of(context.actor());
         }
         int order = 1;
         for (Object approver : approvers) {
@@ -971,7 +1178,7 @@ public class PlatformJdbcService {
                 .anyMatch(approval -> currentHash.equals(String.valueOf(approval.get("subject_hash"))));
         if (!valid) {
             throw PlatformException.conflict("APPROVAL_REQUIRED",
-                    "An approved decision bound to the current resource version is required",
+                    "当前资源版本必须先获得审批通过",
                     Map.of("subjectType", subjectType, "subjectId", subjectId,
                             "subjectVersion", subjectVersion));
         }
@@ -1011,18 +1218,13 @@ public class PlatformJdbcService {
         Map<String, Object> approval = getById("approval_request", id);
         if (!ApprovalStatus.WAITING_APPROVAL.name().equals(String.valueOf(approval.get("status")))) {
             throw PlatformException.conflict("APPROVAL_ALREADY_DECIDED",
-                    "Approval request is no longer waiting for a decision",
+                    "该审批申请已完成处理，不能重复审批",
                     Map.of("approvalId", id, "status", approval.get("status")));
         }
         String decision = requiredString(request, "decision", null);
         if (!ApprovalStatus.APPROVED.name().equals(decision)
                 && !ApprovalStatus.REJECTED.name().equals(decision)) {
-            throw PlatformException.badRequest("INVALID_DECISION", "decision must be APPROVED or REJECTED");
-        }
-        if (context.actor().equals(String.valueOf(approval.get("requester")))
-                && ApprovalStatus.APPROVED.name().equals(decision)) {
-            throw PlatformException.conflict("SELF_APPROVAL_FORBIDDEN",
-                    "Requester cannot approve their own request", Map.of("approvalId", id));
+            throw PlatformException.badRequest("INVALID_DECISION", "审批决定只能是“通过”或“拒绝”");
         }
         String reason = requiredString(request, "reason", null);
         List<Map<String, Object>> steps = jdbcTemplate.queryForList("""
@@ -1267,6 +1469,104 @@ public class PlatformJdbcService {
                 timestamp(now));
     }
 
+    private void createInitialRolloutBatch(String operationPlanId, RequestContext context,
+                                           Map<String, Object> request, Instant now) {
+        Map<String, Object> rollout = optionalMap(request, "rollout");
+        Map<String, Object> batchPolicy = optionalMap(rollout, "batchPolicy");
+        Map<String, Object> selector = optionalMap(batchPolicy, "targetSelector");
+        jdbcTemplate.update("""
+                insert into rollout_batch(
+                    id, operation_plan_id, batch_order, status, target_selector_json,
+                    version, updated_by, created_at, updated_at
+                ) values (?, ?, ?, 'PENDING', ?, 1, ?, ?, ?)
+                """, "rollout-batch-" + UUID.randomUUID(), operationPlanId, 1,
+                json(selector), context.actor(), timestamp(now), timestamp(now));
+    }
+
+    private Map<String, Object> ensureSelfApprovalForOperation(String operationId,
+                                                               Map<String, Object> operation,
+                                                               RequestContext context,
+                                                               String reason) {
+        String approvalId = optionalString(operation, "approval_id", null);
+        if (approvalId == null) {
+            approvalId = "approval-" + UUID.randomUUID();
+            jdbcTemplate.update("update operation_plan set approval_id = ? where id = ?",
+                    approvalId, operationId);
+            operation = getById("operation_plan", operationId);
+            createApprovalRecord(approvalId, "OPERATION_PLAN", operationId,
+                    ((Number) operation.get("version")).longValue(), operation,
+                    context.actor(), reason, clock.instant());
+        }
+        Map<String, Object> approval = getById("approval_request", approvalId);
+        if (ApprovalStatus.WAITING_APPROVAL.name().equals(String.valueOf(approval.get("status")))) {
+            decideApproval(approvalId, context, Map.of(
+                    "decision", ApprovalStatus.APPROVED.name(),
+                    "reason", "批准自己的发布申请"));
+        }
+        return getById("operation_plan", operationId);
+    }
+
+    private void createApprovalRecord(String approvalId, String subjectType, String subjectId,
+                                      long subjectVersion, Map<String, Object> subject,
+                                      String requester, String reason, Instant now) {
+        jdbcTemplate.update("""
+                insert into approval_request(
+                    id, subject_type, subject_id, subject_version, subject_hash, status,
+                    requester, reason, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, approvalId, subjectType, subjectId, subjectVersion, hash(subject),
+                ApprovalStatus.WAITING_APPROVAL.name(), requester, reason,
+                timestamp(now), timestamp(now));
+        jdbcTemplate.update("""
+                insert into approval_step(id, approval_id, step_order, approver, status)
+                values (?, ?, 1, ?, ?)
+                """, "approval-step-" + UUID.randomUUID(), approvalId, requester,
+                ApprovalStatus.WAITING_APPROVAL.name());
+    }
+
+    private void approveRuleVersionForOperation(Map<String, Object> operation,
+                                                RequestContext context, Instant now) {
+        if (!"rule".equals(String.valueOf(operation.get("resource_type")))) {
+            return;
+        }
+        String ruleId = String.valueOf(operation.get("resource_id"));
+        long version = ((Number) operation.get("resource_version")).longValue();
+        jdbcTemplate.update("""
+                update rule_version
+                   set status = 'APPROVED'
+                 where rule_id = ? and version = ? and status = 'DRAFT'
+                """, ruleId, version);
+        jdbcTemplate.update("""
+                update rule
+                   set status = 'APPROVED', updated_by = ?, updated_at = ?
+                 where id = ?
+                """, context.actor(), timestamp(now), ruleId);
+    }
+
+    private void validateRolloutResource(String applicationId, String environmentId,
+                                         String resourceType, String resourceId,
+                                         long resourceVersion) {
+        if (!"rule".equals(resourceType)) {
+            throw PlatformException.badRequest("INVALID_RESOURCE_TYPE",
+                    "当前发布计划仅支持规则资源");
+        }
+        List<Map<String, Object>> rules = normalizeRows(jdbcTemplate.queryForList("""
+                select * from rule
+                 where id = ? and application_id = ? and environment_id = ?
+                """, resourceId, applicationId, environmentId));
+        if (rules.isEmpty()) {
+            throw PlatformException.badRequest("INVALID_ROLLOUT_RESOURCE",
+                    "所选规则不属于当前应用和环境");
+        }
+        Integer versionCount = jdbcTemplate.queryForObject("""
+                select count(*) from rule_version where rule_id = ? and version = ?
+                """, Integer.class, resourceId, resourceVersion);
+        if (versionCount == null || versionCount == 0) {
+            throw PlatformException.badRequest("INVALID_ROLLOUT_VERSION",
+                    "所选规则版本不存在");
+        }
+    }
+
     private long nextScopedVersion(String table, String keyColumn, String keyValue) {
         Long maximum = jdbcTemplate.queryForObject(
                 "select coalesce(max(version), 0) from " + table + " where " + keyColumn + " = ?",
@@ -1286,13 +1586,14 @@ public class PlatformJdbcService {
         if (count != null && count > 0) {
             return;
         }
+        ApplicationEnvironment scope = requireApplicationEnvironment(request);
         try {
             jdbcTemplate.update("""
                     insert into dataset(id, name, application_id, environment_id, created_by, created_at)
                     values (?, ?, ?, ?, ?, ?)
                     """, datasetId, optionalString(request, "name", datasetId),
-                    requiredString(request, "applicationId", "app-default"),
-                    requiredString(request, "environmentId", "env-dev"),
+                    scope.applicationId(),
+                    scope.environmentId(),
                     context.actor(), timestamp(clock.instant()));
         } catch (DuplicateKeyException ignored) {
             // created concurrently
@@ -1351,6 +1652,40 @@ public class PlatformJdbcService {
         } catch (Exception e) {
             throw PlatformException.notFound(table, id);
         }
+    }
+
+    private void requireExists(String table, String id) {
+        Integer count = jdbcTemplate.queryForObject(
+                "select count(*) from " + table + " where id = ?", Integer.class, id);
+        if (count == null || count == 0) {
+            throw PlatformException.notFound(table, id);
+        }
+    }
+
+    private void validateEnvironment(String applicationId, String environmentId) {
+        List<Map<String, Object>> rows = normalizeRows(jdbcTemplate.queryForList("""
+                select * from environment where id = ? and application_id = ?
+                """, environmentId, applicationId));
+        if (rows.isEmpty()) {
+            throw PlatformException.badRequest("INVALID_ENVIRONMENT",
+                    "所选环境不存在，或不属于当前应用");
+        }
+        String type = String.valueOf(rows.get(0).get("type")).toUpperCase(Locale.ROOT);
+        if (!List.of("DEV", "SIT", "UAT", "PROD").contains(type)) {
+            throw PlatformException.badRequest("INVALID_ENVIRONMENT_TYPE",
+                    "环境类型仅允许 DEV、SIT、UAT、PROD");
+        }
+    }
+
+    private ApplicationEnvironment requireApplicationEnvironment(Map<String, Object> request) {
+        String applicationId = requiredString(request, "applicationId", null);
+        String environmentId = requiredString(request, "environmentId", null);
+        requireExists("application", applicationId);
+        validateEnvironment(applicationId, environmentId);
+        return new ApplicationEnvironment(applicationId, environmentId);
+    }
+
+    private record ApplicationEnvironment(String applicationId, String environmentId) {
     }
 
     private List<Map<String, Object>> normalizeRows(List<Map<String, Object>> rows) {

@@ -70,6 +70,10 @@ public final class AgentLaunchConfig {
         return platformUrl() != null && platformAgentId() != null;
     }
 
+    public boolean platformRegistrationEnabled() {
+        return platformUrl() != null && platformApplicationId() != null;
+    }
+
     public String platformUrl() {
         String value = stringValue("platformUrl", null);
         if (value == null || value.isBlank()) {
@@ -80,6 +84,14 @@ public final class AgentLaunchConfig {
 
     public String platformAgentId() {
         return stringValue("platformAgentId", null);
+    }
+
+    public String platformApplicationId() {
+        return stringValue("platformApplicationId", null);
+    }
+
+    public String platformEnvironmentId() {
+        return stringValue("platformEnvironmentId", null);
     }
 
     public String platformToken() {
@@ -104,6 +116,12 @@ public final class AgentLaunchConfig {
 
     public long recordingFlushIntervalMillis() {
         return longValue("recordingFlushIntervalMillis", 500L);
+    }
+
+    public AgentLaunchConfig withPlatformAgentId(String agentId) {
+        Map<String, String> next = new LinkedHashMap<>(values);
+        next.put("platformAgentId", agentId);
+        return new AgentLaunchConfig(next);
     }
 
     private String stringValue(String name, String defaultValue) {

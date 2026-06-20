@@ -7,10 +7,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -30,6 +34,9 @@ class PlatformWebContractIntegrationTest {
 
     @Autowired
     ObjectMapper objectMapper;
+
+    @Autowired
+    JdbcTemplate jdbcTemplate;
 
     @Test
     void supportsTheWebConsoleContractWithoutLeakingCredentials() throws Exception {
@@ -73,10 +80,9 @@ class PlatformWebContractIntegrationTest {
         assertThat(datasource.toString()).doesNotContain("config_json").doesNotContain("must-never-be-returned");
 
         mockMvc.perform(get("/api/v1/query/instances")
-                        .param("q", "contract-host")
-                        .header("X-Actor", "system"))
+                .param("q", "contract-host")
+                .header("X-Actor", "system"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.total").value(1))
                 .andExpect(jsonPath("$.items[0].id").value("web-contract-instance"));
 
         mockMvc.perform(get("/api/v1/details/instances/web-contract-instance")
@@ -106,8 +112,7 @@ class PlatformWebContractIntegrationTest {
                         .param("environmentId", "env-dev")
                         .header("X-Actor", "system"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].class_name").value("com.example.contract.ContractService"))
-                .andExpect(jsonPath("$[0].method_name").value("execute"));
+                .andExpect(jsonPath("$").isEmpty());
         mockMvc.perform(get("/api/v1/targets/search")
                         .param("q", "ContractService")
                         .param("applicationId", "app-default")
@@ -149,6 +154,110 @@ class PlatformWebContractIntegrationTest {
         mockMvc.perform(get("/api/v1/this-route-does-not-exist").header("X-Actor", "system"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("ROUTE_NOT_FOUND"));
+    }
+
+    @Test
+    void registersRuntimeAssignsEnvironmentAndDiscoversExactJvmTargets() throws Exception {
+        JsonNode registration = postJson("/api/v1/agent-registrations/self", Map.ofEntries(
+                Map.entry("applicationId", "app-default"),
+                Map.entry("hostname", "runtime-contract-host"),
+                Map.entry("processId", "4242"),
+                Map.entry("processStartId", "runtime-contract-host:4242:123456789"),
+                Map.entry("jvmStartedAtEpochMillis", 123456789L),
+                Map.entry("runtime", "java-21"),
+                Map.entry("javaVersion", "21.0.9"),
+                Map.entry("loadMode", "premain"),
+                Map.entry("agentVersion", "0.1.0"),
+                Map.entry("bootstrapVersion", "0.1.0"),
+                Map.entry("listenHost", "127.0.0.1"),
+                Map.entry("listenPort", 18080),
+                Map.entry("capabilities", java.util.List.of("DISCOVER_TARGETS", "APPLY_RULE"))
+        ));
+        String instanceId = registration.path("instanceId").asText();
+        String agentId = registration.path("agentId").asText();
+        assertThat(registration.path("status").asText()).isEqualTo("PENDING_ASSIGNMENT");
+        assertThat(registration.path("environmentId").isNull()).isTrue();
+
+        JsonNode assigned = postJson("/api/v1/instances/" + instanceId + "/environment", Map.of(
+                "environmentId", "env-dev"
+        ));
+        assertThat(assigned.path("environment_id").asText()).isEqualTo("env-dev");
+        assertThat(assigned.path("registration_status").asText()).isEqualTo("ASSIGNED");
+
+        jdbcTemplate.update("update agent_instance set status = 'OFFLINE' where id <> ?", agentId);
+        CompletableFuture<String> discovery = CompletableFuture.supplyAsync(() -> {
+            try {
+                return mockMvc.perform(get("/api/v1/targets/search")
+                                .param("q", "OrderService")
+                                .param("applicationId", "app-default")
+                                .param("environmentId", "env-dev")
+                                .header("X-Actor", "system"))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString();
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        });
+
+        JsonNode command = waitForCommand(agentId, Duration.ofSeconds(3));
+        assertThat(command.path("command_type").asText()).isEqualTo("DISCOVER_TARGETS");
+        postJson("/api/v1/agent-commands/" + command.path("id").asText() + "/ack", Map.of(
+                "status", "ACKED",
+                "result", Map.of("targets", java.util.List.of(Map.ofEntries(
+                        Map.entry("classId", "loader-1:com.example.demo.OrderService"),
+                        Map.entry("className", "com.example.demo.OrderService"),
+                        Map.entry("classLoaderId", "loader-1"),
+                        Map.entry("methodName", "calculateScore"),
+                        Map.entry("descriptor", "(I)I"),
+                        Map.entry("parameterTypes", java.util.List.of("int")),
+                        Map.entry("returnType", "int")
+                )))
+        ));
+
+        JsonNode targets = objectMapper.readTree(discovery.get(5, TimeUnit.SECONDS));
+        assertThat(targets).hasSize(1);
+        assertThat(targets.get(0).path("className").asText())
+                .isEqualTo("com.example.demo.OrderService");
+        assertThat(targets.get(0).path("classId").asText())
+                .isEqualTo("loader-1:com.example.demo.OrderService");
+        assertThat(targets.get(0).path("descriptor").asText()).isEqualTo("(I)I");
+        assertThat(targets.get(0).path("agentCount").asInt()).isEqualTo(1);
+        assertThat(targets.get(0).path("instanceCount").asInt()).isEqualTo(1);
+    }
+
+    @Test
+    void rejectsMissingOrCrossScopedApplicationEnvironmentInsteadOfInventingDefaults() throws Exception {
+        mockMvc.perform(post("/api/v1/rules")
+                        .header("X-Actor", "system")
+                        .header("Idempotency-Key", "missing-rule-environment")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of(
+                                "applicationId", "app-default",
+                                "name", "Must not receive a default environment"
+                        ))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("FIELD_REQUIRED"))
+                .andExpect(jsonPath("$.message").value("缺少必填字段：environmentId"));
+
+        mockMvc.perform(post("/api/v1/datasources")
+                        .header("X-Actor", "system")
+                        .header("Idempotency-Key", "cross-scoped-datasource-environment")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of(
+                                "applicationId", "app-default",
+                                "environmentId", "environment-does-not-exist",
+                                "datasourceType", "TEST_FIXTURE",
+                                "name", "Invalid environment"
+                        ))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_ENVIRONMENT"))
+                .andExpect(jsonPath("$.message").value("所选环境不存在，或不属于当前应用"));
+
+        Integer count = jdbcTemplate.queryForObject(
+                "select count(*) from rule where name = ?",
+                Integer.class,
+                "Must not receive a default environment");
+        assertThat(count).isZero();
     }
 
     @Test
@@ -195,5 +304,19 @@ class PlatformWebContractIntegrationTest {
                 .andExpect(status().is2xxSuccessful())
                 .andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(response);
+    }
+
+    private JsonNode waitForCommand(String agentId, Duration timeout) throws Exception {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            JsonNode response = postJson("/api/v1/agents/" + agentId + "/commands/next", Map.of(
+                    "leaseSeconds", 30
+            ));
+            if (!"NO_COMMAND".equals(response.path("status").asText())) {
+                return response;
+            }
+            Thread.sleep(25);
+        }
+        throw new AssertionError("Agent did not receive a discovery command before timeout");
     }
 }

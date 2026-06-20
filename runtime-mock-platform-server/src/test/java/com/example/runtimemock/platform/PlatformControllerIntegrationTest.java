@@ -160,11 +160,11 @@ class PlatformControllerIntegrationTest {
 
         JsonNode batch = postJson("/api/v1/operation-plans/operation-platform-1/batches", Map.of(
                 "id", "rollout-batch-platform-1",
-                "batchOrder", 1,
+                "batchOrder", 2,
                 "targetSelector", Map.of("labels", Map.of("tier", "demo")),
                 "reason", "create batch"
         ), "system");
-        assertThat(batch.get("batch_order").asInt()).isEqualTo(1);
+        assertThat(batch.get("batch_order").asInt()).isEqualTo(2);
 
         JsonNode execution = postJson("/api/v1/rollout-batches/rollout-batch-platform-1/executions", Map.of(
                 "id", "rollout-execution-platform-1",
@@ -340,22 +340,34 @@ class PlatformControllerIntegrationTest {
                 "reason", "reject invalid ttl"
         ), "system", 400);
 
-        postJsonExpectingStatus("/api/v1/approvals", Map.of(
+        JsonNode defaultSelfApproval = postJson("/api/v1/approvals", Map.of(
                 "id", "approval-without-approver",
                 "subjectType", "RECORDING_SESSION",
                 "subjectId", "rec-safe-defaults",
                 "subjectVersion", 1,
-                "reason", "reject empty approvers"
-        ), "system", 400);
+                "reason", "default requester as approver"
+        ), "system");
+        assertThat(defaultSelfApproval.get("status").asText()).isEqualTo("WAITING_APPROVAL");
+        JsonNode defaultSelfApproved = postJson("/api/v1/approvals/approval-without-approver/decisions", Map.of(
+                "decision", "APPROVED",
+                "reason", "approve own request by default"
+        ), "system");
+        assertThat(defaultSelfApproved.get("status").asText()).isEqualTo("APPROVED");
 
-        postJsonExpectingStatus("/api/v1/approvals", Map.of(
+        JsonNode selfApproval = postJson("/api/v1/approvals", Map.of(
                 "id", "approval-self-approver",
                 "subjectType", "RECORDING_SESSION",
                 "subjectId", "rec-safe-defaults",
                 "subjectVersion", 1,
                 "approvers", java.util.List.of("system"),
-                "reason", "reject self approver"
-        ), "system", 400);
+                "reason", "allow self approver"
+        ), "system");
+        assertThat(selfApproval.get("status").asText()).isEqualTo("WAITING_APPROVAL");
+        JsonNode selfApproved = postJson("/api/v1/approvals/approval-self-approver/decisions", Map.of(
+                "decision", "APPROVED",
+                "reason", "approve own request"
+        ), "system");
+        assertThat(selfApproved.get("status").asText()).isEqualTo("APPROVED");
 
         postJson("/api/v1/approvals", Map.of(
                 "id", "approval-single-decision",

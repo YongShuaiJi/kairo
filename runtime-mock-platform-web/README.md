@@ -22,11 +22,27 @@ Token；Token 会被 Next.js 服务端加密后写入 HttpOnly Cookie，浏览�
 
 ```bash
 RUNTIME_MOCK_WEB_DEMO_MODE=true \
-RUNTIME_MOCK_WEB_SESSION_KEY=runtime-mock-demo-session-key-32 \
+RUNTIME_MOCK_WEB_SESSION_KEY=runtime-mock-local-session-key-32chars \
 npm run dev
 ```
 
 使用 Token `runtime-mock-demo` 登录。页面会持续显示 Demo 标识，所有写操作只返回演示结果。
+
+## 真实模式
+
+```bash
+RUNTIME_MOCK_WEB_DEMO_MODE=false \
+RUNTIME_MOCK_PLATFORM_API_URL=http://127.0.0.1:18280 \
+RUNTIME_MOCK_WEB_SESSION_KEY=runtime-mock-local-session-key-32chars \
+npm run dev
+```
+
+登录时使用 Platform 管理员签发的 Token；本地开发环境可使用
+`runtime-mock-dev-admin-token-change-me`。`RUNTIME_MOCK_WEB_SESSION_KEY` 只用于加密 Web
+会话 Cookie，不是登录 Token，也不会提交给 Platform API。
+
+如果 `3000` 端口已被其他进程占用，Next.js 会自动改用 `3001`、`3002` 等端口；请访问终端
+输出的实际地址，避免误打开仍在运行的旧 Demo 进程。
 
 ## 质量检查
 

@@ -19,13 +19,21 @@ public final class AgentCoreLauncher {
             AgentTokenManager tokenManager = new AgentTokenManager(config.token(), config.tokenTtl());
             AgentHttpServer server = new AgentHttpServer(runtime, config.host(), config.port(), tokenManager);
             server.start();
+            AgentLaunchConfig effectiveConfig = config;
+            if (config.platformRegistrationEnabled()) {
+                PlatformAgentRegistrationClient.Registration registration =
+                        new PlatformAgentRegistrationClient(config).register(runtime.jvmInfo(), server.port());
+                effectiveConfig = config.withPlatformAgentId(registration.agentId());
+                runtime.recordEvent("platform.agent.register", "platform", null, registration.instanceId(),
+                        "Agent registered as " + registration.agentId());
+            }
             PlatformCommandPoller poller = null;
             PlatformRecordingUploader recordingUploader = null;
-            if (config.platformPollingEnabled()) {
-                recordingUploader = new PlatformRecordingUploader(runtime, config);
+            if (effectiveConfig.platformPollingEnabled()) {
+                recordingUploader = new PlatformRecordingUploader(runtime, effectiveConfig);
                 runtime.recordingSink(recordingUploader);
                 recordingUploader.start();
-                poller = new PlatformCommandPoller(runtime, config);
+                poller = new PlatformCommandPoller(runtime, effectiveConfig);
                 poller.start();
             }
             final Path[] registration = new Path[1];

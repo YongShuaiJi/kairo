@@ -1,6 +1,8 @@
 package com.example.runtimemock.platform.api;
 
 import com.example.runtimemock.platform.service.PlatformQueryService;
+import com.example.runtimemock.platform.service.TargetDiscoveryService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -18,9 +20,15 @@ import java.util.Map;
 public final class PlatformQueryController {
 
     private final PlatformQueryService service;
+    private final TargetDiscoveryService targetDiscoveryService;
+    private final RequestContextFactory requestContextFactory;
 
-    public PlatformQueryController(PlatformQueryService service) {
+    public PlatformQueryController(PlatformQueryService service,
+                                   TargetDiscoveryService targetDiscoveryService,
+                                   RequestContextFactory requestContextFactory) {
         this.service = service;
+        this.targetDiscoveryService = targetDiscoveryService;
+        this.requestContextFactory = requestContextFactory;
     }
 
     @GetMapping("/query/{resource}")
@@ -47,9 +55,11 @@ public final class PlatformQueryController {
     }
 
     @GetMapping("/targets/search")
-    public List<Map<String, Object>> searchTargets(@RequestParam(defaultValue = "") String q,
+    public List<Map<String, Object>> searchTargets(HttpServletRequest request,
+                                                   @RequestParam(defaultValue = "") String q,
                                                    @RequestParam(defaultValue = "") String applicationId,
                                                    @RequestParam(defaultValue = "") String environmentId) {
-        return service.searchTargets(q, applicationId, environmentId);
+        return targetDiscoveryService.search(requestContextFactory.from(request),
+                q, applicationId, environmentId);
     }
 }

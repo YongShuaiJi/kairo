@@ -133,12 +133,6 @@ class PlatformAutomationIntegrationTest {
         approveSubject("approval-operation-auto", "OPERATION_PLAN", "operation-auto", 2);
         transitionOperation("operation-auto", "WAITING_APPROVAL", 2, "APPROVED");
         transitionOperation("operation-auto", "APPROVED", 3, "RUNNING");
-        postJson("/api/v1/operation-plans/operation-auto/batches", Map.of(
-                "id", "rollout-batch-auto",
-                "batchOrder", 1,
-                "targetSelector", Map.of("labels", Map.of("tier", "auto")),
-                "reason", "automation test"
-        ), "system");
     }
 
     private void createExtractionFixture() throws Exception {

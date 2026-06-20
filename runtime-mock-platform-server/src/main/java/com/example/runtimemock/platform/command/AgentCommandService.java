@@ -45,6 +45,10 @@ public class AgentCommandService {
         return normalizeRows(jdbcTemplate.queryForList("select * from agent_command order by created_at, id"));
     }
 
+    public Map<String, Object> command(String id) {
+        return getById(id);
+    }
+
     @Transactional
     public Map<String, Object> createManualCommand(RequestContext context, String agentId,
                                                    Map<String, Object> request) {
@@ -273,6 +277,41 @@ public class AgentCommandService {
         }
         Map<String, Object> updatedOperation = normalizeRow(jdbcTemplate.queryForMap(
                 "select * from operation_plan where id = ?", operationPlanId));
+        if (allSucceeded && "rule".equals(String.valueOf(operation.get("resource_type")))) {
+            String ruleId = String.valueOf(operation.get("resource_id"));
+            long ruleVersion = ((Number) operation.get("resource_version")).longValue();
+            jdbcTemplate.update("""
+                    update rule_version set status = 'PUBLISHED'
+                     where rule_id = ? and version = ?
+                    """, ruleId, ruleVersion);
+            jdbcTemplate.update("""
+                    update rule set status = 'ACTIVE', updated_by = ?, updated_at = ?
+                     where id = ?
+                    """, context.actor(), timestamp(now), ruleId);
+            List<Map<String, Object>> executions = normalizeRows(jdbcTemplate.queryForList("""
+                    select rie.instance_id
+                      from rollout_instance_execution rie
+                      join rollout_batch rb on rb.id = rie.rollout_batch_id
+                     where rb.operation_plan_id = ? and rie.status = 'SUCCEEDED'
+                    """, operationPlanId));
+            for (Map<String, Object> execution : executions) {
+                String instanceId = String.valueOf(execution.get("instance_id"));
+                int runtimeStatusUpdated = jdbcTemplate.update("""
+                        update rule_runtime_status
+                           set status = 'ACTIVE', last_error = null, updated_at = ?
+                         where rule_id = ? and rule_version = ? and instance_id = ?
+                        """, timestamp(now), ruleId, ruleVersion, instanceId);
+                if (runtimeStatusUpdated == 0) {
+                    jdbcTemplate.update("""
+                            insert into rule_runtime_status(
+                                id, rule_id, rule_version, instance_id, status,
+                                hit_count, error_count, last_error, updated_at
+                            ) values (?, ?, ?, ?, 'ACTIVE', 0, 0, null, ?)
+                            """, "rule-runtime-" + UUID.randomUUID(), ruleId, ruleVersion,
+                            instanceId, timestamp(now));
+                }
+            }
+        }
         eventWriter.recordEvent(context, "operation_plan.auto_complete", "operation_plan", operationPlanId,
                 version, operation, updatedOperation, newStatus, "rollout operation completed",
                 Map.of("batchCount", batches.size()));

@@ -140,6 +140,12 @@ public final class AgentRuntime implements AutoCloseable {
         return publish(method, rule, actor);
     }
 
+    public CompiledRule publishTarget(String classIdOrName, MockRule rule, String actor) {
+        Method method = loadedClassRepository.resolveMethodTarget(
+                classIdOrName, rule.target().methodName(), rule.target().methodDescriptor());
+        return publish(method, rule, actor);
+    }
+
     public void remove(Method method, String ruleId) {
         remove(MethodKey.of(method), ruleId, "system");
     }

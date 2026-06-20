@@ -67,10 +67,17 @@ const initialTestInput = `{
 type InvokePhase = "BEFORE" | "RETURN" | "THROWS";
 type PagedResult = { items: PlatformRecord[]; page: number; size: number; total: number };
 type TargetOption = {
+  classId: string;
   className: string;
+  classLoaderId: string;
+  classLoaderClassName: string;
   methodName: string;
+  descriptor: string;
+  returnType: string;
+  parameterTypes: string[];
+  modifiable: boolean;
+  instanceCount: number;
   protocol: string;
-  versionCount: number;
 };
 
 function stringValue(record: PlatformRecord, ...keys: string[]) {
@@ -79,6 +86,14 @@ function stringValue(record: PlatformRecord, ...keys: string[]) {
     if (value !== null && value !== undefined && String(value).trim()) return String(value);
   }
   return "";
+}
+
+function stringArrayValue(record: PlatformRecord, ...keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (Array.isArray(value)) return value.map(String);
+  }
+  return [] as string[];
 }
 
 function phaseLabel(phase: InvokePhase) {
@@ -227,8 +242,11 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
   const [name, setName] = useState(ruleId ? `规则 ${ruleId}` : "");
   const [applicationId, setApplicationId] = useState("");
   const [environmentId, setEnvironmentId] = useState("");
+  const [classId, setClassId] = useState("");
   const [className, setClassName] = useState("");
+  const [classLoaderId, setClassLoaderId] = useState("");
   const [methodName, setMethodName] = useState("");
+  const [methodDescriptor, setMethodDescriptor] = useState("");
   const [executionPhase, setExecutionPhase] = useState<InvokePhase | "">("");
   const [riskLevel, setRiskLevel] = useState("LOW");
   const [maxHits, setMaxHits] = useState("1000");
@@ -272,7 +290,13 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
     .filter((item) => stringValue(item, "applicationId", "application_id", "application") === applicationId)
     .map((item) => stringValue(item, "environmentId", "environment_id", "environment"))
     .filter(Boolean))).sort();
-  const targetSelected = Boolean(className.trim() && methodName.trim());
+  const targetSelected = Boolean(
+    classId.trim()
+    && className.trim()
+    && classLoaderId.trim()
+    && methodName.trim()
+    && methodDescriptor.trim(),
+  );
   const editorEnabled = Boolean(targetSelected && executionPhase);
   const formComplete = Boolean(
     name.trim()
@@ -330,11 +354,20 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
         .then((result) => {
           if (!active) return;
           setTargetOptions(result.map((item) => ({
+            classId: stringValue(item, "classId", "class_id"),
             className: stringValue(item, "className", "class_name"),
+            classLoaderId: stringValue(item, "classLoaderId", "class_loader_id"),
+            classLoaderClassName: stringValue(item, "classLoaderClassName", "class_loader_class_name"),
             methodName: stringValue(item, "methodName", "method_name"),
+            descriptor: stringValue(item, "descriptor", "methodDescriptor", "method_descriptor"),
+            returnType: stringValue(item, "returnType", "return_type"),
+            parameterTypes: stringArrayValue(item, "parameterTypes", "parameter_types"),
+            modifiable: Boolean(item.modifiable),
+            instanceCount: Number(item.instanceCount ?? item.instance_count ?? 0),
             protocol: stringValue(item, "protocol") || "JAVA_METHOD",
-            versionCount: Number(item.versionCount ?? item.version_count ?? 0),
-          })).filter((item) => item.className && item.methodName));
+          })).filter((item) =>
+            item.classId && item.className && item.classLoaderId && item.methodName && item.descriptor,
+          ));
         })
         .catch((error) => {
           if (active) toast.error(error instanceof Error ? error.message : "目标方法加载失败");
@@ -379,6 +412,18 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
         return { source: value, phase: "BEFORE" };
       };
       const currentScript = decodeScript(latest?.script_json);
+      const targetMatcher = (() => {
+        const raw = target?.matcher_json;
+        if (raw && typeof raw === "object") return raw as Record<string, unknown>;
+        if (typeof raw === "string") {
+          try {
+            return JSON.parse(raw) as Record<string, unknown>;
+          } catch {
+            return {};
+          }
+        }
+        return {};
+      })();
       setName(String(detail.rule.name ?? ruleId));
       setApplicationId(String(detail.rule.application_id ?? ""));
       setEnvironmentId(String(detail.rule.environment_id ?? ""));
@@ -387,8 +432,11 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
       setExecutionPhase(currentScript.phase);
       setTestInput(JSON.stringify({ phase: currentScript.phase, args: [] }, null, 2));
       setPreviousScript(previous ? decodeScript(previous.script_json).source : emptyPreviousScript);
+      setClassId(String(targetMatcher.classId ?? target?.class_name ?? ""));
       setClassName(String(target?.class_name ?? ""));
+      setClassLoaderId(String(targetMatcher.classLoaderId ?? ""));
       setMethodName(String(target?.method_name ?? ""));
+      setMethodDescriptor(String(targetMatcher.descriptor ?? ""));
       setDirty(false);
     }).catch((error) => toast.error(error instanceof Error ? error.message : "规则详情加载失败"));
     return () => { active = false; };
@@ -460,8 +508,11 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
   function changeApplication(value: string) {
     setApplicationId(value);
     setEnvironmentId("");
+    setClassId("");
     setClassName("");
+    setClassLoaderId("");
     setMethodName("");
+    setMethodDescriptor("");
     setTargetQuery("");
     setManualTarget(false);
     setDirty(true);
@@ -472,8 +523,11 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
 
   function changeEnvironment(value: string) {
     setEnvironmentId(value);
+    setClassId("");
     setClassName("");
+    setClassLoaderId("");
     setMethodName("");
+    setMethodDescriptor("");
     setTargetQuery("");
     setManualTarget(false);
     setDirty(true);
@@ -483,9 +537,12 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
   }
 
   function selectTarget(target: TargetOption) {
+    setClassId(target.classId);
     setClassName(target.className);
+    setClassLoaderId(target.classLoaderId);
     setMethodName(target.methodName);
-    setTargetQuery(`${target.className}#${target.methodName}`);
+    setMethodDescriptor(target.descriptor);
+    setTargetQuery(`${target.className}#${target.methodName}${target.descriptor}`);
     setDirty(true);
     setDiagnostics([]);
     setValidationStatus("idle");
@@ -520,9 +577,14 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
       script: { phase: executionPhase, script },
       matcher: { phase: executionPhase },
       governance: { maxHits: Number(maxHits), ttlSeconds: Number(ttlSeconds) },
-      targets: [{ protocol: "JAVA_METHOD", className, methodName, matcher: {} }],
+      targets: [{
+        protocol: "JAVA_METHOD",
+        className,
+        methodName,
+        matcher: { classId, classLoaderId, descriptor: methodDescriptor },
+      }],
       capabilities: ["RETURN_VALUE", "THROW_EXCEPTION"],
-      target: { className, methodName },
+      target: { classId, className, classLoaderId, methodName, methodDescriptor },
     };
   }
 
@@ -714,7 +776,16 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                 ) : manualTarget ? (
                   <>
                     <label className="block">
-                      <span className="mb-1.5 block text-xs font-medium text-slate-600">Java 类名</span>
+                      <span className="mb-1.5 block text-xs font-medium text-slate-600">运行时类 ID</span>
+                      <Input
+                        className="font-mono text-xs"
+                        placeholder="目标发现返回的 classId；也可填写完整类名"
+                        value={classId}
+                        onChange={(event) => { setClassId(event.target.value); setDirty(true); }}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 mt-3 block text-xs font-medium text-slate-600">Java 类名</span>
                       <Input
                         className="font-mono text-xs"
                         placeholder="com.example.Service"
@@ -731,7 +802,33 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                         onChange={(event) => { setMethodName(event.target.value); setDirty(true); }}
                       />
                     </label>
-                    <button type="button" onClick={() => { setManualTarget(false); setClassName(""); setMethodName(""); }} className="mt-2 text-xs font-medium text-indigo-600 hover:text-indigo-700">返回搜索已登记方法</button>
+                    <label className="mt-3 block">
+                      <span className="mb-1.5 block text-xs font-medium text-slate-600">类加载器 ID</span>
+                      <Input
+                        className="font-mono text-xs"
+                        placeholder="例如：jdk.internal.loader.ClassLoaders$AppClassLoader@..."
+                        value={classLoaderId}
+                        onChange={(event) => { setClassLoaderId(event.target.value); setDirty(true); }}
+                      />
+                    </label>
+                    <label className="mt-3 block">
+                      <span className="mb-1.5 block text-xs font-medium text-slate-600">JVM 方法描述符</span>
+                      <Input
+                        className="font-mono text-xs"
+                        placeholder="例如：(I)I"
+                        value={methodDescriptor}
+                        onChange={(event) => { setMethodDescriptor(event.target.value); setDirty(true); }}
+                      />
+                    </label>
+                    <p className="mt-2 text-[10px] leading-4 text-amber-700">手动模式用于目标发现不可用时的技术兜底；发布仍会按类加载器和 JVM 描述符精确匹配。</p>
+                    <button type="button" onClick={() => {
+                      setManualTarget(false);
+                      setClassId("");
+                      setClassName("");
+                      setClassLoaderId("");
+                      setMethodName("");
+                      setMethodDescriptor("");
+                    }} className="mt-2 text-xs font-medium text-indigo-600 hover:text-indigo-700">返回搜索运行时方法</button>
                   </>
                 ) : (
                   <>
@@ -750,9 +847,22 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                           <Target className="mt-0.5 size-4 shrink-0 text-indigo-600" />
                           <div className="min-w-0">
                             <p className="truncate font-mono text-[11px] text-indigo-900">{className}</p>
-                            <p className="mt-1 font-mono text-xs font-semibold text-indigo-700">#{methodName}</p>
+                            <p className="mt-1 font-mono text-xs font-semibold text-indigo-700">#{methodName}{methodDescriptor}</p>
+                            <p className="mt-1 truncate font-mono text-[10px] text-indigo-500">加载器：{classLoaderId}</p>
                           </div>
-                          <button type="button" onClick={() => { setClassName(""); setMethodName(""); setTargetQuery(""); setExecutionPhase(""); setDirty(true); setDiagnostics([]); setValidationStatus("idle"); setTestResult(null); }} className="ml-auto shrink-0 text-[10px] font-medium text-indigo-600 hover:text-indigo-800">更换</button>
+                          <button type="button" onClick={() => {
+                            setClassId("");
+                            setClassName("");
+                            setClassLoaderId("");
+                            setMethodName("");
+                            setMethodDescriptor("");
+                            setTargetQuery("");
+                            setExecutionPhase("");
+                            setDirty(true);
+                            setDiagnostics([]);
+                            setValidationStatus("idle");
+                            setTestResult(null);
+                          }} className="ml-auto shrink-0 text-[10px] font-medium text-indigo-600 hover:text-indigo-800">更换</button>
                         </div>
                       </div>
                     ) : (
@@ -762,19 +872,30 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                         ) : targetOptions.length ? targetOptions.map((target) => (
                           <button
                             type="button"
-                            key={`${target.className}#${target.methodName}`}
+                            key={`${target.classId}#${target.methodName}${target.descriptor}`}
                             onClick={() => selectTarget(target)}
                             className="w-full rounded-lg border border-transparent px-3 py-2 text-left hover:border-indigo-100 hover:bg-indigo-50"
                           >
                             <p className="truncate font-mono text-[10px] text-slate-500">{target.className}</p>
-                            <p className="mt-1 font-mono text-xs font-medium text-slate-800">#{target.methodName}</p>
+                            <p className="mt-1 font-mono text-xs font-medium text-slate-800">#{target.methodName}{target.descriptor}</p>
+                            <p className="mt-1 truncate text-[10px] text-slate-400">
+                              {target.parameterTypes.join(", ") || "无参数"} → {target.returnType || "void"} · {target.instanceCount} 个在线实例
+                            </p>
                           </button>
                         )) : (
-                          <p className="rounded-lg border border-dashed p-3 text-xs leading-5 text-slate-400">没有找到已登记的方法。</p>
+                          <p className="rounded-lg border border-dashed p-3 text-xs leading-5 text-slate-400">当前在线 JVM 中没有发现匹配方法；可切换到手动填写。</p>
                         )}
                       </div>
                     )}
-                    <button type="button" onClick={() => { setManualTarget(true); setTargetQuery(""); setClassName(""); setMethodName(""); }} className="mt-2 text-xs font-medium text-indigo-600 hover:text-indigo-700">手动填写类名和方法名</button>
+                    <button type="button" onClick={() => {
+                      setManualTarget(true);
+                      setTargetQuery("");
+                      setClassId("");
+                      setClassName("");
+                      setClassLoaderId("");
+                      setMethodName("");
+                      setMethodDescriptor("");
+                    }} className="mt-2 text-xs font-medium text-indigo-600 hover:text-indigo-700">手动填写精确目标</button>
                   </>
                 )}
               </div>
