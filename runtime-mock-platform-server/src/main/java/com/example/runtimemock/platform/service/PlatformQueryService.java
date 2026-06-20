@@ -16,7 +16,20 @@ public final class PlatformQueryService {
     private static final Map<String, ResourceDefinition> RESOURCES = Map.ofEntries(
             resource("applications", "application", "created_at desc, id", "id", "name", "project_id"),
             resource("environments", "environment", "created_at desc, id", "id", "name", "type", "application_id"),
-            resource("instances", "instance", "updated_at desc, id", "id", "hostname", "application_id", "environment_id", "status"),
+            selectedResource("instances", "instance",
+                    """
+                    id, hostname, process_id, runtime, status, application_id, environment_id,
+                    (select a.name from application a where a.id = instance.application_id) as application_name,
+                    (select p.name from project p
+                      join application a on a.project_id = p.id
+                     where a.id = instance.application_id) as project_name,
+                    (select e.name from environment e where e.id = instance.environment_id) as environment_name,
+                    labels_json, last_seen_at, created_at, updated_at, process_start_id,
+                    jvm_started_at, java_version, load_mode, agent_version, capabilities_json,
+                    lease_expires_at, registration_status
+                    """,
+                    "updated_at desc, id", "id", "hostname", "application_id", "environment_id",
+                    "status"),
             resource("sidecars", "sidecar_instance", "updated_at desc, id", "id", "endpoint", "status", "sidecar_version"),
             selectedResource("agents", "agent_instance",
                     "id, instance_id, sidecar_id, status, agent_version, bootstrap_version, listen_host, listen_port, capabilities_json, last_heartbeat_at, created_at, updated_at",
@@ -26,7 +39,16 @@ public final class PlatformQueryService {
             resource("rule-versions", "rule_version", "created_at desc, id", "id", "rule_id", "status", "risk_level"),
             resource("operation-plans", "operation_plan", "updated_at desc, id", "id", "resource_type", "resource_id", "status"),
             resource("rollout-batches", "rollout_batch", "updated_at desc, id", "id", "operation_plan_id", "status"),
-            resource("rollout-executions", "rollout_instance_execution", "updated_at desc, id", "id", "rollout_batch_id", "instance_id", "status"),
+            selectedResource("rollout-executions", "rollout_instance_execution",
+                    """
+                    id, rollout_batch_id, instance_id, status, expected_agent_version,
+                    expected_rule_version, command_id, error_message, started_at, finished_at, updated_at,
+                    (select rb.operation_plan_id from rollout_batch rb
+                      where rb.id = rollout_instance_execution.rollout_batch_id) as operation_plan_id
+                    """,
+                    "updated_at desc, id", "id", "rollout_batch_id", "instance_id", "status"),
+            resource("rollback-executions", "rollback_execution", "created_at desc, id",
+                    "id", "operation_plan_id", "rollback_type", "status", "reason"),
             resource("recording-rules", "recording_rule", "updated_at desc, id", "id", "name", "status"),
             resource("recording-rule-versions", "recording_rule_version", "created_at desc, id", "id", "recording_rule_id", "status", "protocol"),
             resource("recording-sessions", "recording_session", "updated_at desc, id", "id", "application_id", "environment_id", "status"),
@@ -202,8 +224,12 @@ public final class PlatformQueryService {
                 case "OBSERVING" -> List.of("SUCCEEDED", "PARTIALLY_SUCCEEDED", "FAILED", "ROLLING_BACK");
                 case "PARTIALLY_SUCCEEDED", "FAILED" -> List.of("ROLLING_BACK", "CANCELLED");
                 case "ROLLING_BACK" -> List.of("ROLLED_BACK", "FAILED");
+                case "SUCCEEDED" -> List.of("UNLOAD");
                 default -> List.of();
             };
+            case "rollout-executions" -> "SUCCEEDED".equals(status)
+                    ? List.of("UNLOAD_PLAN")
+                    : List.of();
             case "recording-sessions" -> switch (status) {
                 case "DRAFT" -> List.of("WAITING_APPROVAL", "CANCELLED");
                 case "WAITING_APPROVAL" -> List.of("APPROVED", "CANCELLED", "EXPIRED");

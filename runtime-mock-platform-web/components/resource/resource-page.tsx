@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Copy, Plus, RefreshCw, Search, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, Plus, RefreshCw, RotateCcw, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { platformFetch } from "@/lib/api/client";
 import type { PlatformRecord, SessionUser } from "@/lib/api/types";
@@ -148,6 +148,7 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<PlatformRecord | null>(null);
   const [assignmentEnvironment, setAssignmentEnvironment] = useState("");
+  const [confirmingUnload, setConfirmingUnload] = useState(false);
 
   const activeTab = config.tabs?.find((tab) => tab.endpoint === activeEndpoint);
   const columns = activeTab?.columns.length ? activeTab.columns : config.columns;
@@ -171,6 +172,7 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
     Boolean(session.data?.capabilities?.includes("ADMIN") || session.data?.capabilities?.includes(capability));
   const transitionCapability: Record<string, string> = {
     "operation-plans": "ROLLOUT_MANAGE",
+    "rollout-executions": "ROLLOUT_MANAGE",
     "recording-sessions": "RECORD_ARGUMENTS",
     "extraction-tasks": "DATA_EXTRACT",
     "replay-plans": "IMPORT_TO_TEST",
@@ -294,6 +296,50 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
       toast.error(error instanceof Error ? error.message : "状态更新失败");
     }
   }
+
+  const unloadMutation = useMutation({
+    mutationFn: async () => {
+      const operationPlanId = activeEndpoint === "operation-plans"
+        ? String(detail?.id ?? "")
+        : String(valueOf(detail ?? {}, "operationPlanId") ?? "");
+      if (!operationPlanId) throw new Error("未找到实例执行所属的发布计划");
+      const operationPlan = activeEndpoint === "operation-plans"
+        ? detail
+        : await platformFetch<PlatformRecord>(`details/operation-plans/${operationPlanId}`);
+      if (!operationPlan?.status || operationPlan.version === undefined) {
+        throw new Error("发布计划状态不完整，请刷新后重试");
+      }
+      const reason = "通过 Web 控制台卸载规则并恢复原始字节码";
+      const token = await platformFetch<{ token: string }>("fencing-tokens", {
+        method: "POST",
+        body: JSON.stringify({
+          resourceType: "operation_plan",
+          resourceId: operationPlanId,
+          purpose: reason,
+          ttlSeconds: 300,
+          reason,
+        }),
+        idempotencyKey: crypto.randomUUID(),
+      });
+      return platformFetch(`operation-plans/${operationPlanId}/unload`, {
+        method: "POST",
+        body: JSON.stringify({
+          expectedStatus: operationPlan.status,
+          expectedVersion: operationPlan.version,
+          fencingToken: token.token,
+          reason,
+        }),
+        idempotencyKey: crypto.randomUUID(),
+      });
+    },
+    onSuccess: async () => {
+      toast.success("卸载命令已发送，等待 Agent 恢复原始字节码");
+      setConfirmingUnload(false);
+      setSelected(null);
+      await queryClient.invalidateQueries({ queryKey: ["resource"] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "规则卸载失败"),
+  });
 
   const createAction = (() => {
     if (config.createHref) {
@@ -435,7 +481,9 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
               <><Button variant="secondary" onClick={() => decide("REJECTED")}><X />拒绝</Button><Button onClick={() => decide("APPROVED")}><Check />批准</Button></>
             ) : null}
             {can(transitionCapability[activeEndpoint] ?? "__UNAVAILABLE__")
-              ? allowedActions.map((action) => <Button key={action} variant={action.includes("CANCEL") || action === "FAILED" ? "secondary" : "default"} onClick={() => transition(action)}>{actionLabel(action)}</Button>)
+              ? allowedActions.map((action) => action === "UNLOAD" || action === "UNLOAD_PLAN"
+                ? <Button key={action} variant="secondary" onClick={() => setConfirmingUnload(true)}><RotateCcw />{actionLabel(action)}</Button>
+                : <Button key={action} variant={action.includes("CANCEL") || action === "FAILED" ? "secondary" : "default"} onClick={() => transition(action)}>{actionLabel(action)}</Button>)
               : null}
             {config.key === "applications" && detail?.id && !detailEnvironmentId ? (
               <Button onClick={() => assignmentMutation.mutate()} disabled={!assignmentEnvironment || assignmentMutation.isPending}>
@@ -444,6 +492,27 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
             ) : null}
             {config.key === "rules" && detail?.id ? <Button asChild><Link href={`/rules/${detail.id}`}>创建新版本</Link></Button> : null}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmingUnload} onOpenChange={setConfirmingUnload}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>确认卸载该发布计划？</DialogTitle>
+            <DialogDescription>
+              平台会向该计划所有成功发布实例的在线 Agent 下发卸载命令，清除对应规则并恢复目标类的原始字节码。规则定义和审计记录会保留。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+            这是运行时变更操作。命令全部得到 Agent 确认后，计划状态才会变为“已回滚”；任一实例失败则标记为“失败”。
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setConfirmingUnload(false)} disabled={unloadMutation.isPending}>暂不卸载</Button>
+            <Button onClick={() => unloadMutation.mutate()} disabled={unloadMutation.isPending}>
+              <RotateCcw />
+              {unloadMutation.isPending ? "正在下发…" : "确认卸载并恢复字节码"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

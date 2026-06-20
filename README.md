@@ -153,10 +153,14 @@ For a quick end-to-end fault-injection exercise, start the bundled Spring Boot d
 
 ```bash
 java \
-  -javaagent:/Users/jiyongshuai/code/runtime-mock/runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar=coreJar=/Users/jiyongshuai/code/runtime-mock/runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar,bootstrapJar=/Users/jiyongshuai/code/runtime-mock/runtime-mock-bootstrap-api/target/runtime-mock-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev \
+  -javaagent:/Users/jiyongshuai/code/runtime-mock/runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar=coreJar=/Users/jiyongshuai/code/runtime-mock/runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar,bootstrapJar=/Users/jiyongshuai/code/runtime-mock/runtime-mock-bootstrap-api/target/runtime-mock-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformToken=runtime-mock-dev-admin-token-change-me,platformProjectName=runtime-mock,platformApplicationName=runtime-mock-demo \
   -jar runtime-mock-demo/target/runtime-mock-demo-0.1.0-SNAPSHOT-exec.jar \
   --server.port=18090
 ```
+
+`platformProjectName` 和 `platformApplicationName` 是平台展示及资源归属使用的真实业务名称。
+Platform 会按“项目名 + 应用名”复用或创建应用，并生成独立内部 ID；不要再把
+`app-default` 作为新接入应用的标识。
 
 Verify the baseline behavior:
 

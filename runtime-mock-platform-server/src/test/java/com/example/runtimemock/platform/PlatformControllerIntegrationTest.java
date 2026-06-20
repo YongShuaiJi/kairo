@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -27,6 +28,117 @@ class PlatformControllerIntegrationTest {
 
     @Autowired
     ObjectMapper objectMapper;
+
+    @Autowired
+    JdbcTemplate jdbcTemplate;
+
+    @Test
+    void unloadsPublishedRuleAndCompletesOnlyAfterAgentAck() throws Exception {
+        String instanceId = "instance-unload-1";
+        String agentId = "agent-unload-1";
+        String ruleId = "rule-unload-1";
+        String operationId = "operation-unload-1";
+
+        postJson("/api/v1/instances", Map.of(
+                "id", instanceId,
+                "applicationId", "app-default",
+                "environmentId", "env-dev",
+                "hostname", "unload-host",
+                "processId", "9001",
+                "runtime", "java-21",
+                "labels", Map.of("purpose", "unload-test"),
+                "reason", "register unload test instance"
+        ), "system");
+        postJson("/api/v1/agents", Map.of(
+                "id", agentId,
+                "instanceId", instanceId,
+                "agentVersion", "0.1.0",
+                "bootstrapVersion", "0.1.0",
+                "listenHost", "127.0.0.1",
+                "listenPort", 18091,
+                "tokenHash", "unload-token",
+                "capabilities", java.util.List.of("JAVA_METHOD", "RESET_CLASS"),
+                "reason", "register unload test agent"
+        ), "system");
+        postJson("/api/v1/rules", Map.ofEntries(
+                Map.entry("id", ruleId),
+                Map.entry("applicationId", "app-default"),
+                Map.entry("environmentId", "env-dev"),
+                Map.entry("name", "Unload integration rule"),
+                Map.entry("riskLevel", "LOW"),
+                Map.entry("matcher", Map.of()),
+                Map.entry("script", Map.of("type", "RETURN", "value", "mocked")),
+                Map.entry("governance", Map.of()),
+                Map.entry("targets", java.util.List.of(Map.of(
+                        "protocol", "JAVA_METHOD",
+                        "className", "com.example.UnloadService",
+                        "methodName", "query",
+                        "matcher", Map.of("classId", "com.example.UnloadService")
+                ))),
+                Map.entry("capabilities", java.util.List.of("EARLY_RETURN")),
+                Map.entry("reason", "create unload test rule")
+        ), "system");
+        postJson("/api/v1/operation-plans", Map.of(
+                "id", operationId,
+                "applicationId", "app-default",
+                "environmentId", "env-dev",
+                "planType", "RULE_ROLLOUT",
+                "resourceType", "rule",
+                "resourceId", ruleId,
+                "resourceVersion", 1,
+                "strategy", Map.of("mode", "canary"),
+                "rollout", Map.of("mode", "SEQUENTIAL"),
+                "reason", "create unload test operation"
+        ), "system");
+        String batchId = jdbcTemplate.queryForObject(
+                "select id from rollout_batch where operation_plan_id = ?", String.class, operationId);
+        postJson("/api/v1/rollout-batches/" + batchId + "/executions", Map.of(
+                "id", "rollout-execution-unload-1",
+                "instanceId", instanceId,
+                "expectedAgentVersion", "0.1.0",
+                "expectedRuleVersion", 1,
+                "reason", "create unload execution"
+        ), "system");
+        jdbcTemplate.update("""
+                update operation_plan set status = 'SUCCEEDED', version = 2 where id = ?
+                """, operationId);
+        jdbcTemplate.update("""
+                update rollout_instance_execution set status = 'SUCCEEDED' where id = ?
+                """, "rollout-execution-unload-1");
+        jdbcTemplate.update("""
+                insert into rule_runtime_status(
+                    id, rule_id, rule_version, instance_id, status,
+                    hit_count, error_count, last_error, updated_at
+                ) values (?, ?, 1, ?, 'ACTIVE', 0, 0, null, current_timestamp)
+                """, "runtime-status-unload-1", ruleId, instanceId);
+
+        String fencingToken = issueFencingToken("operation_plan", operationId, "unload rule");
+        JsonNode unload = postJson("/api/v1/operation-plans/" + operationId + "/unload", Map.of(
+                "expectedStatus", "SUCCEEDED",
+                "expectedVersion", 2,
+                "fencingToken", fencingToken,
+                "reason", "integration test unload"
+        ), "system");
+        assertThat(unload.at("/operationPlan/status").asText()).isEqualTo("ROLLING_BACK");
+        assertThat(unload.get("commandCount").asInt()).isEqualTo(1);
+
+        JsonNode command = postJson("/api/v1/agents/" + agentId + "/commands/next",
+                Map.of("leaseSeconds", 60), "system");
+        assertThat(command.get("command_type").asText()).isEqualTo("RESET_CLASS");
+        assertThat(command.at("/payload/classId").asText()).isEqualTo("com.example.UnloadService");
+
+        postJson("/api/v1/agent-commands/" + command.get("id").asText() + "/ack", Map.of(
+                "status", "ACKED",
+                "result", Map.of("removedRuleIds", java.util.List.of(ruleId + ":1")),
+                "reason", "class reset completed"
+        ), "system");
+
+        assertThat(getJson("/api/v1/details/operation-plans/" + operationId)
+                .get("status").asText()).isEqualTo("ROLLED_BACK");
+        assertThat(jdbcTemplate.queryForObject(
+                "select status from rule_runtime_status where id = ?",
+                String.class, "runtime-status-unload-1")).isEqualTo("REMOVED");
+    }
 
     @Test
     void persistsRecordingDatasetReplayApprovalAuditAndOutbox() throws Exception {

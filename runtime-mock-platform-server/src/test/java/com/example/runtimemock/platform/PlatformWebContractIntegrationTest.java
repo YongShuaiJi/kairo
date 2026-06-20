@@ -159,7 +159,8 @@ class PlatformWebContractIntegrationTest {
     @Test
     void registersRuntimeAssignsEnvironmentAndDiscoversExactJvmTargets() throws Exception {
         JsonNode registration = postJson("/api/v1/agent-registrations/self", Map.ofEntries(
-                Map.entry("applicationId", "app-default"),
+                Map.entry("projectName", "runtime-mock"),
+                Map.entry("applicationName", "runtime-mock-demo"),
                 Map.entry("hostname", "runtime-contract-host"),
                 Map.entry("processId", "4242"),
                 Map.entry("processStartId", "runtime-contract-host:4242:123456789"),
@@ -175,22 +176,37 @@ class PlatformWebContractIntegrationTest {
         ));
         String instanceId = registration.path("instanceId").asText();
         String agentId = registration.path("agentId").asText();
+        String applicationId = registration.path("applicationId").asText();
+        assertThat(registration.path("projectName").asText()).isEqualTo("runtime-mock");
+        assertThat(registration.path("applicationName").asText()).isEqualTo("runtime-mock-demo");
+        assertThat(applicationId).startsWith("application-");
         assertThat(registration.path("status").asText()).isEqualTo("PENDING_ASSIGNMENT");
         assertThat(registration.path("environmentId").isNull()).isTrue();
 
+        String environmentId = jdbcTemplate.queryForObject("""
+                select id from environment
+                 where application_id = ? and type = 'DEV'
+                """, String.class, applicationId);
         JsonNode assigned = postJson("/api/v1/instances/" + instanceId + "/environment", Map.of(
-                "environmentId", "env-dev"
+                "environmentId", environmentId
         ));
-        assertThat(assigned.path("environment_id").asText()).isEqualTo("env-dev");
+        assertThat(assigned.path("environment_id").asText()).isEqualTo(environmentId);
         assertThat(assigned.path("registration_status").asText()).isEqualTo("ASSIGNED");
+
+        mockMvc.perform(get("/api/v1/query/instances")
+                        .header("X-Actor", "system"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].project_name").value("runtime-mock"))
+                .andExpect(jsonPath("$.items[0].application_name").value("runtime-mock-demo"))
+                .andExpect(jsonPath("$.items[0].environment_name").value("dev"));
 
         jdbcTemplate.update("update agent_instance set status = 'OFFLINE' where id <> ?", agentId);
         CompletableFuture<String> discovery = CompletableFuture.supplyAsync(() -> {
             try {
                 return mockMvc.perform(get("/api/v1/targets/search")
                                 .param("q", "OrderService")
-                                .param("applicationId", "app-default")
-                                .param("environmentId", "env-dev")
+                                .param("applicationId", applicationId)
+                                .param("environmentId", environmentId)
                                 .header("X-Actor", "system"))
                         .andExpect(status().isOk())
                         .andReturn().getResponse().getContentAsString();

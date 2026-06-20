@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resourceConfigs, type ResourceForm } from "@/lib/resource-config";
+import { actionLabel, humanize } from "@/lib/utils";
 
 function allForms() {
   return Object.values(resourceConfigs).flatMap((config) =>
@@ -41,5 +42,14 @@ describe("resource form relationships", () => {
       source: "rule-versions",
       dependsOn: ["resourceId"],
     });
+  });
+
+  it("exposes plan-level unload history with Chinese operation labels", () => {
+    const tabs = resourceConfigs.rollouts.tabs ?? [];
+
+    expect(tabs.some((tab) => tab.endpoint === "rollback-executions" && tab.label === "卸载记录")).toBe(true);
+    expect(actionLabel("UNLOAD")).toBe("卸载规则");
+    expect(actionLabel("UNLOAD_PLAN")).toBe("卸载所属计划");
+    expect(humanize("RESET_CLASS")).toBe("恢复目标类原始字节码");
   });
 });

@@ -75,11 +75,13 @@ public class AgentCommandService {
                     insert into agent_command(
                         id, agent_id, command_type, status, idempotency_key, payload_json, result_json,
                         attempts, max_attempts, available_at, created_by, created_at, updated_at, correlation_id
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        , rollback_execution_id
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, id, agentId, commandType, "PENDING", idempotencyKey,
                     PlatformJson.write(fullPayload), PlatformJson.write(Map.of()), 0,
                     Math.max(maxAttempts, 1), timestamp(availableAt), context.actor(),
-                    timestamp(now), timestamp(now), context.correlationId());
+                    timestamp(now), timestamp(now), context.correlationId(),
+                    optionalString(fullPayload, "rollbackExecutionId", null));
         } catch (DuplicateKeyException ignored) {
             return getByIdempotencyKey(idempotencyKey);
         }
@@ -166,7 +168,68 @@ public class AgentCommandService {
                 optionalString(request, "reason", "ack agent command"),
                 Map.of("agentId", updated.get("agent_id"), "commandType", updated.get("command_type")));
         advanceRolloutFromCommand(context, commandId, "ACKED".equals(resultStatus), errorMessage, result);
+        advanceRollbackFromCommand(context, updated);
         return updated;
+    }
+
+    private void advanceRollbackFromCommand(RequestContext context, Map<String, Object> command) {
+        Object rollbackValue = command.get("rollback_execution_id");
+        if (rollbackValue == null || String.valueOf(rollbackValue).isBlank()) {
+            return;
+        }
+        String rollbackId = String.valueOf(rollbackValue);
+        List<Map<String, Object>> commands = normalizeRows(jdbcTemplate.queryForList("""
+                select * from agent_command where rollback_execution_id = ?
+                """, rollbackId));
+        if (commands.isEmpty() || commands.stream().anyMatch(row ->
+                !"ACKED".equals(String.valueOf(row.get("status")))
+                        && !"FAILED".equals(String.valueOf(row.get("status"))))) {
+            return;
+        }
+        boolean succeeded = commands.stream()
+                .allMatch(row -> "ACKED".equals(String.valueOf(row.get("status"))));
+        Map<String, Object> rollback = normalizeRow(jdbcTemplate.queryForMap(
+                "select * from rollback_execution where id = ?", rollbackId));
+        if (!"DISPATCHED".equals(String.valueOf(rollback.get("status")))) {
+            return;
+        }
+        Instant now = clock.instant();
+        String rollbackStatus = succeeded ? "SUCCEEDED" : "FAILED";
+        int rollbackUpdated = jdbcTemplate.update("""
+                update rollback_execution
+                   set status = ?, finished_at = ?
+                 where id = ? and status = 'DISPATCHED'
+                """, rollbackStatus, timestamp(now), rollbackId);
+        if (rollbackUpdated == 0) {
+            return;
+        }
+        String operationPlanId = String.valueOf(rollback.get("operation_plan_id"));
+        String operationStatus = succeeded ? "ROLLED_BACK" : "FAILED";
+        jdbcTemplate.update("""
+                update operation_plan
+                   set status = ?, version = version + 1, updated_by = ?, updated_at = ?
+                 where id = ? and status = 'ROLLING_BACK'
+                """, operationStatus, context.actor(), timestamp(now), operationPlanId);
+        if (succeeded) {
+            jdbcTemplate.update("""
+                    update rule_runtime_status
+                       set status = 'REMOVED', last_error = null, updated_at = ?
+                     where (rule_id, rule_version, instance_id) in (
+                         select op.resource_id, op.resource_version, rie.instance_id
+                           from operation_plan op
+                           join rollout_batch rb on rb.operation_plan_id = op.id
+                           join rollout_instance_execution rie on rie.rollout_batch_id = rb.id
+                          where op.id = ? and rie.status = 'SUCCEEDED'
+                     )
+                    """, timestamp(now), operationPlanId);
+        }
+        Map<String, Object> updatedOperation = normalizeRow(jdbcTemplate.queryForMap(
+                "select * from operation_plan where id = ?", operationPlanId));
+        eventWriter.recordEvent(context, "operation_plan.unload_complete", "operation_plan",
+                operationPlanId, ((Number) updatedOperation.get("version")).longValue(),
+                rollback, updatedOperation, operationStatus,
+                succeeded ? "规则字节码卸载完成" : "规则字节码卸载失败",
+                Map.of("rollbackExecutionId", rollbackId, "commandCount", commands.size()));
     }
 
     private void advanceRolloutFromCommand(RequestContext context, String commandId, boolean success,

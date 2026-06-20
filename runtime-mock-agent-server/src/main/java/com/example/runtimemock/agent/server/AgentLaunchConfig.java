@@ -71,7 +71,9 @@ public final class AgentLaunchConfig {
     }
 
     public boolean platformRegistrationEnabled() {
-        return platformUrl() != null && platformApplicationId() != null;
+        return platformUrl() != null
+                && (platformApplicationId() != null
+                || (platformProjectName() != null && platformApplicationName() != null));
     }
 
     public String platformUrl() {
@@ -88,6 +90,14 @@ public final class AgentLaunchConfig {
 
     public String platformApplicationId() {
         return stringValue("platformApplicationId", null);
+    }
+
+    public String platformProjectName() {
+        return stringValue("platformProjectName", null);
+    }
+
+    public String platformApplicationName() {
+        return stringValue("platformApplicationName", null);
     }
 
     public String platformEnvironmentId() {

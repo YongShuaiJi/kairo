@@ -2,6 +2,7 @@ package com.example.runtimemock.platform.api;
 
 import com.example.runtimemock.platform.command.AgentCommandService;
 import com.example.runtimemock.platform.recording.RecordingSessionCommandService;
+import com.example.runtimemock.platform.rollout.RuleUnloadService;
 import com.example.runtimemock.platform.service.PlatformJdbcService;
 import com.example.runtimemock.platform.service.PlatformMaintenanceService;
 import com.example.runtimemock.platform.service.RequestContext;
@@ -30,16 +31,19 @@ public final class PlatformController {
     private final AgentCommandService agentCommandService;
     private final PlatformMaintenanceService maintenanceService;
     private final RecordingSessionCommandService recordingSessionCommandService;
+    private final RuleUnloadService ruleUnloadService;
     private final RequestContextFactory requestContextFactory;
 
     public PlatformController(PlatformJdbcService service, AgentCommandService agentCommandService,
                               PlatformMaintenanceService maintenanceService,
                               RecordingSessionCommandService recordingSessionCommandService,
+                              RuleUnloadService ruleUnloadService,
                               RequestContextFactory requestContextFactory) {
         this.service = service;
         this.agentCommandService = agentCommandService;
         this.maintenanceService = maintenanceService;
         this.recordingSessionCommandService = recordingSessionCommandService;
+        this.ruleUnloadService = ruleUnloadService;
         this.requestContextFactory = requestContextFactory;
     }
 
@@ -191,6 +195,13 @@ public final class PlatformController {
                                                        HttpServletRequest httpRequest,
                                                        @Valid @RequestBody Map<String, Object> request) {
         return service.transitionOperationPlan(id, context(httpRequest), request);
+    }
+
+    @PostMapping("/operation-plans/{id}/unload")
+    public Map<String, Object> unloadOperationPlan(@PathVariable String id,
+                                                  HttpServletRequest httpRequest,
+                                                  @Valid @RequestBody Map<String, Object> request) {
+        return ruleUnloadService.unload(id, context(httpRequest), request);
     }
 
     @GetMapping("/rollout-batches")

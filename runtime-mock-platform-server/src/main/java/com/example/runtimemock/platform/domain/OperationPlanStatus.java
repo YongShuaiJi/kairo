@@ -33,7 +33,8 @@ public enum OperationPlanStatus {
                     || target == ROLLING_BACK;
             case PARTIALLY_SUCCEEDED, FAILED -> target == ROLLING_BACK || target == CANCELLED;
             case ROLLING_BACK -> target == ROLLED_BACK || target == FAILED;
-            case SUCCEEDED, ROLLED_BACK, CANCELLED, EXPIRED -> false;
+            case SUCCEEDED -> target == ROLLING_BACK;
+            case ROLLED_BACK, CANCELLED, EXPIRED -> false;
         };
     }
 }

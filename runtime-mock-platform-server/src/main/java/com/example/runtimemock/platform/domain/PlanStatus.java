@@ -29,7 +29,7 @@ public enum PlanStatus {
             Map.entry(PARTIALLY_SUCCEEDED, EnumSet.of(ROLLING_BACK)),
             Map.entry(FAILED, EnumSet.of(ROLLING_BACK)),
             Map.entry(ROLLING_BACK, EnumSet.of(ROLLED_BACK, FAILED)),
-            Map.entry(SUCCEEDED, EnumSet.noneOf(PlanStatus.class)),
+            Map.entry(SUCCEEDED, EnumSet.of(ROLLING_BACK)),
             Map.entry(ROLLED_BACK, EnumSet.noneOf(PlanStatus.class)),
             Map.entry(CANCELLED, EnumSet.noneOf(PlanStatus.class)),
             Map.entry(EXPIRED, EnumSet.noneOf(PlanStatus.class))

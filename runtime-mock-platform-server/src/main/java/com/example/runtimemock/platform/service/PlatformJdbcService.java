@@ -169,8 +169,8 @@ public class PlatformJdbcService {
     @Transactional
     public Map<String, Object> registerAgentRuntime(RequestContext context, Map<String, Object> request) {
         rbacService.require(context, "AGENT_MANAGE");
-        String applicationId = requiredString(request, "applicationId", null);
-        requireExists("application", applicationId);
+        RegistrationApplication registrationApplication = resolveRegistrationApplication(request);
+        String applicationId = registrationApplication.applicationId();
         String environmentId = optionalString(request, "environmentId", null);
         if (environmentId != null) {
             validateEnvironment(applicationId, environmentId);
@@ -296,10 +296,75 @@ public class PlatformJdbcService {
         result.put("instanceId", instanceId);
         result.put("agentId", agentId);
         result.put("applicationId", applicationId);
+        result.put("projectName", registrationApplication.projectName());
+        result.put("applicationName", registrationApplication.applicationName());
         result.put("environmentId", environmentId);
         result.put("status", environmentId == null ? "PENDING_ASSIGNMENT" : "ACTIVE");
         result.put("leaseExpiresAt", leaseExpiresAt.toString());
         return result;
+    }
+
+    private RegistrationApplication resolveRegistrationApplication(Map<String, Object> request) {
+        String applicationId = optionalString(request, "applicationId", null);
+        if (applicationId != null) {
+            Map<String, Object> application = getById("application", applicationId);
+            String projectId = String.valueOf(application.get("project_id"));
+            Map<String, Object> project = getById("project", projectId);
+            return new RegistrationApplication(applicationId, String.valueOf(project.get("name")),
+                    String.valueOf(application.get("name")));
+        }
+
+        String projectName = requiredString(request, "projectName", null);
+        String applicationName = requiredString(request, "applicationName", null);
+        String projectId = jdbcTemplate.query("""
+                        select id from project
+                         where organization_id = 'org-default' and name = ?
+                         order by created_at
+                         limit 1
+                        """, resultSet -> resultSet.next() ? resultSet.getString(1) : null, projectName);
+        if (projectId == null) {
+            projectId = "project-" + UUID.randomUUID();
+            jdbcTemplate.update("""
+                    insert into project(id, organization_id, name, created_at)
+                    values (?, 'org-default', ?, ?)
+                    """, projectId, projectName, timestamp(clock.instant()));
+        }
+
+        String resolvedProjectId = projectId;
+        String resolvedApplicationId = jdbcTemplate.query("""
+                        select id from application
+                         where project_id = ? and name = ?
+                         order by created_at
+                         limit 1
+                        """, resultSet -> resultSet.next() ? resultSet.getString(1) : null,
+                resolvedProjectId, applicationName);
+        if (resolvedApplicationId == null) {
+            resolvedApplicationId = "application-" + UUID.randomUUID();
+            jdbcTemplate.update("""
+                    insert into application(id, project_id, name, created_at)
+                    values (?, ?, ?, ?)
+                    """, resolvedApplicationId, resolvedProjectId, applicationName,
+                    timestamp(clock.instant()));
+        }
+        ensureStandardEnvironments(resolvedApplicationId);
+        return new RegistrationApplication(resolvedApplicationId, projectName, applicationName);
+    }
+
+    private void ensureStandardEnvironments(String applicationId) {
+        for (String type : List.of("DEV", "SIT", "UAT", "PROD")) {
+            Integer count = jdbcTemplate.queryForObject("""
+                    select count(*) from environment
+                     where application_id = ? and type = ?
+                    """, Integer.class, applicationId, type);
+            if (count != null && count > 0) {
+                continue;
+            }
+            jdbcTemplate.update("""
+                    insert into environment(id, application_id, name, type, created_at)
+                    values (?, ?, ?, ?, ?)
+                    """, "environment-" + UUID.randomUUID(), applicationId,
+                    type.toLowerCase(Locale.ROOT), type, timestamp(clock.instant()));
+        }
     }
 
     @Transactional
@@ -1686,6 +1751,10 @@ public class PlatformJdbcService {
     }
 
     private record ApplicationEnvironment(String applicationId, String environmentId) {
+    }
+
+    private record RegistrationApplication(String applicationId, String projectName,
+                                           String applicationName) {
     }
 
     private List<Map<String, Object>> normalizeRows(List<Map<String, Object>> rows) {

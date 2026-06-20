@@ -29,7 +29,12 @@ final class PlatformAgentRegistrationClient {
     Registration register(JvmInfo jvmInfo, int listenPort) {
         try {
             Map<String, Object> body = new LinkedHashMap<>();
-            body.put("applicationId", config.platformApplicationId());
+            if (config.platformApplicationId() != null) {
+                body.put("applicationId", config.platformApplicationId());
+            } else {
+                body.put("projectName", config.platformProjectName());
+                body.put("applicationName", config.platformApplicationName());
+            }
             if (config.platformEnvironmentId() != null) {
                 body.put("environmentId", config.platformEnvironmentId());
             }

@@ -24,4 +24,18 @@ class AgentLaunchConfigSecurityTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("loopback");
     }
+
+    @Test
+    void supportsProjectAndApplicationNamesForAutomaticRegistration() {
+        AgentLaunchConfig config = AgentLaunchConfig.parse("""
+                platformUrl=http://127.0.0.1:18280,\
+                platformProjectName=runtime-mock,\
+                platformApplicationName=runtime-mock-demo
+                """);
+
+        assertThat(config.platformRegistrationEnabled()).isTrue();
+        assertThat(config.platformProjectName()).isEqualTo("runtime-mock");
+        assertThat(config.platformApplicationName()).isEqualTo("runtime-mock-demo");
+        assertThat(config.platformApplicationId()).isNull();
+    }
 }

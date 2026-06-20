@@ -77,6 +77,8 @@ const DISPLAY_TEXT: Record<string, string> = {
   THROWS: "抛出异常时",
   RULE_ROLLOUT: "规则发布",
   RULE_ROLLBACK: "规则回滚",
+  RESET_CLASS: "恢复目标类原始字节码",
+  RESET_ALL: "恢复全部原始字节码",
   OPERATION_PLAN: "发布计划",
   RECORDING_SESSION: "录制会话",
   REPLAY_PLAN: "回放计划",
@@ -111,6 +113,8 @@ const ACTION_TEXT: Record<string, string> = {
   EXPIRED: "标记过期",
   PAUSED: "暂停执行",
   ROLLED_BACK: "执行回滚",
+  UNLOAD: "卸载规则",
+  UNLOAD_PLAN: "卸载所属计划",
 };
 
 const FIELD_TEXT: Record<string, string> = {
@@ -120,6 +124,8 @@ const FIELD_TEXT: Record<string, string> = {
   instance_id: "实例",
   agent_id: "Agent",
   operation_plan_id: "发布计划",
+  rollback_execution_id: "卸载执行",
+  rollback_type: "卸载方式",
   rollout_batch_id: "灰度批次",
   command_id: "Agent 命令",
   resource_id: "资源",
@@ -157,6 +163,7 @@ const FIELD_TEXT: Record<string, string> = {
   updated_by: "更新人",
   requester: "申请人",
   reason: "原因",
+  finished_at: "完成时间",
   subject_hash: "审批对象摘要",
   allowed_actions: "可执行操作",
 };
