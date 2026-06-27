@@ -1,7 +1,6 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { loader } from "@monaco-editor/react";
@@ -41,8 +40,8 @@ import type { PlatformRecord, ScriptDiagnostic, ScriptTestResult, ScriptValidati
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { NumberInput } from "@/components/ui/number-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
@@ -66,6 +65,7 @@ const initialTestInput = `{
 
 type InvokePhase = "BEFORE" | "RETURN" | "THROWS";
 type PagedResult = { items: PlatformRecord[]; page: number; size: number; total: number };
+const VISIBLE_ENVIRONMENTS = new Set(["DEV", "SIT", "UAT"]);
 type TargetOption = {
   classId: string;
   className: string;
@@ -94,6 +94,14 @@ function stringArrayValue(record: PlatformRecord, ...keys: string[]) {
     if (Array.isArray(value)) return value.map(String);
   }
   return [] as string[];
+}
+
+function applicationLabel(record: PlatformRecord) {
+  return stringValue(record, "applicationName", "application_name", "application", "applicationId", "application_id");
+}
+
+function environmentLabel(record: PlatformRecord) {
+  return stringValue(record, "environmentName", "environment_name", "environment", "type", "name", "environmentId", "environment_id").toUpperCase();
 }
 
 function phaseLabel(phase: InvokePhase) {
@@ -248,9 +256,6 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
   const [methodName, setMethodName] = useState("");
   const [methodDescriptor, setMethodDescriptor] = useState("");
   const [executionPhase, setExecutionPhase] = useState<InvokePhase | "">("");
-  const [riskLevel, setRiskLevel] = useState("LOW");
-  const [maxHits, setMaxHits] = useState("1000");
-  const [ttlSeconds, setTtlSeconds] = useState("1800");
   const [testInput, setTestInput] = useState(initialTestInput);
   const [diagnostics, setDiagnostics] = useState<ScriptDiagnostic[]>([]);
   const [validationStatus, setValidationStatus] = useState<"idle" | "valid" | "invalid">("idle");
@@ -271,6 +276,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
   const [targetOptions, setTargetOptions] = useState<TargetOption[]>([]);
   const [targetsLoading, setTargetsLoading] = useState(false);
   const [manualTarget, setManualTarget] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const disposables = useRef<IDisposable[]>([]);
@@ -283,13 +289,26 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
     setTestResult(null);
   }, []);
 
-  const applications = Array.from(new Set(instances.map((item) =>
-    stringValue(item, "applicationId", "application_id", "application"),
-  ).filter(Boolean))).sort();
-  const environments = Array.from(new Set(instances
+  const applications = Array.from(new Map(instances
+    .map((item) => {
+      const id = stringValue(item, "applicationId", "application_id", "application");
+      return id ? [id, applicationLabel(item)] as const : null;
+    })
+    .filter((item): item is readonly [string, string] => Boolean(item))).entries())
+    .map(([id, label]) => ({ id, label }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+  const applicationIds = applications.map((item) => item.id);
+  const environments = Array.from(new Map(instances
     .filter((item) => stringValue(item, "applicationId", "application_id", "application") === applicationId)
-    .map((item) => stringValue(item, "environmentId", "environment_id", "environment"))
-    .filter(Boolean))).sort();
+    .map((item) => {
+      const id = stringValue(item, "environmentId", "environment_id", "environment");
+      const label = environmentLabel(item);
+      return id && VISIBLE_ENVIRONMENTS.has(label) ? [id, label] as const : null;
+    })
+    .filter((item): item is readonly [string, string] => Boolean(item))).entries())
+    .map(([id, label]) => ({ id, label }))
+    .sort((left, right) => ["DEV", "SIT", "UAT"].indexOf(left.label) - ["DEV", "SIT", "UAT"].indexOf(right.label));
+  const environmentIds = environments.map((item) => item.id);
   const targetSelected = Boolean(
     classId.trim()
     && className.trim()
@@ -309,10 +328,27 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (dirty) event.preventDefault();
+      if (!dirty) return;
+      event.preventDefault();
+      event.returnValue = "";
     };
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [dirty]);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const interceptNavigation = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as HTMLElement | null)?.closest("a[href]");
+      if (!(anchor instanceof HTMLAnchorElement) || anchor.target || anchor.hasAttribute("download")) return;
+      const nextUrl = new URL(anchor.href, window.location.href);
+      if (nextUrl.origin !== window.location.origin) return;
+      event.preventDefault();
+      setPendingNavigation(`${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+    };
+    document.addEventListener("click", interceptNavigation, true);
+    return () => document.removeEventListener("click", interceptNavigation, true);
   }, [dirty]);
 
   useEffect(() => () => disposables.current.forEach((item) => item.dispose()), []);
@@ -427,7 +463,6 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
       setName(String(detail.rule.name ?? ruleId));
       setApplicationId(String(detail.rule.application_id ?? ""));
       setEnvironmentId(String(detail.rule.environment_id ?? ""));
-      setRiskLevel(String(latest?.risk_level ?? "MEDIUM"));
       setScript(currentScript.source);
       setExecutionPhase(currentScript.phase);
       setTestInput(JSON.stringify({ phase: currentScript.phase, args: [] }, null, 2));
@@ -573,10 +608,9 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
       environmentId,
       status: "DRAFT",
       versionStatus: "DRAFT",
-      riskLevel,
+      riskLevel: "LOW",
       script: { phase: executionPhase, script },
       matcher: { phase: executionPhase },
-      governance: { maxHits: Number(maxHits), ttlSeconds: Number(ttlSeconds) },
       targets: [{
         protocol: "JAVA_METHOD",
         className,
@@ -666,6 +700,21 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
     URL.revokeObjectURL(url);
   }
 
+  function requestNavigation(href: string) {
+    if (dirty) {
+      setPendingNavigation(href);
+      return;
+    }
+    router.push(href);
+  }
+
+  function leaveWithoutSaving() {
+    const href = pendingNavigation;
+    setPendingNavigation(null);
+    setDirty(false);
+    if (href) router.push(href);
+  }
+
   return (
     <div
       data-testid="rule-workbench"
@@ -675,7 +724,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
       )}
     >
       <div className="mb-4 flex shrink-0 flex-wrap items-center gap-3">
-        <Button variant="ghost" size="icon" className={cn(focusMode && "text-slate-300 hover:bg-white/10 hover:text-white")} asChild><Link href="/rules"><ArrowLeft /></Link></Button>
+        <Button variant="ghost" size="icon" className={cn(focusMode && "text-slate-300 hover:bg-white/10 hover:text-white")} onClick={() => requestNavigation("/rules")}><ArrowLeft /></Button>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h1 className={cn("truncate text-lg font-semibold", focusMode ? "text-white" : "text-slate-950")}>{name.trim() || "创建规则"}</h1>
@@ -734,8 +783,8 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                       <SelectValue placeholder={metadataLoading ? "正在加载应用…" : "请选择应用"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {applicationId && !applications.includes(applicationId) ? <SelectItem value={applicationId}>{applicationId}</SelectItem> : null}
-                      {applications.map((application) => <SelectItem key={application} value={application}>{application}</SelectItem>)}
+                      {applicationId && !applicationIds.includes(applicationId) ? <SelectItem value={applicationId}>{applicationId}</SelectItem> : null}
+                      {applications.map((application) => <SelectItem key={application.id} value={application.id}>{application.label}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
@@ -750,8 +799,8 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                       <SelectValue placeholder={applicationId ? "请选择环境" : "请先选择应用"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {environmentId && !environments.includes(environmentId) ? <SelectItem value={environmentId}>{environmentId}</SelectItem> : null}
-                      {environments.map((environment) => <SelectItem key={environment} value={environment}>{environment}</SelectItem>)}
+                      {environmentId && !environmentIds.includes(environmentId) ? <SelectItem value={environmentId}>{environmentId}</SelectItem> : null}
+                      {environments.map((environment) => <SelectItem key={environment.id} value={environment.id}>{environment.label}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
@@ -847,7 +896,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                           <Target className="mt-0.5 size-4 shrink-0 text-indigo-600" />
                           <div className="min-w-0">
                             <p className="truncate font-mono text-[11px] text-indigo-900">{className}</p>
-                            <p className="mt-1 font-mono text-xs font-semibold text-indigo-700">#{methodName}{methodDescriptor}</p>
+                            <p className="mt-1 truncate font-mono text-xs font-semibold text-indigo-700">#{methodName}{methodDescriptor}</p>
                             <p className="mt-1 truncate font-mono text-[10px] text-indigo-500">加载器：{classLoaderId}</p>
                           </div>
                           <button type="button" onClick={() => {
@@ -866,7 +915,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                         </div>
                       </div>
                     ) : (
-                      <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+                      <div className="mt-2 max-h-56 space-y-1 overflow-y-auto pr-1">
                         {targetsLoading ? (
                           <div className="flex items-center justify-center py-5 text-xs text-slate-400"><Loader2 className="mr-2 size-3.5 animate-spin" />正在搜索目标方法…</div>
                         ) : targetOptions.length ? targetOptions.map((target) => (
@@ -874,10 +923,10 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                             type="button"
                             key={`${target.classId}#${target.methodName}${target.descriptor}`}
                             onClick={() => selectTarget(target)}
-                            className="w-full rounded-lg border border-transparent px-3 py-2 text-left hover:border-indigo-100 hover:bg-indigo-50"
+                            className="w-full min-w-0 overflow-hidden rounded-lg border border-transparent px-3 py-2 text-left hover:border-indigo-100 hover:bg-indigo-50"
                           >
                             <p className="truncate font-mono text-[10px] text-slate-500">{target.className}</p>
-                            <p className="mt-1 font-mono text-xs font-medium text-slate-800">#{target.methodName}{target.descriptor}</p>
+                            <p className="mt-1 truncate font-mono text-xs font-medium text-slate-800">#{target.methodName}{target.descriptor}</p>
                             <p className="mt-1 truncate text-[10px] text-slate-400">
                               {target.parameterTypes.join(", ") || "无参数"} → {target.returnType || "void"} · {target.instanceCount} 个在线实例
                             </p>
@@ -906,7 +955,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                   <p className="text-xs font-semibold text-slate-700">执行策略</p>
                 </div>
                 {!targetSelected ? (
-                  <p className="rounded-lg border border-dashed p-3 text-xs leading-5 text-slate-400">选择目标方法后设置执行阶段与安全边界。</p>
+                  <p className="rounded-lg border border-dashed p-3 text-xs leading-5 text-slate-400">选择目标方法后设置执行阶段。规则发布后会持续生效，直到在发布管理中卸载。</p>
                 ) : (
                   <>
                     <div className="block">
@@ -922,23 +971,9 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="mt-3 grid grid-cols-2 gap-3">
-                      <div>
-                        <span className="mb-1.5 block text-xs font-medium text-slate-600">风险等级</span>
-                        <Select value={riskLevel} onValueChange={(value) => { setRiskLevel(value); setDirty(true); }}>
-                          <SelectTrigger aria-label="风险等级">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="LOW">低风险</SelectItem>
-                            <SelectItem value="MEDIUM">中风险</SelectItem>
-                            <SelectItem value="HIGH">高风险</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div><span className="mb-1.5 block text-xs font-medium text-slate-600">命中上限</span><NumberInput aria-label="命中上限" min={1} value={maxHits} onValueChange={(value) => { setMaxHits(value); setDirty(true); }} /></div>
-                    </div>
-                    <div className="mt-3 block"><span className="mb-1.5 block text-xs font-medium text-slate-600">有效期（秒）</span><NumberInput aria-label="有效期（秒）" min={1} step={60} value={ttlSeconds} onValueChange={(value) => { setTtlSeconds(value); setDirty(true); }} /></div>
+                    <p className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs leading-5 text-indigo-700">
+                      规则发布后持续生效；需要恢复原始行为时，请到发布管理执行卸载。
+                    </p>
                   </>
                 )}
               </div>
@@ -1072,6 +1107,20 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
         </div>
       </div>
       <div className={cn("mt-2 flex shrink-0 items-center text-[10px]", focusMode ? "text-slate-600" : "text-slate-400")}><Sparkles className="mr-1 size-3" />Ctrl/⌘ + S 保存 · 拖动左侧滑块可调整配置区宽度 · 所有脚本校验和执行都由 Platform API 完成</div>
+      <Dialog open={Boolean(pendingNavigation)} onOpenChange={(open) => { if (!open) setPendingNavigation(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>离开前保存当前规则？</DialogTitle>
+            <DialogDescription>
+              当前规则还有未保存的配置或脚本。直接离开会丢失这些改动。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setPendingNavigation(null)}>继续编辑</Button>
+            <Button variant="destructive" onClick={leaveWithoutSaving}>放弃并离开</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

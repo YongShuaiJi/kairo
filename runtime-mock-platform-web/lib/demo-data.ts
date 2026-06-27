@@ -6,7 +6,7 @@ const datasets: Record<string, PlatformRecord[]> = {
   agents: [
     { id: "agt-01", name: "order-service-01", application: "order-service", environment: "prod", status: "ONLINE", version: "1.8.2", host: "10.24.8.11", lastHeartbeatAt: stamp },
     { id: "agt-02", name: "payment-service-02", application: "payment-service", environment: "staging", status: "ONLINE", version: "1.8.2", host: "10.24.9.22", lastHeartbeatAt: stamp },
-    { id: "agt-03", name: "inventory-canary", application: "inventory-service", environment: "prod", status: "DEGRADED", version: "1.7.9", host: "10.24.6.41", lastHeartbeatAt: "2026-06-18T09:24:00+08:00" },
+    { id: "agt-03", name: "inventory-service-01", application: "inventory-service", environment: "prod", status: "DEGRADED", version: "1.7.9", host: "10.24.6.41", lastHeartbeatAt: "2026-06-18T09:24:00+08:00" },
     { id: "agt-04", name: "gateway-local", application: "api-gateway", environment: "dev", status: "OFFLINE", version: "1.7.7", host: "127.0.0.1", lastHeartbeatAt: "2026-06-17T20:10:00+08:00" },
   ],
   instances: [
@@ -23,17 +23,13 @@ const datasets: Record<string, PlatformRecord[]> = {
     { id: "rv-06", ruleId: "rule-01", version: 6, status: "ARCHIVED", author: "研发工程师", createdAt: "2026-06-16T15:22:00+08:00" },
   ],
   "operation-plans": [
-    { id: "plan-01", name: "订单服务 10% 灰度", ruleId: "rule-01", environment: "staging", status: "RUNNING", progress: 68, updatedAt: stamp },
+    { id: "plan-01", name: "订单服务规则发布", ruleId: "rule-01", environment: "staging", status: "RUNNING", progress: 68, updatedAt: stamp },
     { id: "plan-02", name: "支付服务全量撤回", ruleId: "rule-02", environment: "prod", status: "PENDING_APPROVAL", progress: 0, updatedAt: "2026-06-18T08:32:00+08:00" },
-    { id: "plan-03", name: "库存金丝雀验证", ruleId: "rule-03", environment: "prod", status: "COMPLETED", progress: 100, updatedAt: "2026-06-17T16:20:00+08:00" },
-  ],
-  "rollout-batches": [
-    { id: "batch-01", operationPlanId: "plan-01", name: "第一批", targetCount: 2, successCount: 2, status: "COMPLETED", createdAt: stamp },
-    { id: "batch-02", operationPlanId: "plan-01", name: "第二批", targetCount: 6, successCount: 4, status: "RUNNING", createdAt: stamp },
+    { id: "plan-03", name: "库存规则发布", ruleId: "rule-03", environment: "prod", status: "COMPLETED", progress: 100, updatedAt: "2026-06-17T16:20:00+08:00" },
   ],
   "rollout-executions": [
-    { id: "rex-01", rolloutBatchId: "batch-02", agentId: "agt-01", status: "SUCCESS", durationMs: 182, createdAt: stamp },
-    { id: "rex-02", rolloutBatchId: "batch-02", agentId: "agt-03", status: "RETRYING", durationMs: 4200, createdAt: stamp },
+    { id: "rex-01", operationPlanId: "plan-01", agentId: "agt-01", status: "SUCCESS", durationMs: 182, createdAt: stamp },
+    { id: "rex-02", operationPlanId: "plan-01", agentId: "agt-03", status: "RETRYING", durationMs: 4200, createdAt: stamp },
   ],
   "recording-sessions": [
     { id: "rec-01", name: "支付回调基线采集", application: "payment-service", environment: "staging", status: "RECORDING", sampleCount: 1284, updatedAt: stamp },
@@ -89,7 +85,7 @@ const datasets: Record<string, PlatformRecord[]> = {
   audits: [
     { id: "audit-01", actor: "平台管理员", action: "RULE_VERSION_PUBLISHED", resource: "订单查询延迟注入 v7", result: "SUCCESS", correlationId: "req-8cf2d1", createdAt: stamp },
     { id: "audit-02", actor: "研发工程师", action: "ROLLOUT_REQUESTED", resource: "支付服务全量撤回", result: "PENDING_APPROVAL", correlationId: "req-1fd920", createdAt: "2026-06-18T08:32:00+08:00" },
-    { id: "audit-03", actor: "系统", action: "AGENT_HEARTBEAT_MISSED", resource: "inventory-canary", result: "WARNING", correlationId: "req-b6d21a", createdAt: "2026-06-18T09:24:00+08:00" },
+    { id: "audit-03", actor: "系统", action: "AGENT_HEARTBEAT_MISSED", resource: "inventory-service-01", result: "WARNING", correlationId: "req-b6d21a", createdAt: "2026-06-18T09:24:00+08:00" },
   ],
   outbox: [
     { id: "evt-01", aggregateType: "ROLLOUT", eventType: "BATCH_STARTED", status: "PUBLISHED", attempts: 1, createdAt: stamp },

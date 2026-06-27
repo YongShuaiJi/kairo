@@ -8,7 +8,10 @@ export const metadata: Metadata = {
     default: "Runtime Mock",
     template: "%s · Runtime Mock",
   },
-  description: "Java 运行时 Mock、故障注入、录制与回放控制平台",
+  description: "Java 运行时 Mock 与故障注入控制台",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

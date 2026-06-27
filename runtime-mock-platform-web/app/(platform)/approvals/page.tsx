@@ -1,5 +1,5 @@
-import { ResourcePage } from "@/components/resource/resource-page";
+import { redirect } from "next/navigation";
 
 export default function ApprovalsPage() {
-  return <ResourcePage resourceKey="approvals" />;
+  redirect("/rules");
 }

@@ -5,21 +5,13 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
-  Activity,
-  Bell,
-  BookOpenCheck,
   Box,
   ChevronDown,
   CircleGauge,
   Command,
-  Database,
-  FileClock,
   FlaskConical,
-  Layers3,
   Menu,
   Network,
-  PlayCircle,
-  Radio,
   ScrollText,
   Search,
   Settings,
@@ -32,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { platformFetch } from "@/lib/api/client";
 import type { SessionUser } from "@/lib/api/types";
 import { Badge } from "@/components/ui/badge";
+import { RuntimeMockIcon } from "@/components/brand/runtime-mock-icon";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -46,21 +39,15 @@ const navigation = [
     ],
   },
   {
-    label: "实验与流量",
+    label: "故障注入",
     items: [
       { href: "/rules", label: "规则中心", icon: SlidersHorizontal },
-      { href: "/rollouts", label: "发布与灰度", icon: Zap },
-      { href: "/recordings", label: "录制管理", icon: Radio },
-      { href: "/datasets", label: "数据集", icon: Database },
-      { href: "/extractions", label: "数据提取", icon: Layers3 },
-      { href: "/replays", label: "流量回放", icon: PlayCircle },
+      { href: "/rollouts", label: "发布管理", icon: Zap },
     ],
   },
   {
-    label: "治理",
+    label: "系统",
     items: [
-      { href: "/approvals", label: "审批中心", icon: BookOpenCheck },
-      { href: "/audits", label: "审计与事件", icon: FileClock },
       { href: "/settings", label: "平台设置", icon: Settings, capability: "ADMIN" },
     ],
   },
@@ -74,7 +61,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [commandOpen, setCommandOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [user, setUser] = useState<SessionUser | null>(null);
-  const [pendingApprovals, setPendingApprovals] = useState(0);
   const [platformHealthy, setPlatformHealthy] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -82,9 +68,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       if (response.ok) {
         const session = (await response.json()) as SessionUser;
         setUser(session);
-        void platformFetch<{ items: Array<{ status?: string }> }>("query/approvals?page=0&size=100")
-          .then((result) => setPendingApprovals(result.items.filter((item) => item.status === "WAITING_APPROVAL").length))
-          .catch(() => setPendingApprovals(0));
         void platformFetch<{ status?: string }>("control/health")
           .then((result) => setPlatformHealthy(result.status === "UP"))
           .catch(() => setPlatformHealthy(false));
@@ -109,7 +92,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     () => navigation.map((group) => ({
       ...group,
       items: group.items.filter((item) => {
-        const capability = "capability" in item ? item.capability : undefined;
+        const capability = "capability" in item && typeof item.capability === "string" ? item.capability : undefined;
         return capability === undefined
           || user?.capabilities?.includes("ADMIN")
           || user?.capabilities?.includes(capability);
@@ -135,9 +118,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sidebar = (
     <div className="flex h-full flex-col">
       <div className="flex h-16 items-center gap-3 px-5">
-        <div className="rounded-xl bg-indigo-500 p-2 text-white shadow-lg shadow-indigo-950/40">
-          <Activity className="size-5" />
-        </div>
+        <RuntimeMockIcon className="size-10" />
         <div>
           <div className="text-sm font-semibold text-white">Runtime Mock</div>
           <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Control Platform</div>
@@ -162,7 +143,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   >
                     <item.icon className={cn("size-4.5", active && "text-indigo-300")} />
                     {item.label}
-                    {item.href === "/approvals" && pendingApprovals > 0 ? <span className="ml-auto rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-amber-950">{pendingApprovals}</span> : null}
                   </Link>
                 );
               })}
@@ -207,12 +187,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </button>
           <div className="ml-auto flex items-center gap-1">
             {user?.demo ? <Badge variant="warning" className="hidden sm:inline-flex">Demo 模式</Badge> : null}
-            <Button variant="ghost" size="icon" aria-label="待审批事项" className="relative" asChild>
-              <Link href="/approvals">
-                <Bell />
-                {pendingApprovals > 0 ? <span className="absolute right-2 top-2 size-1.5 rounded-full bg-red-500" /> : null}
-              </Link>
-            </Button>
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <button aria-label="用户菜单" className="ml-1 flex items-center gap-2 rounded-lg p-1.5 hover:bg-slate-100">

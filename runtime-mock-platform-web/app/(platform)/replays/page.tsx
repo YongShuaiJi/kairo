@@ -1,5 +1,5 @@
-import { ResourcePage } from "@/components/resource/resource-page";
+import { redirect } from "next/navigation";
 
 export default function ReplaysPage() {
-  return <ResourcePage resourceKey="replays" />;
+  redirect("/rules");
 }

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Copy, Plus, RefreshCw, RotateCcw, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Plus, RefreshCw, RotateCcw, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { platformFetch } from "@/lib/api/client";
 import type { PlatformRecord, SessionUser } from "@/lib/api/types";
@@ -22,6 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 
 type PagedResult = { items: PlatformRecord[]; page: number; size: number; total: number };
+const VISIBLE_ENVIRONMENTS = new Set(["DEV", "SIT", "UAT"]);
 
 function valueOf(record: PlatformRecord, key: string) {
   const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -37,8 +38,44 @@ function statusVariant(status: string) {
   return "info" as const;
 }
 
+function environmentName(record: PlatformRecord) {
+  const value = String(valueOf(record, "environmentName") ?? valueOf(record, "type") ?? valueOf(record, "name") ?? "").toUpperCase();
+  return VISIBLE_ENVIRONMENTS.has(value) ? value : value;
+}
+
+function detailTitle(configKey: string, detail: PlatformRecord | null | undefined) {
+  if (!detail) return "详情";
+  if (configKey === "applications") {
+    const app = String(valueOf(detail, "applicationName") ?? "");
+    const env = environmentName(detail);
+    return [app, env].filter(Boolean).join(" / ") || String(valueOf(detail, "id") ?? "实例详情");
+  }
+  return String(valueOf(detail, "name") ?? valueOf(detail, "applicationName") ?? valueOf(detail, "id") ?? "详情");
+}
+
+function shouldShowDetailField(key: string, detail: PlatformRecord | null | undefined) {
+  if (key === "allowed_actions") return false;
+  if (!detail) return true;
+  const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+  if (snake === "application_name" && valueOf(detail, "applicationId")) return false;
+  if (snake === "environment_name" && valueOf(detail, "environmentId")) return false;
+  return true;
+}
+
+function detailValue(key: string, value: unknown, detail: PlatformRecord | null | undefined) {
+  const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+  if (detail && snake === "application_id") return valueOf(detail, "applicationName") ?? value;
+  if (detail && snake === "environment_id") return environmentName(detail) || value;
+  if (snake === "environment_name") return String(value ?? "").toUpperCase();
+  return value;
+}
+
 function Cell({ value, column }: { value: unknown; column: ResourceColumn }) {
   if (value === null || value === undefined || value === "") return <span className="text-slate-300">—</span>;
+  if (["environmentName", "environment_name", "type"].includes(column.key)) {
+    const environment = String(value).toUpperCase();
+    if (VISIBLE_ENVIRONMENTS.has(environment)) return <span>{environment}</span>;
+  }
   if (column.kind === "status") return <Badge variant={statusVariant(String(value))}>{humanize(String(value))}</Badge>;
   if (column.kind === "date") return <span className="whitespace-nowrap text-slate-500">{formatDate(String(value))}</span>;
   if (column.kind === "bytes") return <span>{formatBytes(Number(value))}</span>;
@@ -69,8 +106,7 @@ function resourceOptionLabel(source: ResourceField["source"], record: PlatformRe
   const id = String(valueOf(record, "id") ?? "");
   const name = String(valueOf(record, "name") ?? id);
   if (source === "environments") {
-    const type = String(valueOf(record, "type") ?? name);
-    return `${humanize(type)}（${shortId(id)}）`;
+    return environmentName(record);
   }
   if (source === "rule-versions") {
     return `版本 ${String(valueOf(record, "version") ?? "—")} · ${humanize(valueOf(record, "status"))}`;
@@ -97,7 +133,7 @@ function ResourceSelectField({
     if (field.source === "environments") {
       const applicationField = field.dependsOn?.find((key) => key.toLowerCase().includes("application")) ?? "applicationId";
       return String(valueOf(record, "applicationId") ?? "") === form[applicationField]
-        && ["DEV", "SIT", "UAT", "PROD"].includes(String(valueOf(record, "type") ?? "").toUpperCase());
+        && VISIBLE_ENVIRONMENTS.has(String(valueOf(record, "type") ?? valueOf(record, "name") ?? "").toUpperCase());
     }
     if (field.source === "rules") {
       return String(valueOf(record, "applicationId") ?? "") === form.applicationId
@@ -135,6 +171,96 @@ function ResourceSelectField({
         ) : null}
       </SelectContent>
     </Select>
+  );
+}
+
+function TargetSelectField({
+  field,
+  form,
+  onValueChange,
+}: {
+  field: ResourceField;
+  form: Record<string, string>;
+  onValueChange: (value: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const applicationId = form.applicationId ?? "";
+  const environmentId = form.environmentId ?? "";
+  const dependenciesReady = Boolean(applicationId && environmentId);
+  const targetsQuery = useQuery({
+    queryKey: ["target-field-options", applicationId, environmentId, query],
+    queryFn: () => {
+      const search = new URLSearchParams({ q: query.trim(), applicationId, environmentId });
+      return platformFetch<PlatformRecord[]>(`targets/search?${search.toString()}`);
+    },
+    enabled: dependenciesReady,
+  });
+  const selectedTarget = (() => {
+    try {
+      return JSON.parse(form[field.key] ?? "{}") as PlatformRecord;
+    } catch {
+      return {};
+    }
+  })();
+  const selectedLabel = selectedTarget.className && selectedTarget.methodName
+    ? `${String(selectedTarget.className)}#${String(selectedTarget.methodName)}${String(selectedTarget.methodDescriptor ?? selectedTarget.descriptor ?? "")}`
+    : "";
+
+  return (
+    <div className="space-y-2">
+      <div className="relative">
+        <Search className="absolute left-3 top-2.5 size-4 text-slate-400" />
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          disabled={!dependenciesReady}
+          placeholder={dependenciesReady ? "搜索已加载的类或方法…" : "请先选择应用和环境"}
+          className="pl-9"
+        />
+      </div>
+      <Select
+        value={form[field.key] ?? ""}
+        onValueChange={onValueChange}
+        disabled={!dependenciesReady || targetsQuery.isLoading}
+      >
+        <SelectTrigger aria-label={field.label}>
+          <SelectValue placeholder={
+            !dependenciesReady
+              ? "请先选择应用和环境"
+              : targetsQuery.isLoading
+                ? "正在从 Agent 发现目标方法…"
+                : "请选择目标方法"
+          }>
+            {selectedLabel || undefined}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {(targetsQuery.data ?? []).map((record, index) => {
+            const descriptor = String(valueOf(record, "descriptor") ?? valueOf(record, "methodDescriptor") ?? "");
+            const target = {
+              protocol: String(valueOf(record, "protocol") ?? "JAVA_METHOD"),
+              classId: String(valueOf(record, "classId") ?? valueOf(record, "className") ?? ""),
+              className: String(valueOf(record, "className") ?? ""),
+              classLoaderId: String(valueOf(record, "classLoaderId") ?? ""),
+              methodName: String(valueOf(record, "methodName") ?? ""),
+              methodDescriptor: descriptor,
+              descriptor,
+            };
+            const value = JSON.stringify(target);
+            return target.className && target.methodName ? (
+              <SelectItem key={`${target.classId}-${target.methodName}-${descriptor}-${index}`} value={value}>
+                {target.className}#{target.methodName}{descriptor}
+              </SelectItem>
+            ) : null;
+          })}
+          {!targetsQuery.isLoading && dependenciesReady && !(targetsQuery.data ?? []).length ? (
+            <div className="px-3 py-5 text-center text-xs leading-5 text-slate-400">
+              没有发现已加载的方法。请确认目标应用 Agent 在线且实例已分配环境。
+            </div>
+          ) : null}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
 
@@ -207,7 +333,7 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
   });
   const assignmentOptions = (assignmentOptionsQuery.data?.items ?? []).filter((record) =>
     String(valueOf(record, "applicationId") ?? "") === detailApplicationId
-      && ["DEV", "SIT", "UAT", "PROD"].includes(String(valueOf(record, "type") ?? "").toUpperCase()),
+      && VISIBLE_ENVIRONMENTS.has(String(valueOf(record, "type") ?? valueOf(record, "name") ?? "").toUpperCase()),
   );
 
   const assignmentMutation = useMutation({
@@ -245,31 +371,11 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
     onError: (error) => toast.error(error instanceof Error ? error.message : "创建失败"),
   });
 
-  async function decide(decision: "APPROVED" | "REJECTED") {
-    if (!detail?.id) return;
-    try {
-      await platformFetch(`approvals/${detail.id}/decisions`, {
-        method: "POST",
-        body: JSON.stringify({ decision, reason: decision === "APPROVED" ? "通过 Web 控制台批准" : "通过 Web 控制台拒绝" }),
-        idempotencyKey: crypto.randomUUID(),
-      });
-      toast.success(decision === "APPROVED" ? "审批已通过" : "审批已拒绝");
-      setSelected(null);
-      await queryClient.invalidateQueries({ queryKey: ["resource", activeEndpoint] });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "审批操作失败");
-    }
-  }
-
   async function transition(targetStatus: string) {
     if (!detail?.id || !detail.status || detail.version === undefined) return;
     const reason = `通过 Web 控制台执行：${actionLabel(targetStatus)}`;
     const resourceType: Record<string, string> = {
       "operation-plans": "operation_plan",
-      "recording-sessions": "recording_session",
-      "extraction-tasks": "extraction_task",
-      "replay-plans": "replay_plan",
-      "replay-executions": "replay_execution",
     };
     const transitionPath: Record<string, string> = {
       "operation-plans": "operation-plans",
@@ -439,26 +545,29 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
         <DialogContent className="right-0 left-auto top-0 h-screen max-h-screen w-full max-w-xl translate-x-0 translate-y-0 rounded-none p-0 sm:rounded-l-2xl">
           <div className="border-b p-6 pr-14">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-600">{activeTab?.label ?? config.singular}详情</p>
-            <DialogTitle className="mt-2 text-xl">{String(detail?.name ?? detail?.subject_id ?? detail?.id ?? "详情")}</DialogTitle>
+            <DialogTitle className="mt-2 text-xl">{detailTitle(config.key, detail)}</DialogTitle>
             <DialogDescription className="mt-1">详情来自独立查询接口；敏感凭据和 Token 不会回显。</DialogDescription>
           </div>
           <div className="scrollbar-thin flex-1 overflow-y-auto p-6">
             {detailQuery.isLoading ? <div className="space-y-3">{[1, 2, 3, 4].map((item) => <Skeleton key={item} className="h-12" />)}</div> : (
               <div className="grid gap-3">
-                {detail ? Object.entries(detail).filter(([key]) => key !== "allowed_actions").map(([key, value]) => (
+                {detail ? Object.entries(detail).filter(([key]) => shouldShowDetailField(key, detail)).map(([key, value]) => {
+                  const renderedValue = detailValue(key, value, detail);
+                  const isRawId = key.toLowerCase() === "id" || String(renderedValue).match(/^[a-z]+-[0-9a-f-]{24,}$/);
+                  return (
                   <div key={key} className="grid grid-cols-[130px_1fr] gap-4 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2.5 text-sm">
                     <span className="text-slate-500">{fieldLabel(key)}</span>
-                    <span className={`break-all whitespace-pre-wrap text-slate-800 ${key.toLowerCase().includes("id") ? "font-mono text-xs" : ""}`}>
+                    <span className={`break-all whitespace-pre-wrap text-slate-800 ${isRawId ? "font-mono text-xs" : ""}`}>
                       {key.toLowerCase().endsWith("_at") || key.toLowerCase().endsWith("at")
-                        ? formatDate(value)
-                        : humanize(value)}
+                        ? formatDate(renderedValue)
+                        : humanize(renderedValue)}
                     </span>
                   </div>
-                )) : null}
+                );}) : null}
                 {config.key === "applications" && detail?.id && !detailEnvironmentId ? (
                   <div className="mt-2 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
                     <p className="text-sm font-semibold text-indigo-950">为实例分配环境</p>
-                    <p className="mt-1 text-xs leading-5 text-indigo-700">Agent 已完成真实运行时注册，选择 DEV、SIT、UAT 或 PROD 后才会参与目标发现和规则发布。</p>
+                    <p className="mt-1 text-xs leading-5 text-indigo-700">Agent 已完成真实运行时注册，选择 DEV、SIT 或 UAT 后才会参与目标发现和规则发布。</p>
                     <Select value={assignmentEnvironment} onValueChange={setAssignmentEnvironment} disabled={assignmentOptionsQuery.isLoading}>
                       <SelectTrigger className="mt-3 bg-white" aria-label="分配环境">
                         <SelectValue placeholder={assignmentOptionsQuery.isLoading ? "正在加载环境…" : "请选择环境"} />
@@ -477,9 +586,6 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
           </div>
           <div className="flex flex-wrap items-center gap-2 border-t bg-white p-4">
             <span className="mr-auto font-mono text-xs text-slate-400">{detail?.id ? shortId(String(detail.id)) : ""}</span>
-            {config.key === "approvals" && String(detail?.status).toUpperCase() === "WAITING_APPROVAL" && can("APPROVE") ? (
-              <><Button variant="secondary" onClick={() => decide("REJECTED")}><X />拒绝</Button><Button onClick={() => decide("APPROVED")}><Check />批准</Button></>
-            ) : null}
             {can(transitionCapability[activeEndpoint] ?? "__UNAVAILABLE__")
               ? allowedActions.map((action) => action === "UNLOAD" || action === "UNLOAD_PLAN"
                 ? <Button key={action} variant="secondary" onClick={() => setConfirmingUnload(true)}><RotateCcw />{actionLabel(action)}</Button>
@@ -500,7 +606,7 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
           <DialogHeader>
             <DialogTitle>确认卸载该发布计划？</DialogTitle>
             <DialogDescription>
-              平台会向该计划所有成功发布实例的在线 Agent 下发卸载命令，清除对应规则并恢复目标类的原始字节码。规则定义和审计记录会保留。
+              平台会向该计划所有成功发布实例的在线 Agent 下发卸载命令，清除对应规则并恢复目标类的原始字节码。规则定义会保留，方便后续重新发布。
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
@@ -532,6 +638,8 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
                   <Textarea aria-label={field.label} required={field.required} value={form[field.key] ?? ""} onChange={(event) => changeFormField(field.key, event.target.value)} placeholder={field.placeholder} className={field.type === "json" ? "min-h-24 font-mono text-xs" : ""} />
                 ) : field.type === "resource" ? (
                   <ResourceSelectField field={field} form={form} onValueChange={(value) => changeFormField(field.key, value)} />
+                ) : field.type === "target" ? (
+                  <TargetSelectField field={field} form={form} onValueChange={(value) => changeFormField(field.key, value)} />
                 ) : field.type === "select" ? (
                   <Select value={form[field.key] ?? ""} onValueChange={(value) => changeFormField(field.key, value)}>
                     <SelectTrigger aria-label={field.label}>
