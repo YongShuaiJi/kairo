@@ -1352,7 +1352,7 @@ public class PlatformJdbcService {
                 jsonValue(request, "matcher", Map.of()),
                 optionalString(request, "scriptHash", hash(script)),
                 json(script),
-                jsonValue(request, "governance", Map.of("ttlSeconds", 3600, "maxHits", 10_000)),
+                jsonValue(request, "governance", Map.of()),
                 context.actor(),
                 timestamp(now));
         List<?> targets = optionalList(request, "targets");
