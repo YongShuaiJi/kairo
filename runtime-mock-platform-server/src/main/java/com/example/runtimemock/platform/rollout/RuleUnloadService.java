@@ -169,9 +169,8 @@ public class RuleUnloadService {
         return normalize(jdbcTemplate.queryForList("""
                 select distinct a.*
                   from rollout_instance_execution rie
-                  join rollout_batch rb on rb.id = rie.rollout_batch_id
                   join agent_instance a on a.instance_id = rie.instance_id
-                 where rb.operation_plan_id = ?
+                 where rie.operation_plan_id = ?
                    and rie.status = 'SUCCEEDED'
                    and a.status = 'ACTIVE'
                    and (a.lease_expires_at is null or a.lease_expires_at > current_timestamp)

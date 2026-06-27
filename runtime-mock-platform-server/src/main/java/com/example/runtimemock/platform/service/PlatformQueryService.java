@@ -38,15 +38,12 @@ public final class PlatformQueryService {
             resource("rules", "rule", "updated_at desc, id", "id", "name", "application_id", "environment_id", "status"),
             resource("rule-versions", "rule_version", "created_at desc, id", "id", "rule_id", "status", "risk_level"),
             resource("operation-plans", "operation_plan", "updated_at desc, id", "id", "resource_type", "resource_id", "status"),
-            resource("rollout-batches", "rollout_batch", "updated_at desc, id", "id", "operation_plan_id", "status"),
             selectedResource("rollout-executions", "rollout_instance_execution",
                     """
-                    id, rollout_batch_id, instance_id, status, expected_agent_version,
-                    expected_rule_version, command_id, error_message, started_at, finished_at, updated_at,
-                    (select rb.operation_plan_id from rollout_batch rb
-                      where rb.id = rollout_instance_execution.rollout_batch_id) as operation_plan_id
+                    id, operation_plan_id, instance_id, status, expected_agent_version,
+                    expected_rule_version, command_id, error_message, started_at, finished_at, updated_at
                     """,
-                    "updated_at desc, id", "id", "rollout_batch_id", "instance_id", "status"),
+                    "updated_at desc, id", "id", "operation_plan_id", "instance_id", "status"),
             resource("rollback-executions", "rollback_execution", "created_at desc, id",
                     "id", "operation_plan_id", "rollback_type", "status", "reason"),
             resource("recording-rules", "recording_rule", "updated_at desc, id", "id", "name", "status"),

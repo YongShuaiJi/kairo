@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 
 public final class LoadedClassRepository {
@@ -22,9 +23,10 @@ public final class LoadedClassRepository {
     }
 
     public List<ClassInfo> search(String keyword, int limit) {
-        String normalized = keyword == null ? "" : keyword.trim();
+        String normalized = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
         return Arrays.stream(instrumentation.getAllLoadedClasses())
-                .filter(type -> isSearchable(type, normalized))
+                .filter(this::isSearchable)
+                .filter(type -> matches(type, normalized))
                 .sorted(Comparator.comparing(Class::getName))
                 .limit(Math.max(1, limit))
                 .map(this::toClassInfo)
@@ -123,7 +125,7 @@ public final class LoadedClassRepository {
         }
     }
 
-    private boolean isSearchable(Class<?> type, String keyword) {
+    private boolean isSearchable(Class<?> type) {
         if (type.isArray() || type.isPrimitive() || type.isAnnotation() || type.isInterface()) {
             return false;
         }
@@ -134,7 +136,28 @@ public final class LoadedClassRepository {
                 || name.startsWith("com.example.runtimemock.")) {
             return false;
         }
-        return keyword.isBlank() || name.contains(keyword);
+        return true;
+    }
+
+    private boolean matches(Class<?> type, String keyword) {
+        if (keyword.isBlank()) {
+            return true;
+        }
+        String className = type.getName().toLowerCase(Locale.ROOT);
+        if (className.contains(keyword)) {
+            return true;
+        }
+        try {
+            return Arrays.stream(type.getDeclaredMethods())
+                    .filter(method -> !method.isSynthetic() && !method.isBridge())
+                    .anyMatch(method -> {
+                        String methodName = method.getName().toLowerCase(Locale.ROOT);
+                        String target = className + "#" + methodName + MethodDescriptor.of(method).toLowerCase(Locale.ROOT);
+                        return methodName.contains(keyword) || target.contains(keyword);
+                    });
+        } catch (LinkageError | SecurityException ignored) {
+            return false;
+        }
     }
 
     private MethodInfo toMethodInfo(Method method) {

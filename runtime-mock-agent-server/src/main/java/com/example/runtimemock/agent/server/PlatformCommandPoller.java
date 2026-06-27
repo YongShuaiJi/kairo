@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -115,13 +116,17 @@ final class PlatformCommandPoller implements AutoCloseable {
 
     private Map<String, Object> discoverTargets(JsonNode payload) {
         String query = text(payload, "query", "");
+        String normalizedQuery = query.trim().toLowerCase(Locale.ROOT);
         int limit = Math.min(200, Math.max(1, payload.path("limit").asInt(100)));
         List<Map<String, Object>> targets = new ArrayList<>();
         for (var classInfo : runtime.searchClasses(query, limit)) {
             for (var method : runtime.methods(classInfo.classId())) {
-                if (!query.isBlank()
-                        && !classInfo.className().toLowerCase().contains(query.toLowerCase())
-                        && !method.name().toLowerCase().contains(query.toLowerCase())) {
+                String targetSignature = (classInfo.className() + "#" + method.name() + method.descriptor())
+                        .toLowerCase(Locale.ROOT);
+                if (!normalizedQuery.isBlank()
+                        && !classInfo.className().toLowerCase(Locale.ROOT).contains(normalizedQuery)
+                        && !method.name().toLowerCase(Locale.ROOT).contains(normalizedQuery)
+                        && !targetSignature.contains(normalizedQuery)) {
                     continue;
                 }
                 Map<String, Object> target = new LinkedHashMap<>();

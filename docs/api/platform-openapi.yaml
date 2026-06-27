@@ -286,42 +286,12 @@ paths:
       responses:
         "201":
           description: Created
-  /rollout-batches:
-    get:
-      summary: List rollout batches
-      responses:
-        "200":
-          description: OK
-  /operation-plans/{id}/batches:
-    post:
-      summary: Create a rollout batch for an operation plan
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "201":
-          description: Created
   /rollout-executions:
     get:
       summary: List rollout instance executions
       responses:
         "200":
           description: OK
-  /rollout-batches/{id}/executions:
-    post:
-      summary: Create an instance execution in a rollout batch
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "201":
-          description: Created
   /operation-plans/{id}/transition:
     post:
       summary: Transition a rollout operation plan using expected status and version

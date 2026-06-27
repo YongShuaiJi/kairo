@@ -86,25 +86,23 @@ class PlatformControllerIntegrationTest {
                 "resourceType", "rule",
                 "resourceId", ruleId,
                 "resourceVersion", 1,
-                "strategy", Map.of("mode", "canary"),
-                "rollout", Map.of("mode", "SEQUENTIAL"),
+                "strategy", Map.of(
+                        "targetMode", "ALL_ACTIVE_INSTANCES",
+                        "automaticRollback", true
+                ),
                 "reason", "create unload test operation"
         ), "system");
-        String batchId = jdbcTemplate.queryForObject(
-                "select id from rollout_batch where operation_plan_id = ?", String.class, operationId);
-        postJson("/api/v1/rollout-batches/" + batchId + "/executions", Map.of(
-                "id", "rollout-execution-unload-1",
-                "instanceId", instanceId,
-                "expectedAgentVersion", "0.1.0",
-                "expectedRuleVersion", 1,
-                "reason", "create unload execution"
-        ), "system");
+        jdbcTemplate.update("""
+                insert into rollout_instance_execution(
+                    id, rollout_batch_id, operation_plan_id, instance_id, status,
+                    expected_agent_version, expected_rule_version, command_id, error_message,
+                    started_at, finished_at, version, updated_by, updated_at
+                ) values (?, null, ?, ?, 'SUCCEEDED', '0.1.0', 1, null, null,
+                          current_timestamp, current_timestamp, 1, 'system', current_timestamp)
+                """, "rollout-execution-unload-1", operationId, instanceId);
         jdbcTemplate.update("""
                 update operation_plan set status = 'SUCCEEDED', version = 2 where id = ?
                 """, operationId);
-        jdbcTemplate.update("""
-                update rollout_instance_execution set status = 'SUCCEEDED' where id = ?
-                """, "rollout-execution-unload-1");
         jdbcTemplate.update("""
                 insert into rule_runtime_status(
                     id, rule_id, rule_version, instance_id, status,
@@ -254,11 +252,9 @@ class PlatformControllerIntegrationTest {
                 "resourceType", "rule",
                 "resourceId", "rule-platform-1",
                 "resourceVersion", 2,
-                "strategy", Map.of("mode", "canary", "observeSeconds", 60),
-                "rollout", Map.of(
-                        "mode", "SEQUENTIAL",
-                        "batchPolicy", Map.of("batchSize", 1),
-                        "rollbackPolicy", Map.of("automatic", true)
+                "strategy", Map.of(
+                        "targetMode", "ALL_ACTIVE_INSTANCES",
+                        "automaticRollback", true
                 ),
                 "reason", "create operation"
         ), "system");
@@ -270,22 +266,18 @@ class PlatformControllerIntegrationTest {
         JsonNode runningOperation = transitionOperation("operation-platform-1", "SCHEDULED", 4, "RUNNING");
         assertThat(runningOperation.get("version").asLong()).isEqualTo(5);
 
-        JsonNode batch = postJson("/api/v1/operation-plans/operation-platform-1/batches", Map.of(
-                "id", "rollout-batch-platform-1",
-                "batchOrder", 2,
-                "targetSelector", Map.of("labels", Map.of("tier", "demo")),
-                "reason", "create batch"
-        ), "system");
-        assertThat(batch.get("batch_order").asInt()).isEqualTo(2);
-
-        JsonNode execution = postJson("/api/v1/rollout-batches/rollout-batch-platform-1/executions", Map.of(
-                "id", "rollout-execution-platform-1",
-                "instanceId", "instance-platform-1",
-                "expectedAgentVersion", "0.1.0",
-                "expectedRuleVersion", 2,
-                "reason", "create execution"
-        ), "system");
-        assertThat(execution.get("status").asText()).isEqualTo("PENDING");
+        jdbcTemplate.update("""
+                insert into rollout_instance_execution(
+                    id, rollout_batch_id, operation_plan_id, instance_id, status,
+                    expected_agent_version, expected_rule_version, command_id, error_message,
+                    started_at, finished_at, version, updated_by, updated_at
+                ) values (?, null, ?, ?, 'PENDING', '0.1.0', 2, null, null,
+                          null, null, 1, 'system', current_timestamp)
+                """, "rollout-execution-platform-1", "operation-platform-1", "instance-platform-1");
+        String executionStatus = jdbcTemplate.queryForObject(
+                "select status from rollout_instance_execution where id = ?",
+                String.class, "rollout-execution-platform-1");
+        assertThat(executionStatus).isEqualTo("PENDING");
 
         JsonNode recording = postJson("/api/v1/recording-sessions", Map.of(
                 "id", "rec-platform-1",
@@ -300,7 +292,8 @@ class PlatformControllerIntegrationTest {
         assertThat(recording.get("status").asText()).isEqualTo("DRAFT");
 
         transitionRecording("rec-platform-1", "DRAFT", 1, "WAITING_APPROVAL");
-        approveSubject("approval-rec-platform-1", "RECORDING_SESSION", "rec-platform-1", 2);
+        assertThat(getJson("/api/v1/approvals").findValuesAsText("subject_id"))
+                .contains("rec-platform-1");
         transitionRecording("rec-platform-1", "WAITING_APPROVAL", 2, "APPROVED");
         transitionRecording("rec-platform-1", "APPROVED", 3, "RECORDING");
         JsonNode completed = transitionRecording("rec-platform-1", "RECORDING", 4, "COMPLETED");
@@ -374,6 +367,12 @@ class PlatformControllerIntegrationTest {
                 "reason", "create replay"
         ), "system");
         assertThat(replay.get("status").asText()).isEqualTo("DRAFT");
+        transitionReplayPlan("replay-platform-1", "DRAFT", 1, "WAITING_APPROVAL");
+        assertThat(getJson("/api/v1/approvals").findValuesAsText("subject_id"))
+                .contains("replay-platform-1");
+        JsonNode approvedReplay = transitionReplayPlan(
+                "replay-platform-1", "WAITING_APPROVAL", 2, "APPROVED");
+        assertThat(approvedReplay.get("status").asText()).isEqualTo("APPROVED");
 
         JsonNode replayExecution = postJson("/api/v1/replay-executions", Map.of(
                 "id", "replay-execution-platform-1",
@@ -386,22 +385,6 @@ class PlatformControllerIntegrationTest {
         JsonNode completedReplayExecution = transitionReplayExecution(
                 "replay-execution-platform-1", "RUNNING", 2, "SUCCEEDED");
         assertThat(completedReplayExecution.get("version").asLong()).isEqualTo(3);
-
-        JsonNode approval = postJson("/api/v1/approvals", Map.of(
-                "id", "approval-platform-1",
-                "subjectType", "REPLAY_PLAN",
-                "subjectId", "replay-platform-1",
-                "subjectVersion", 1,
-                "reason", "approve replay",
-                "approvers", java.util.List.of("reviewer")
-        ), "system");
-        assertThat(approval.get("status").asText()).isEqualTo("WAITING_APPROVAL");
-
-        JsonNode decided = postJson("/api/v1/approvals/approval-platform-1/decisions", Map.of(
-                "decision", "APPROVED",
-                "reason", "looks safe"
-        ), "reviewer");
-        assertThat(decided.get("status").asText()).isEqualTo("APPROVED");
 
         JsonNode audits = getJson("/api/v1/audits");
         JsonNode outbox = getJson("/api/v1/outbox");
@@ -531,6 +514,18 @@ class PlatformControllerIntegrationTest {
                                                String targetStatus) throws Exception {
         String token = issueFencingToken("replay_execution", id, "move to " + targetStatus);
         return postJson("/api/v1/replay-executions/" + id + "/transition", Map.of(
+                "expectedStatus", expectedStatus,
+                "expectedVersion", expectedVersion,
+                "targetStatus", targetStatus,
+                "reason", "move to " + targetStatus,
+                "fencingToken", token
+        ), "system");
+    }
+
+    private JsonNode transitionReplayPlan(String id, String expectedStatus, long expectedVersion,
+                                          String targetStatus) throws Exception {
+        String token = issueFencingToken("replay_plan", id, "move to " + targetStatus);
+        return postJson("/api/v1/replay-plans/" + id + "/transition", Map.of(
                 "expectedStatus", expectedStatus,
                 "expectedVersion", expectedVersion,
                 "targetStatus", targetStatus,

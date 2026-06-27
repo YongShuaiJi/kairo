@@ -63,118 +63,102 @@ public class RolloutExecutor {
     @Transactional
     public Map<String, Object> runOnce(RequestContext context) {
         int operationCount = 0;
-        int batchCount = 0;
+        int targetCount = 0;
         int commandCount = 0;
         List<Map<String, Object>> operations = normalizeRows(jdbcTemplate.queryForList("""
                 select *
                   from operation_plan
-                 where status = 'RUNNING'
+                 where status in ('APPROVED', 'RUNNING')
                  order by updated_at, id
                  limit 50
                 """));
-        for (Map<String, Object> operation : operations) {
+        for (Map<String, Object> candidate : operations) {
+            Map<String, Object> operation = startApprovedOperation(context, candidate);
+            if (operation == null) {
+                continue;
+            }
             operationCount++;
             RolloutProgress progress = processOperation(context, operation);
-            batchCount += progress.batches();
+            targetCount += progress.targets();
             commandCount += progress.commands();
         }
         return Map.of(
                 "operations", operationCount,
-                "batchesStarted", batchCount,
+                "targetsCaptured", targetCount,
                 "commandsEnqueued", commandCount
         );
     }
 
-    private RolloutProgress processOperation(RequestContext context, Map<String, Object> operation) {
-        String operationId = String.valueOf(operation.get("id"));
-        List<Map<String, Object>> batches = normalizeRows(jdbcTemplate.queryForList("""
-                select *
-                  from rollout_batch
-                 where operation_plan_id = ?
-                 order by batch_order, id
-                """, operationId));
-        if (batches.isEmpty()) {
-            completeOperation(context, operation, "FAILED", Map.of("reason", "未配置灰度批次"));
-            return new RolloutProgress(0, 0);
+    private Map<String, Object> startApprovedOperation(RequestContext context,
+                                                       Map<String, Object> operation) {
+        if (!"APPROVED".equals(String.valueOf(operation.get("status")))) {
+            return operation;
         }
-        for (Map<String, Object> batch : batches) {
-            String status = String.valueOf(batch.get("status"));
-            if ("FAILED".equals(status) || "CANCELLED".equals(status)) {
-                if (automaticRollbackEnabled(operationId)) {
-                    rollbackOperation(context, operation, batch);
-                } else {
-                    completeOperation(context, operation, "FAILED", Map.of("failedBatchId", batch.get("id")));
-                }
-                return new RolloutProgress(0, 0);
-            }
-            if (!"SUCCEEDED".equals(status)) {
-                return processBatch(context, operation, batch);
-            }
+        Instant now = clock.instant();
+        long currentVersion = ((Number) operation.get("version")).longValue();
+        int updated = jdbcTemplate.update("""
+                update operation_plan
+                   set status = 'RUNNING',
+                       version = version + 1,
+                       updated_by = ?,
+                       updated_at = ?
+                 where id = ?
+                   and status = 'APPROVED'
+                   and version = ?
+                """, context.actor(), timestamp(now), operation.get("id"), currentVersion);
+        if (updated == 0) {
+            return null;
         }
-        completeOperation(context, operation, "SUCCEEDED", Map.of("batchCount", batches.size()));
-        return new RolloutProgress(0, 0);
+        Map<String, Object> runningOperation = normalizeRow(jdbcTemplate.queryForMap(
+                "select * from operation_plan where id = ?", operation.get("id")));
+        eventWriter.recordEvent(context, "operation_plan.execution_started", "operation_plan",
+                String.valueOf(operation.get("id")),
+                ((Number) runningOperation.get("version")).longValue(),
+                operation, runningOperation, "SUCCESS", "已开始向目标实例发布规则",
+                Map.of("targetMode", "ALL_ACTIVE_INSTANCES"));
+        return runningOperation;
     }
 
-    private RolloutProgress processBatch(RequestContext context, Map<String, Object> operation,
-                                         Map<String, Object> batch) {
-        int batchesStarted = 0;
-        int commands = 0;
-        String batchId = String.valueOf(batch.get("id"));
-        if ("PENDING".equals(String.valueOf(batch.get("status")))) {
-            startBatch(context, operation, batch);
-            batchesStarted++;
-        }
-        List<Map<String, Object>> executions = normalizeRows(jdbcTemplate.queryForList("""
-                select *
-                  from rollout_instance_execution
-                 where rollout_batch_id = ?
-                 order by updated_at, id
-                """, batchId));
+    private RolloutProgress processOperation(RequestContext context, Map<String, Object> operation) {
+        String operationId = String.valueOf(operation.get("id"));
+        List<Map<String, Object>> executions = executions(operationId);
+        int targets = 0;
         if (executions.isEmpty()) {
-            failBatch(context, batch, "No target instances matched rollout selector");
-            return new RolloutProgress(batchesStarted, commands);
+            targets = captureTargets(context, operation);
+            executions = executions(operationId);
         }
+        if (executions.isEmpty()) {
+            failWithoutTargets(context, operation);
+            return new RolloutProgress(targets, 0);
+        }
+
+        int commands = 0;
         for (Map<String, Object> execution : executions) {
             String status = String.valueOf(execution.get("status"));
-            if ("PENDING".equals(status) || ("WAITING_AGENT".equals(status) && execution.get("command_id") == null)) {
-                if (dispatchExecution(context, operation, batch, execution)) {
+            if ("PENDING".equals(status)
+                    || ("WAITING_AGENT".equals(status) && execution.get("command_id") == null)) {
+                if (dispatchExecution(context, operation, execution)) {
                     commands++;
                 }
             }
         }
-        return new RolloutProgress(batchesStarted, commands);
+        return new RolloutProgress(targets, commands);
     }
 
-    private void startBatch(RequestContext context, Map<String, Object> operation, Map<String, Object> batch) {
-        String batchId = String.valueOf(batch.get("id"));
-        String operationId = String.valueOf(operation.get("id"));
-        List<Map<String, Object>> existingExecutions = jdbcTemplate.queryForList("""
-                select id from rollout_instance_execution where rollout_batch_id = ?
-                """, batchId);
-        if (existingExecutions.isEmpty()) {
-            captureTargets(operation, batch);
-        }
-        Instant now = clock.instant();
-        int updatedCount = jdbcTemplate.update("""
-                update rollout_batch
-                   set status = 'RUNNING', version = version + 1, updated_by = ?, updated_at = ?
-                 where id = ? and status = 'PENDING' and version = ?
-                """, context.actor(), timestamp(now), batchId, ((Number) batch.get("version")).longValue());
-        if (updatedCount == 0) {
-            return;
-        }
-        Map<String, Object> updatedBatch = normalizeRow(jdbcTemplate.queryForMap(
-                "select * from rollout_batch where id = ?", batchId));
-        eventWriter.recordEvent(context, "rollout_batch.start", "rollout_batch", batchId, 1,
-                batch, updatedBatch, "SUCCESS", "start rollout batch",
-                Map.of("operationPlanId", operationId));
+    private List<Map<String, Object>> executions(String operationId) {
+        return normalizeRows(jdbcTemplate.queryForList("""
+                select *
+                  from rollout_instance_execution
+                 where operation_plan_id = ?
+                 order by updated_at, id
+                """, operationId));
     }
 
-    private void captureTargets(Map<String, Object> operation, Map<String, Object> batch) {
-        Map<String, Object> selector = PlatformJson.readMap(String.valueOf(batch.get("target_selector_json")));
-        Map<String, Object> labels = selectorValueMap(selector.get("labels"));
+    private int captureTargets(RequestContext context, Map<String, Object> operation) {
+        Map<String, Object> strategy = PlatformJson.readMap(String.valueOf(operation.get("strategy_json")));
+        Map<String, Object> labels = selectorValueMap(strategy.get("labels"));
+        List<String> requestedInstances = stringList(strategy.get("instanceIds"));
         String operationId = String.valueOf(operation.get("id"));
-        String batchId = String.valueOf(batch.get("id"));
         List<Map<String, Object>> instances = normalizeRows(jdbcTemplate.queryForList("""
                 select *
                   from instance
@@ -186,12 +170,17 @@ public class RolloutExecutor {
                  order by created_at, id
                 """, operation.get("application_id"), operation.get("environment_id")));
         Instant now = clock.instant();
+        int captured = 0;
         for (Map<String, Object> instance : instances) {
-            Map<String, Object> instanceLabels = PlatformJson.readMap(String.valueOf(instance.get("labels_json")));
+            String instanceId = String.valueOf(instance.get("id"));
+            if (!requestedInstances.isEmpty() && !requestedInstances.contains(instanceId)) {
+                continue;
+            }
+            Map<String, Object> instanceLabels =
+                    PlatformJson.readMap(String.valueOf(instance.get("labels_json")));
             if (!matchesLabels(instanceLabels, labels)) {
                 continue;
             }
-            String instanceId = String.valueOf(instance.get("id"));
             try {
                 jdbcTemplate.update("""
                         insert into rollout_target_snapshot(
@@ -200,26 +189,34 @@ public class RolloutExecutor {
                         """, "rollout-target-" + UUID.randomUUID(), operationId, instanceId,
                         instance.get("labels_json"), "UNKNOWN", timestamp(now));
             } catch (DuplicateKeyException ignored) {
-                // Existing snapshots are reused across retries.
+                // A retry reuses the immutable target snapshot.
             }
             try {
                 jdbcTemplate.update("""
                         insert into rollout_instance_execution(
-                            id, rollout_batch_id, instance_id, status, expected_agent_version,
-                            expected_rule_version, command_id, error_message, started_at, finished_at,
-                            version, updated_by, updated_at
-                        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, "rollout-execution-" + UUID.randomUUID(), batchId, instanceId,
-                        "PENDING", "unknown", ((Number) operation.get("resource_version")).longValue(),
-                        null, null, null, null, 1L, "rollout-scheduler", timestamp(now));
+                            id, rollout_batch_id, operation_plan_id, instance_id, status,
+                            expected_agent_version, expected_rule_version, command_id, error_message,
+                            started_at, finished_at, version, updated_by, updated_at
+                        ) values (?, null, ?, ?, 'PENDING', 'unknown', ?, null, null, null, null, 1, ?, ?)
+                        """, "rollout-execution-" + UUID.randomUUID(), operationId, instanceId,
+                        ((Number) operation.get("resource_version")).longValue(),
+                        context.actor(), timestamp(now));
+                captured++;
             } catch (DuplicateKeyException ignored) {
-                // Manual executions or concurrent scheduler passes may already have created this row.
+                // Concurrent scheduler passes may already have created the execution.
             }
         }
+        if (captured > 0) {
+            eventWriter.recordEvent(context, "operation_plan.targets_captured", "operation_plan",
+                    operationId, ((Number) operation.get("version")).longValue(),
+                    Map.of(), Map.of("targetCount", captured), "SUCCESS",
+                    "已捕获发布目标实例", Map.of("targetCount", captured));
+        }
+        return captured;
     }
 
     private boolean dispatchExecution(RequestContext context, Map<String, Object> operation,
-                                      Map<String, Object> batch, Map<String, Object> execution) {
+                                      Map<String, Object> execution) {
         String instanceId = String.valueOf(execution.get("instance_id"));
         List<Map<String, Object>> agents = normalizeRows(jdbcTemplate.queryForList("""
                 select *
@@ -231,20 +228,21 @@ public class RolloutExecutor {
                  limit 1
                 """, instanceId));
         if (agents.isEmpty()) {
-            waitForAgent(execution, "No ACTIVE agent registered for instance " + instanceId);
+            waitForAgent(execution, "实例 " + instanceId + " 没有在线 Agent");
             return false;
         }
         Map<String, Object> agent = agents.get(0);
         String expectedAgentVersion = String.valueOf(execution.get("expected_agent_version"));
         if (!"unknown".equalsIgnoreCase(expectedAgentVersion)
                 && !expectedAgentVersion.equals(String.valueOf(agent.get("agent_version")))) {
-            waitForAgent(execution, "Agent version mismatch, expected " + expectedAgentVersion
-                    + " but found " + agent.get("agent_version"));
+            waitForAgent(execution, "Agent 版本不匹配，期望 " + expectedAgentVersion
+                    + "，实际 " + agent.get("agent_version"));
             return false;
         }
+
         String executionId = String.valueOf(execution.get("id"));
         String agentId = String.valueOf(agent.get("id"));
-        Map<String, Object> payload = commandPayload(operation, batch, execution, agent);
+        Map<String, Object> payload = commandPayload(operation, execution, agent);
         Map<String, Object> command = commandService.enqueue(context, agentId,
                 String.valueOf(payload.get("commandType")), payload,
                 "rollout-execution:" + executionId, 10, clock.instant());
@@ -269,17 +267,17 @@ public class RolloutExecutor {
                 "select * from rollout_instance_execution where id = ?", executionId));
         eventWriter.recordEvent(context, "rollout_instance_execution.dispatch",
                 "rollout_instance_execution", executionId, 1, execution, updatedExecution,
-                "SUCCESS", "dispatch rollout command",
+                "SUCCESS", "已发送规则发布命令",
                 Map.of("agentId", agentId, "commandId", command.get("id")));
         return true;
     }
 
-    private Map<String, Object> commandPayload(Map<String, Object> operation, Map<String, Object> batch,
-                                               Map<String, Object> execution, Map<String, Object> agent) {
+    private Map<String, Object> commandPayload(Map<String, Object> operation,
+                                               Map<String, Object> execution,
+                                               Map<String, Object> agent) {
         String resourceType = String.valueOf(operation.get("resource_type"));
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("operationPlanId", operation.get("id"));
-        payload.put("rolloutBatchId", batch.get("id"));
         payload.put("rolloutExecutionId", execution.get("id"));
         payload.put("agentId", agent.get("id"));
         payload.put("instanceId", execution.get("instance_id"));
@@ -305,7 +303,7 @@ public class RolloutExecutor {
         if (!"APPROVED".equals(versionStatus)
                 && !"ACTIVE".equals(versionStatus)
                 && !"PUBLISHED".equals(versionStatus)) {
-            throw new IllegalStateException("Rule version is not approved for rollout: "
+            throw new IllegalStateException("规则版本尚未获批，不能发布："
                     + ruleId + ":" + version + " status=" + versionStatus);
         }
         List<Map<String, Object>> targets = normalizeRows(jdbcTemplate.queryForList("""
@@ -320,7 +318,7 @@ public class RolloutExecutor {
         payload.put("id", ruleId + ":" + version);
         payload.put("version", version);
         payload.put("name", "rollout-" + ruleId);
-        payload.put("description", "rollout command generated by platform");
+        payload.put("description", "Runtime Mock 平台发布规则");
         payload.put("classId", String.valueOf(matcher.getOrDefault(
                 "classId", target.getOrDefault("class_name", ""))));
         payload.put("className", optionalText(target, "class_name", ""));
@@ -338,26 +336,6 @@ public class RolloutExecutor {
         return payload;
     }
 
-    private String scriptText(Map<String, Object> script) {
-        Object value = script.get("script");
-        if (value instanceof String text && !text.isBlank()) {
-            return text;
-        }
-        Object type = script.get("type");
-        if ("RETURN".equals(type) && script.containsKey("value")) {
-            return "return mock.returnValue(" + PlatformJson.write(script.get("value")) + ")";
-        }
-        if ("THROW".equals(type) && script.containsKey("exception")) {
-            return "return mock.throwException(\"" + script.get("exception") + "\", \"injected by Runtime Mock\")";
-        }
-        return "return mock.proceed(args)";
-    }
-
-    private String optionalText(Map<String, Object> values, String key, String defaultValue) {
-        Object value = values.get(key);
-        return value == null ? defaultValue : String.valueOf(value);
-    }
-
     private void waitForAgent(Map<String, Object> execution, String reason) {
         jdbcTemplate.update("""
                 update rollout_instance_execution
@@ -372,115 +350,45 @@ public class RolloutExecutor {
                 """, reason, timestamp(clock.instant()), execution.get("id"));
     }
 
-    private void failBatch(RequestContext context, Map<String, Object> batch, String reason) {
+    private void failWithoutTargets(RequestContext context, Map<String, Object> operation) {
         Instant now = clock.instant();
-        int updatedCount = jdbcTemplate.update("""
-                update rollout_batch
+        long currentVersion = ((Number) operation.get("version")).longValue();
+        int updated = jdbcTemplate.update("""
+                update operation_plan
                    set status = 'FAILED', version = version + 1, updated_by = ?, updated_at = ?
-                 where id = ? and status in ('PENDING', 'RUNNING') and version = ?
-                """, context.actor(), timestamp(now), batch.get("id"),
-                ((Number) batch.get("version")).longValue());
-        if (updatedCount == 0) {
-            return;
-        }
-        Map<String, Object> updated = normalizeRow(jdbcTemplate.queryForMap(
-                "select * from rollout_batch where id = ?", batch.get("id")));
-        eventWriter.recordEvent(context, "rollout_batch.fail", "rollout_batch", String.valueOf(batch.get("id")),
-                1, batch, updated, "FAILED", reason, Map.of("reason", reason));
-        Map<String, Object> operation = normalizeRow(jdbcTemplate.queryForMap(
-                "select * from operation_plan where id = ?", batch.get("operation_plan_id")));
-        if (automaticRollbackEnabled(String.valueOf(operation.get("id")))) {
-            rollbackOperation(context, operation, updated);
-        } else {
-            completeOperation(context, operation, "FAILED",
-                    Map.of("failedBatchId", batch.get("id"), "reason", reason));
-        }
-    }
-
-    private void completeOperation(RequestContext context, Map<String, Object> operation, String status,
-                                   Map<String, Object> details) {
-        if (!"RUNNING".equals(String.valueOf(operation.get("status")))) {
-            return;
-        }
-        long version = ((Number) operation.get("version")).longValue() + 1;
-        Instant now = clock.instant();
-        long currentVersion = ((Number) operation.get("version")).longValue();
-        int updatedCount = jdbcTemplate.update("""
-                update operation_plan
-                   set status = ?, version = ?, updated_by = ?, updated_at = ?
                  where id = ? and status = 'RUNNING' and version = ?
-                """, status, version, context.actor(), timestamp(now), operation.get("id"), currentVersion);
-        if (updatedCount == 0) {
+                """, context.actor(), timestamp(now), operation.get("id"), currentVersion);
+        if (updated == 0) {
             return;
         }
-        Map<String, Object> updated = normalizeRow(jdbcTemplate.queryForMap(
+        Map<String, Object> current = normalizeRow(jdbcTemplate.queryForMap(
                 "select * from operation_plan where id = ?", operation.get("id")));
-        eventWriter.recordEvent(context, "operation_plan.auto_complete", "operation_plan",
-                String.valueOf(operation.get("id")), version, operation, updated, status,
-                "rollout executor completed operation", details);
+        eventWriter.recordEvent(context, "operation_plan.no_targets", "operation_plan",
+                String.valueOf(operation.get("id")), ((Number) current.get("version")).longValue(),
+                operation, current, "FAILED", "没有匹配到在线且已分配的目标实例",
+                Map.of("applicationId", operation.get("application_id"),
+                        "environmentId", operation.get("environment_id")));
     }
 
-    private boolean automaticRollbackEnabled(String operationId) {
-        List<String> policies = jdbcTemplate.query("""
-                select rollback_policy_json from rollout_plan where operation_plan_id = ?
-                """, (rs, rowNum) -> rs.getString(1), operationId);
-        if (policies.isEmpty()) {
-            return true;
+    private String scriptText(Map<String, Object> script) {
+        Object value = script.get("script");
+        if (value instanceof String text && !text.isBlank()) {
+            return text;
         }
-        return Boolean.parseBoolean(String.valueOf(
-                PlatformJson.readMap(policies.get(0)).getOrDefault("automatic", true)));
+        Object type = script.get("type");
+        if ("RETURN".equals(type) && script.containsKey("value")) {
+            return "return mock.returnValue(" + PlatformJson.write(script.get("value")) + ")";
+        }
+        if ("THROW".equals(type) && script.containsKey("exception")) {
+            return "return mock.throwException(\"" + script.get("exception")
+                    + "\", \"injected by Runtime Mock\")";
+        }
+        return "return mock.proceed(args)";
     }
 
-    private void rollbackOperation(RequestContext context, Map<String, Object> operation,
-                                   Map<String, Object> failedBatch) {
-        String operationId = String.valueOf(operation.get("id"));
-        long currentVersion = ((Number) operation.get("version")).longValue();
-        Instant now = clock.instant();
-        int transitioned = jdbcTemplate.update("""
-                update operation_plan
-                   set status = 'ROLLING_BACK', version = version + 1, updated_by = ?, updated_at = ?
-                 where id = ? and status = 'RUNNING' and version = ?
-                """, context.actor(), timestamp(now), operationId, currentVersion);
-        if (transitioned == 0) {
-            return;
-        }
-        String rollbackId = "rollback-" + UUID.randomUUID();
-        jdbcTemplate.update("""
-                insert into rollback_execution(
-                    id, operation_plan_id, rollback_type, status, reason, created_by, created_at, finished_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?)
-                """, rollbackId, operationId, "RESET_ALL", "DISPATCHED",
-                "Automatic rollback after batch " + failedBatch.get("id"),
-                context.actor(), timestamp(now), null);
-        List<Map<String, Object>> agents = normalizeRows(jdbcTemplate.queryForList("""
-                select distinct a.*
-                  from agent_instance a
-                  join rollout_target_snapshot s on s.instance_id = a.instance_id
-                 where s.operation_plan_id = ? and a.status = 'ACTIVE'
-                """, operationId));
-        for (Map<String, Object> agent : agents) {
-            commandService.enqueue(context, String.valueOf(agent.get("id")), "RESET_ALL",
-                    Map.of("commandType", "RESET_ALL", "operationPlanId", operationId,
-                            "rollbackExecutionId", rollbackId),
-                    "rollback:" + operationId + ":" + agent.get("id"), 10, now);
-        }
-        jdbcTemplate.update("""
-                update rollback_execution
-                   set status = 'SUCCEEDED', finished_at = ?
-                 where id = ? and status = 'DISPATCHED'
-                """, timestamp(clock.instant()), rollbackId);
-        jdbcTemplate.update("""
-                update operation_plan
-                   set status = 'ROLLED_BACK', version = version + 1, updated_by = ?, updated_at = ?
-                 where id = ? and status = 'ROLLING_BACK'
-                """, context.actor(), timestamp(clock.instant()), operationId);
-        Map<String, Object> updated = normalizeRow(jdbcTemplate.queryForMap(
-                "select * from operation_plan where id = ?", operationId));
-        eventWriter.recordEvent(context, "operation_plan.auto_rollback", "operation_plan", operationId,
-                ((Number) updated.get("version")).longValue(), operation, updated, "ROLLED_BACK",
-                "automatic rollback dispatched",
-                Map.of("failedBatchId", failedBatch.get("id"), "agentCount", agents.size(),
-                        "rollbackExecutionId", rollbackId));
+    private String optionalText(Map<String, Object> values, String key, String defaultValue) {
+        Object value = values.get(key);
+        return value == null ? defaultValue : String.valueOf(value);
     }
 
     private boolean matchesLabels(Map<String, Object> instanceLabels, Map<String, Object> selectorLabels) {
@@ -500,6 +408,13 @@ public class RolloutExecutor {
         return Map.of();
     }
 
+    private List<String> stringList(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream().map(String::valueOf).filter(item -> !item.isBlank()).toList();
+    }
+
     private List<Map<String, Object>> normalizeRows(List<Map<String, Object>> rows) {
         List<Map<String, Object>> normalized = new ArrayList<>();
         for (Map<String, Object> row : rows) {
@@ -515,13 +430,14 @@ public class RolloutExecutor {
     }
 
     private RequestContext systemContext(String actor) {
-        return new RequestContext(actor, "scheduler-" + clock.instant().toEpochMilli(), "127.0.0.1", "scheduler");
+        return new RequestContext(actor, "scheduler-" + clock.instant().toEpochMilli(),
+                "127.0.0.1", "scheduler");
     }
 
     private Timestamp timestamp(Instant instant) {
         return Timestamp.from(instant);
     }
 
-    private record RolloutProgress(int batches, int commands) {
+    private record RolloutProgress(int targets, int commands) {
     }
 }

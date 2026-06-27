@@ -204,30 +204,9 @@ public final class PlatformController {
         return ruleUnloadService.unload(id, context(httpRequest), request);
     }
 
-    @GetMapping("/rollout-batches")
-    public List<Map<String, Object>> rolloutBatches() {
-        return service.list("rollout_batch", "created_at, id");
-    }
-
-    @PostMapping("/operation-plans/{id}/batches")
-    @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> createRolloutBatch(@PathVariable String id,
-                                                  HttpServletRequest httpRequest,
-                                                  @Valid @RequestBody Map<String, Object> request) {
-        return service.createRolloutBatch(id, context(httpRequest), request);
-    }
-
     @GetMapping("/rollout-executions")
     public List<Map<String, Object>> rolloutExecutions() {
         return service.list("rollout_instance_execution", "updated_at, id");
-    }
-
-    @PostMapping("/rollout-batches/{id}/executions")
-    @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> createRolloutExecution(@PathVariable String id,
-                                                      HttpServletRequest httpRequest,
-                                                      @Valid @RequestBody Map<String, Object> request) {
-        return service.createRolloutExecution(id, context(httpRequest), request);
     }
 
     @GetMapping("/recording-rules")

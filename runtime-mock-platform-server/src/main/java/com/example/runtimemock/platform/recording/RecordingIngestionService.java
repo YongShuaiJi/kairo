@@ -118,10 +118,14 @@ public class RecordingIngestionService {
         String payloadObjectId = "payload-" + UUID.randomUUID();
         jdbcTemplate.update("""
                 insert into payload_object(
-                    id, content_hash, encryption_domain, object_uri, bytes_count, created_at
-                ) values (?, ?, ?, ?, ?, ?)
+                    id, content_hash, encryption_domain, object_uri, bytes_count, created_at, metadata_json
+                ) values (?, ?, ?, ?, ?, ?, ?)
                 """, payloadObjectId, contentHash, "recording_session:" + sessionId,
-                stored.objectUri(), plaintext.length, Timestamp.from(now));
+                stored.objectUri(), plaintext.length, Timestamp.from(now),
+                PlatformJson.write(Map.of(
+                        "encryptionScope", "recording_session:" + sessionId,
+                        "encryption", encrypted.metadata()
+                )));
 
         for (int index = 0; index < sanitizedEvents.size(); index++) {
             Map<String, Object> event = sanitizedEvents.get(index);

@@ -210,7 +210,8 @@ public class ExtractionWorker {
                 "objectType", "ROWS_JSON",
                 "objectUri", object.objectUri(),
                 "contentHash", object.contentHash(),
-                "bytesCount", object.bytesCount());
+                "bytesCount", object.bytesCount(),
+                "metadata", object.metadata());
         jdbcTemplate.update("""
                 insert into dataset_version(
                     id, dataset_id, version, source_session_id, schema_hash, manifest_hash, masking_hash,
@@ -231,10 +232,12 @@ public class ExtractionWorker {
                 PlatformJson.write(Map.of("rowCount", rows.size(), "object", objectReference)), timestamp(now));
         jdbcTemplate.update("""
                 insert into dataset_object_reference(
-                    id, dataset_version_id, object_type, object_uri, content_hash, bytes_count, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?)
+                    id, dataset_version_id, object_type, object_uri, content_hash, bytes_count,
+                    created_at, metadata_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
                 """, "dataset-object-" + UUID.randomUUID(), versionId, "ROWS_JSON", object.objectUri(),
-                object.contentHash(), object.bytesCount(), timestamp(now));
+                object.contentHash(), object.bytesCount(), timestamp(now),
+                PlatformJson.write(object.metadata()));
         return versionId;
     }
 

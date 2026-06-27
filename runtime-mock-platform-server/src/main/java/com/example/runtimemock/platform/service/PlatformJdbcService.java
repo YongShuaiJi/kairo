@@ -552,14 +552,15 @@ public class PlatformJdbcService {
                 resourceVersion,
                 OperationPlanStatus.DRAFT.name(),
                 1L,
-                jsonValue(request, "strategy", Map.of()),
+                jsonValue(request, "strategy", Map.of(
+                        "targetMode", "ALL_ACTIVE_INSTANCES",
+                        "automaticRollback", true
+                )),
                 optionalString(request, "approvalId", null),
                 context.actor(),
                 timestamp(now),
                 context.actor(),
                 timestamp(now));
-        createRolloutPlanIfPresent(id, request, now);
-        createInitialRolloutBatch(id, context, request, now);
         auditAndOutbox(context, "operation_plan.create", "operation_plan", id, 1,
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "create operation plan"),
                 Map.of("status", OperationPlanStatus.DRAFT.name()));
@@ -630,60 +631,6 @@ public class PlatformJdbcService {
                 Map.of("from", expectedStatus.name(), "to", targetStatus.name(),
                         "fencingToken", fencingToken));
         return updatedPlan;
-    }
-
-    @Transactional
-    public Map<String, Object> createRolloutBatch(String operationPlanId, RequestContext context,
-                                                  Map<String, Object> request) {
-        rbacService.require(context, "ROLLOUT_MANAGE");
-        getById("operation_plan", operationPlanId);
-        Instant now = clock.instant();
-        int batchOrder = request.containsKey("batchOrder")
-                ? (int) requiredLong(request, "batchOrder")
-                : (int) nextBatchOrder(operationPlanId);
-        String id = optionalString(request, "id", "rollout-batch-" + UUID.randomUUID());
-        jdbcTemplate.update("""
-                insert into rollout_batch(
-                    id, operation_plan_id, batch_order, status, target_selector_json,
-                    version, updated_by, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, id, operationPlanId, batchOrder, requiredString(request, "status", "PENDING"),
-                jsonValue(request, "targetSelector", Map.of()), 1L, context.actor(),
-                timestamp(now), timestamp(now));
-        auditAndOutbox(context, "rollout_batch.create", "rollout_batch", id, 1,
-                "", hash(request), "SUCCESS", optionalString(request, "reason", "create rollout batch"),
-                Map.of("operationPlanId", operationPlanId, "batchOrder", batchOrder));
-        return getById("rollout_batch", id);
-    }
-
-    @Transactional
-    public Map<String, Object> createRolloutExecution(String rolloutBatchId, RequestContext context,
-                                                      Map<String, Object> request) {
-        rbacService.require(context, "ROLLOUT_MANAGE");
-        getById("rollout_batch", rolloutBatchId);
-        String instanceId = requiredString(request, "instanceId", null);
-        getById("instance", instanceId);
-        Instant now = clock.instant();
-        String id = optionalString(request, "id", "rollout-execution-" + UUID.randomUUID());
-        jdbcTemplate.update("""
-                insert into rollout_instance_execution(
-                    id, rollout_batch_id, instance_id, status, expected_agent_version, expected_rule_version,
-                    command_id, error_message, started_at, finished_at, version, updated_by, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, id, rolloutBatchId, instanceId, requiredString(request, "status", "PENDING"),
-                requiredString(request, "expectedAgentVersion", "unknown"),
-                optionalLongObject(request, "expectedRuleVersion"),
-                optionalString(request, "commandId", null),
-                optionalString(request, "errorMessage", null),
-                null,
-                null,
-                1L,
-                context.actor(),
-                timestamp(now));
-        auditAndOutbox(context, "rollout_instance_execution.create", "rollout_instance_execution", id, 1,
-                "", hash(request), "SUCCESS", optionalString(request, "reason", "create rollout execution"),
-                Map.of("rolloutBatchId", rolloutBatchId, "instanceId", instanceId));
-        return getById("rollout_instance_execution", id);
     }
 
     @Transactional
@@ -861,7 +808,12 @@ public class PlatformJdbcService {
     public Map<String, Object> createReplayExecution(RequestContext context, Map<String, Object> request) {
         rbacService.require(context, "REPLAY_EXECUTE");
         String replayPlanId = requiredString(request, "replayPlanId", null);
-        getById("replay_plan", replayPlanId);
+        Map<String, Object> replayPlan = getById("replay_plan", replayPlanId);
+        if (!PlanStatus.APPROVED.name().equals(String.valueOf(replayPlan.get("status")))) {
+            throw PlatformException.conflict("REPLAY_PLAN_NOT_APPROVED",
+                    "流量回放计划必须审批通过后才能创建执行",
+                    Map.of("replayPlanId", replayPlanId, "status", replayPlan.get("status")));
+        }
         Instant now = clock.instant();
         String id = optionalString(request, "id", "replay-execution-" + UUID.randomUUID());
         jdbcTemplate.update("""
@@ -983,20 +935,28 @@ public class PlatformJdbcService {
                     Map.of("id", id, "currentStatus", currentStatus.name(), "targetStatus", targetStatus.name()));
         }
         if (targetStatus == RecordingSessionStatus.APPROVED) {
+            ensureSelfApproval("RECORDING_SESSION", id, currentVersion, current, context, reason,
+                    "批准自己的录制申请");
             requireApprovedApproval("RECORDING_SESSION", id, currentVersion, current);
         }
         fencingTokenService.consume(context, "recording_session", id, fencingToken);
         long newVersion = currentVersion + 1;
+        Instant now = clock.instant();
         jdbcTemplate.update("""
                 update recording_session
                    set status = ?, version = ?, updated_by = ?, updated_at = ?
                  where id = ? and status = ? and version = ?
-                """, targetStatus.name(), newVersion, context.actor(), timestamp(clock.instant()),
+                """, targetStatus.name(), newVersion, context.actor(), timestamp(now),
                 id, expectedStatus.name(), expectedVersion);
+        Map<String, Object> updatedSession = getById("recording_session", id);
+        if (targetStatus == RecordingSessionStatus.WAITING_APPROVAL) {
+            ensureApprovalRecord("RECORDING_SESSION", id, newVersion, updatedSession,
+                    context.actor(), reason, now);
+        }
         auditAndOutbox(context, "recording_session.transition", "recording_session", id, newVersion,
-                hash(current), hash(Map.of("status", targetStatus.name(), "version", newVersion)),
+                hash(current), hash(updatedSession),
                 "SUCCESS", reason, Map.of("from", expectedStatus.name(), "to", targetStatus.name(), "fencingToken", fencingToken));
-        return getById("recording_session", id);
+        return updatedSession;
     }
 
     @Transactional
@@ -1015,21 +975,26 @@ public class PlatformJdbcService {
         String id = datasetId + ":" + version;
         List<Object> objectReferences = new ArrayList<>(optionalList(request, "objectReferences"));
         List<Map<String, Object>> recordingBatches = normalizeRows(jdbcTemplate.queryForList("""
-                select id, object_uri, event_count, bytes_count
-                  from recording_batch
-                 where recording_session_id = ? and status = 'SEALED'
-                 order by created_at, id
+                select batch.id, batch.object_uri, batch.event_count, batch.bytes_count,
+                       payload.content_hash, payload.metadata_json
+                  from recording_batch batch
+                  left join payload_object payload on payload.object_uri = batch.object_uri
+                 where batch.recording_session_id = ? and batch.status = 'SEALED'
+                 order by batch.created_at, batch.id
                 """, sourceSessionId));
         if (objectReferences.isEmpty()) {
-            recordingBatches.forEach(batch -> objectReferences.add(Map.of(
-                    "objectType", "JSONL_ENCRYPTED",
-                    "objectUri", batch.get("object_uri"),
-                    "contentHash", hash(Map.of(
-                            "batchId", batch.get("id"),
-                            "objectUri", batch.get("object_uri")
-                    )),
-                    "bytesCount", batch.get("bytes_count")
-            )));
+            recordingBatches.forEach(batch -> {
+                Map<String, Object> reference = new LinkedHashMap<>();
+                reference.put("objectType", "JSONL_ENCRYPTED");
+                reference.put("objectUri", batch.get("object_uri"));
+                reference.put("contentHash", batch.get("content_hash") == null
+                        ? hash(Map.of("batchId", batch.get("id"), "objectUri", batch.get("object_uri")))
+                        : batch.get("content_hash"));
+                reference.put("bytesCount", batch.get("bytes_count"));
+                reference.put("metadata", PlatformJson.readMap(
+                        String.valueOf(batch.getOrDefault("metadata_json", "{}"))));
+                objectReferences.add(reference);
+            });
         }
         Map<String, Object> schema = request.containsKey("schema")
                 ? optionalMap(request, "schema")
@@ -1089,14 +1054,16 @@ public class PlatformJdbcService {
             Map<String, Object> objectRef = asMap(item, "objectReferences");
             jdbcTemplate.update("""
                     insert into dataset_object_reference(
-                        id, dataset_version_id, object_type, object_uri, content_hash, bytes_count, created_at
-                    ) values (?, ?, ?, ?, ?, ?, ?)
+                        id, dataset_version_id, object_type, object_uri, content_hash, bytes_count,
+                        created_at, metadata_json
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?)
                     """, "dataset-object-" + UUID.randomUUID(), id,
                     requiredString(objectRef, "objectType", "JSONL"),
                     requiredString(objectRef, "objectUri", null),
                     requiredString(objectRef, "contentHash", manifestHash),
                     optionalLong(objectRef, "bytesCount", 0),
-                    timestamp(now));
+                    timestamp(now),
+                    jsonValue(objectRef, "metadata", Map.of()));
         }
         auditAndOutbox(context, "dataset_version.create", "dataset_version", id, version,
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "create dataset version"),
@@ -1159,20 +1126,28 @@ public class PlatformJdbcService {
                     Map.of("id", id, "currentStatus", currentStatus.name(), "targetStatus", targetStatus.name()));
         }
         if (targetStatus == PlanStatus.APPROVED) {
+            ensureSelfApproval("REPLAY_PLAN", id, currentVersion, current, context, reason,
+                    "批准自己的回放申请");
             requireApprovedApproval("REPLAY_PLAN", id, currentVersion, current);
         }
         fencingTokenService.consume(context, "replay_plan", id, fencingToken);
         long newVersion = currentVersion + 1;
+        Instant now = clock.instant();
         jdbcTemplate.update("""
                 update replay_plan
                    set status = ?, version = ?, updated_by = ?, updated_at = ?
                  where id = ? and status = ? and version = ?
-                """, targetStatus.name(), newVersion, context.actor(), timestamp(clock.instant()),
+                """, targetStatus.name(), newVersion, context.actor(), timestamp(now),
                 id, expectedStatus.name(), expectedVersion);
+        Map<String, Object> updatedPlan = getById("replay_plan", id);
+        if (targetStatus == PlanStatus.WAITING_APPROVAL) {
+            ensureApprovalRecord("REPLAY_PLAN", id, newVersion, updatedPlan,
+                    context.actor(), reason, now);
+        }
         auditAndOutbox(context, "replay_plan.transition", "replay_plan", id, newVersion,
-                hash(current), hash(Map.of("status", targetStatus.name(), "version", newVersion)),
+                hash(current), hash(updatedPlan),
                 "SUCCESS", reason, Map.of("from", expectedStatus.name(), "to", targetStatus.name(), "fencingToken", fencingToken));
-        return getById("replay_plan", id);
+        return updatedPlan;
     }
 
     @Transactional
@@ -1519,35 +1494,6 @@ public class PlatformJdbcService {
         }
     }
 
-    private void createRolloutPlanIfPresent(String operationPlanId, Map<String, Object> request, Instant now) {
-        Map<String, Object> rollout = optionalMap(request, "rollout");
-        jdbcTemplate.update("""
-                insert into rollout_plan(
-                    id, operation_plan_id, mode, batch_policy_json, rollback_policy_json, created_at
-                ) values (?, ?, ?, ?, ?, ?)
-                """,
-                "rollout-plan-" + UUID.randomUUID(),
-                operationPlanId,
-                optionalString(rollout, "mode", "SEQUENTIAL"),
-                jsonValue(rollout, "batchPolicy", Map.of("batchSize", 1)),
-                jsonValue(rollout, "rollbackPolicy", Map.of("automatic", true)),
-                timestamp(now));
-    }
-
-    private void createInitialRolloutBatch(String operationPlanId, RequestContext context,
-                                           Map<String, Object> request, Instant now) {
-        Map<String, Object> rollout = optionalMap(request, "rollout");
-        Map<String, Object> batchPolicy = optionalMap(rollout, "batchPolicy");
-        Map<String, Object> selector = optionalMap(batchPolicy, "targetSelector");
-        jdbcTemplate.update("""
-                insert into rollout_batch(
-                    id, operation_plan_id, batch_order, status, target_selector_json,
-                    version, updated_by, created_at, updated_at
-                ) values (?, ?, ?, 'PENDING', ?, 1, ?, ?, ?)
-                """, "rollout-batch-" + UUID.randomUUID(), operationPlanId, 1,
-                json(selector), context.actor(), timestamp(now), timestamp(now));
-    }
-
     private Map<String, Object> ensureSelfApprovalForOperation(String operationId,
                                                                Map<String, Object> operation,
                                                                RequestContext context,
@@ -1569,6 +1515,41 @@ public class PlatformJdbcService {
                     "reason", "批准自己的发布申请"));
         }
         return getById("operation_plan", operationId);
+    }
+
+    private void ensureSelfApproval(String subjectType, String subjectId, long subjectVersion,
+                                    Map<String, Object> subject, RequestContext context,
+                                    String reason, String decisionReason) {
+        Map<String, Object> approval = ensureApprovalRecord(
+                subjectType, subjectId, subjectVersion, subject,
+                context.actor(), reason, clock.instant());
+        if (ApprovalStatus.WAITING_APPROVAL.name().equals(String.valueOf(approval.get("status")))) {
+            decideApproval(String.valueOf(approval.get("id")), context, Map.of(
+                    "decision", ApprovalStatus.APPROVED.name(),
+                    "reason", decisionReason));
+        }
+    }
+
+    private Map<String, Object> ensureApprovalRecord(String subjectType, String subjectId,
+                                                     long subjectVersion, Map<String, Object> subject,
+                                                     String requester, String reason, Instant now) {
+        List<Map<String, Object>> approvals = normalizeRows(jdbcTemplate.queryForList("""
+                select *
+                  from approval_request
+                 where subject_type = ?
+                   and subject_id = ?
+                   and subject_version = ?
+                   and status in ('WAITING_APPROVAL', 'APPROVED')
+                 order by updated_at desc
+                 limit 1
+                """, subjectType, subjectId, subjectVersion));
+        if (!approvals.isEmpty()) {
+            return approvals.getFirst();
+        }
+        String approvalId = "approval-" + UUID.randomUUID();
+        createApprovalRecord(approvalId, subjectType, subjectId, subjectVersion,
+                subject, requester, reason, now);
+        return getById("approval_request", approvalId);
     }
 
     private void createApprovalRecord(String approvalId, String subjectType, String subjectId,
@@ -1637,13 +1618,6 @@ public class PlatformJdbcService {
                 "select coalesce(max(version), 0) from " + table + " where " + keyColumn + " = ?",
                 Long.class, keyValue);
         return nextCounter(table + ":" + keyValue, maximum == null ? 1 : maximum + 1);
-    }
-
-    private long nextBatchOrder(String operationPlanId) {
-        Long maximum = jdbcTemplate.queryForObject(
-                "select coalesce(max(batch_order), 0) from rollout_batch where operation_plan_id = ?",
-                Long.class, operationPlanId);
-        return nextCounter("rollout_batch:" + operationPlanId, maximum == null ? 1 : maximum + 1);
     }
 
     private void ensureDataset(String datasetId, Map<String, Object> request, RequestContext context) {

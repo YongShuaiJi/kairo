@@ -1,6 +1,7 @@
 package com.example.runtimemock.agent.bootstrap;
 
 import java.lang.instrument.Instrumentation;
+import java.lang.reflect.InvocationTargetException;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
@@ -54,7 +55,15 @@ public final class RuntimeMockAgent {
                     }
                 };
             } catch (Throwable throwable) {
-                System.err.println("[runtime-mock] Agent bootstrap failed open: " + throwable);
+                Throwable failure = throwable;
+                if (throwable instanceof InvocationTargetException) {
+                    Throwable targetException = ((InvocationTargetException) throwable).getTargetException();
+                    if (targetException != null) {
+                        failure = targetException;
+                    }
+                }
+                System.err.println("[runtime-mock] Agent bootstrap failed open: " + failure);
+                failure.printStackTrace(System.err);
             }
         }
     }

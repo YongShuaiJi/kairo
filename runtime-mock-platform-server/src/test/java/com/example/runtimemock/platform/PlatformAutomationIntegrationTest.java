@@ -1,7 +1,10 @@
 package com.example.runtimemock.platform;
 
+import com.sun.net.httpserver.HttpServer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -10,6 +13,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.net.InetSocketAddress;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,6 +42,31 @@ class PlatformAutomationIntegrationTest {
 
     @Autowired
     ObjectMapper objectMapper;
+
+    private HttpServer replayTarget;
+    private int replayTargetPort;
+
+    @BeforeEach
+    void startReplayTarget() throws Exception {
+        replayTarget = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        replayTarget.createContext("/replay", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            byte[] response = objectMapper.writeValueAsBytes(Map.of("accepted", true));
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        replayTarget.start();
+        replayTargetPort = replayTarget.getAddress().getPort();
+    }
+
+    @AfterEach
+    void stopReplayTarget() {
+        if (replayTarget != null) {
+            replayTarget.stop(0);
+        }
+    }
 
     @Test
     void runsRolloutExtractionAndReplayWorkersEndToEnd() throws Exception {
@@ -125,8 +154,7 @@ class PlatformAutomationIntegrationTest {
                 "resourceType", "rule",
                 "resourceId", "rule-auto",
                 "resourceVersion", 1,
-                "strategy", Map.of("mode", "canary"),
-                "rollout", Map.of("mode", "SEQUENTIAL", "batchPolicy", Map.of("batchSize", 1)),
+                "strategy", Map.of("targetMode", "ALL_ACTIVE_INSTANCES", "automaticRollback", true),
                 "reason", "automation test"
         ), "system");
         transitionOperation("operation-auto", "DRAFT", 1, "WAITING_APPROVAL");
@@ -186,7 +214,7 @@ class PlatformAutomationIntegrationTest {
                 "reason", "automation test"
         ), "system");
         transitionRecording("rec-auto", "DRAFT", 1, "WAITING_APPROVAL");
-        approveSubject("approval-rec-auto", "RECORDING_SESSION", "rec-auto", 2);
+        assertThat(getJson("/api/v1/approvals").findValuesAsText("subject_id")).contains("rec-auto");
         transitionRecording("rec-auto", "WAITING_APPROVAL", 2, "APPROVED");
         transitionRecording("rec-auto", "APPROVED", 3, "RECORDING");
         assertThat(getJson("/api/v1/agent-commands").findValuesAsText("command_type"))
@@ -229,16 +257,38 @@ class PlatformAutomationIntegrationTest {
                 "comparisonPolicyHash", "comparison-auto",
                 "executionPolicy", Map.of("qps", 1),
                 "targets", java.util.List.of(Map.of(
-                        "targetType", "SYNTHETIC",
-                        "name", "synthetic target"
+                        "targetType", "HTTP",
+                        "name", "local replay target",
+                        "url", "http://127.0.0.1:" + replayTargetPort + "/replay",
+                        "method", "POST",
+                        "headers", Map.of("Content-Type", "application/json"),
+                        "expectedStatus", 200,
+                        "compareBody", true,
+                        "expectedBody", Map.of("accepted", true)
                 )),
                 "reason", "automation test"
         ), "system");
+        transitionReplayPlan("replay-auto", "DRAFT", 1, "WAITING_APPROVAL");
+        assertThat(getJson("/api/v1/approvals").findValuesAsText("subject_id"))
+                .contains("replay-auto");
+        transitionReplayPlan("replay-auto", "WAITING_APPROVAL", 2, "APPROVED");
         postJson("/api/v1/replay-executions", Map.of(
                 "id", "replay-execution-auto",
                 "replayPlanId", "replay-auto",
                 "executorConfig", Map.of("qps", 1),
                 "reason", "automation test"
+        ), "system");
+    }
+
+    private void transitionReplayPlan(String id, String expectedStatus, long expectedVersion,
+                                      String targetStatus) throws Exception {
+        String token = issueFencingToken("replay_plan", id, "move to " + targetStatus);
+        postJson("/api/v1/replay-plans/" + id + "/transition", Map.of(
+                "expectedStatus", expectedStatus,
+                "expectedVersion", expectedVersion,
+                "targetStatus", targetStatus,
+                "reason", "move to " + targetStatus,
+                "fencingToken", token
         ), "system");
     }
 
