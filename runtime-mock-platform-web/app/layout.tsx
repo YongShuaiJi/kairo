@@ -18,6 +18,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="zh-CN">
       <body>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(() => {try {const m = localStorage.getItem("runtime-mock-theme") || "system"; const d = m === "system" ? matchMedia("(prefers-color-scheme: dark)").matches : m === "dark"; const r = document.documentElement; r.dataset.themeMode = m; r.dataset.theme = d ? "dark" : "light"; r.classList.toggle("theme-night", d); r.classList.toggle("theme-day", !d); r.style.colorScheme = d ? "dark" : "light";} catch {}})();`,
+          }}
+        />
         <Providers>{children}</Providers>
         <Toaster richColors position="top-right" closeButton />
       </body>

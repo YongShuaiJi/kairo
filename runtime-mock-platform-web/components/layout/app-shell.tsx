@@ -25,6 +25,7 @@ import { platformFetch } from "@/lib/api/client";
 import type { SessionUser } from "@/lib/api/types";
 import { Badge } from "@/components/ui/badge";
 import { RuntimeMockIcon } from "@/components/brand/runtime-mock-icon";
+import { ThemeSwitcher } from "@/components/theme/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -187,6 +188,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </button>
           <div className="ml-auto flex items-center gap-1">
             {user?.demo ? <Badge variant="warning" className="hidden sm:inline-flex">Demo 模式</Badge> : null}
+            <div className="hidden md:block">
+              <ThemeSwitcher compact />
+            </div>
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <button aria-label="用户菜单" className="ml-1 flex items-center gap-2 rounded-lg p-1.5 hover:bg-slate-100">
@@ -200,6 +204,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content align="end" className="z-50 min-w-48 rounded-xl border bg-white p-1.5 shadow-xl">
+                  <div className="px-2 py-2 md:hidden">
+                    <ThemeSwitcher />
+                  </div>
+                  <DropdownMenu.Separator className="my-1 h-px bg-slate-100 md:hidden" />
                   {user?.capabilities?.includes("ADMIN") ? <DropdownMenu.Item asChild><Link href="/settings" className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none hover:bg-slate-100"><Settings className="size-4" />账户与设置</Link></DropdownMenu.Item> : null}
                   <DropdownMenu.Separator className="my-1 h-px bg-slate-100" />
                   <DropdownMenu.Item onSelect={logout} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-red-600 outline-none hover:bg-red-50">退出登录</DropdownMenu.Item>
