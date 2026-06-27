@@ -104,6 +104,26 @@ function environmentLabel(record: PlatformRecord) {
   return stringValue(record, "environmentName", "environment_name", "environment", "type", "name", "environmentId", "environment_id").toUpperCase();
 }
 
+const HIDDEN_TARGET_CLASS_PREFIXES = [
+  "java.",
+  "javax.",
+  "jakarta.",
+  "jdk.",
+  "sun.",
+  "com.sun.",
+  "org.springframework.",
+  "org.slf4j.",
+  "ch.qos.logback.",
+  "net.bytebuddy.",
+  "groovy.",
+  "org.codehaus.groovy.",
+  "com.example.runtimemock.",
+];
+
+function isBusinessTarget(target: TargetOption) {
+  return !HIDDEN_TARGET_CLASS_PREFIXES.some((prefix) => target.className.startsWith(prefix));
+}
+
 function phaseLabel(phase: InvokePhase) {
   return phase === "BEFORE" ? "调用前" : phase === "RETURN" ? "正常返回后" : "抛出异常时";
 }
@@ -373,7 +393,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
   }, []);
 
   useEffect(() => {
-    if (!applicationId || !environmentId || manualTarget) {
+    if (!applicationId || !environmentId || manualTarget || targetSelected) {
       setTargetOptions([]);
       setTargetsLoading(false);
       return;
@@ -401,9 +421,11 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
             modifiable: Boolean(item.modifiable),
             instanceCount: Number(item.instanceCount ?? item.instance_count ?? 0),
             protocol: stringValue(item, "protocol") || "JAVA_METHOD",
-          })).filter((item) =>
-            item.classId && item.className && item.classLoaderId && item.methodName && item.descriptor,
-          ));
+          }))
+            .filter((item) =>
+              item.classId && item.className && item.classLoaderId && item.methodName && item.descriptor,
+            )
+            .filter(isBusinessTarget));
         })
         .catch((error) => {
           if (active) toast.error(error instanceof Error ? error.message : "目标方法加载失败");
@@ -416,7 +438,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [applicationId, environmentId, manualTarget, targetQuery]);
+  }, [applicationId, environmentId, manualTarget, targetQuery, targetSelected]);
 
   useEffect(() => {
     if (!ruleId) return;
@@ -578,6 +600,8 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
     setMethodName(target.methodName);
     setMethodDescriptor(target.descriptor);
     setTargetQuery(`${target.className}#${target.methodName}${target.descriptor}`);
+    setTargetOptions([]);
+    setTargetsLoading(false);
     setDirty(true);
     setDiagnostics([]);
     setValidationStatus("idle");
