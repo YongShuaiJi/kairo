@@ -1,16 +1,16 @@
-FROM node:20-alpine AS dependencies
+FROM public.ecr.aws/docker/library/node:24.17.0-alpine AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 RUN --mount=type=cache,target=/root/.npm npm ci --prefer-offline --no-audit --no-fund
 
-FROM node:20-alpine AS builder
+FROM public.ecr.aws/docker/library/node:24.17.0-alpine AS builder
 WORKDIR /app
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-FROM node:20-alpine AS runner
+FROM public.ecr.aws/docker/library/node:24.17.0-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
