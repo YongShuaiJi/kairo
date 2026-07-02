@@ -3,67 +3,50 @@ info:
   title: Runtime Mock Platform API
   version: 0.1.0
 servers:
-  - url: http://127.0.0.1:18280/api/v1
+  - url: /api/v1
 security:
   - bearerAuth: []
 paths:
   /control/health:
     get:
-      summary: Platform health and counters
-      security: []
+      summary: Platform health
       responses:
         "200":
           description: OK
+  /control/schedulers/run-once:
+    post:
+      summary: Run platform schedulers once
+      responses:
+        "200":
+          description: Scheduler result
   /auth/me:
     get:
-      summary: Return the authenticated subject, roles, capabilities, scopes, and token metadata
+      summary: Current authenticated subject
       responses:
         "200":
-          description: OK
+          description: Session
   /auth/tokens:
     get:
-      summary: List token metadata without token hashes or plaintext
+      summary: List opaque tokens
       responses:
         "200":
-          description: OK
+          description: Tokens
     post:
-      summary: Issue a user or Agent opaque Bearer Token
+      summary: Issue opaque token
       responses:
         "201":
-          description: Token plaintext is returned once
+          description: Created
   /auth/tokens/{id}:
     delete:
-      summary: Revoke an access token
+      summary: Revoke opaque token
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: "#/components/parameters/id"
       responses:
         "204":
           description: Revoked
-  /scripts/validate:
-    post:
-      summary: Compile and validate a Groovy rule without executing it
-      responses:
-        "200":
-          description: Validation result and diagnostics
-  /scripts/test:
-    post:
-      summary: Execute a validated Groovy rule in the bounded Platform workbench
-      responses:
-        "200":
-          description: Decision, output or exception, duration, logs, and diagnostics
-  /dashboard/overview:
-    get:
-      summary: Return dashboard counters, health, failures, and recent activity
-      responses:
-        "200":
-          description: OK
   /query/{resource}:
     get:
-      summary: Query a supported resource with server-side paging, search, and status filters
+      summary: Query resource page
       parameters:
         - name: resource
           in: path
@@ -74,476 +57,258 @@ paths:
           in: query
           schema:
             type: integer
-            minimum: 0
+            default: 0
         - name: size
           in: query
           schema:
             type: integer
-            minimum: 1
-            maximum: 200
-        - name: search
-          in: query
-          schema:
-            type: string
-        - name: status
+            default: 25
+        - name: q
           in: query
           schema:
             type: string
       responses:
         "200":
-          description: Paged resource rows
+          description: Page
   /details/{resource}/{id}:
     get:
-      summary: Return one supported resource and its related records
+      summary: Resource detail
       parameters:
         - name: resource
           in: path
           required: true
           schema:
             type: string
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: "#/components/parameters/id"
       responses:
         "200":
-          description: Resource detail
+          description: Detail
   /targets/search:
     get:
-      summary: Search application, instance, Agent, class, and method targets
-      parameters:
-        - name: q
-          in: query
-          schema:
-            type: string
-        - name: applicationId
-          in: query
-          description: Limit results to targets already registered for this application.
-          schema:
-            type: string
-        - name: environmentId
-          in: query
-          description: Limit results to targets already registered for this environment.
-          schema:
-            type: string
+      summary: Search loaded Java targets
       responses:
         "200":
-          description: Matching targets
-  /control/schedulers/run-once:
+          description: Targets
+  /scripts/validate:
     post:
-      summary: Run rollout, extraction, and replay schedulers once
+      summary: Validate Groovy script
       responses:
         "200":
-          description: OK
+          description: Diagnostics
+  /scripts/test:
+    post:
+      summary: Run Groovy script in sandbox
+      responses:
+        "200":
+          description: Test result
   /fencing-tokens:
     get:
-      summary: List issued fencing tokens
+      summary: List fencing tokens
       responses:
         "200":
-          description: OK
+          description: Tokens
     post:
-      summary: Issue a Redis-backed fencing token with PostgreSQL audit trail
+      summary: Issue fencing token
       responses:
         "201":
-          description: Created
+          description: Issued token
   /instances:
     get:
       summary: List instances
       responses:
         "200":
-          description: OK
+          description: Instances
     post:
-      summary: Register an application instance
+      summary: Create instance
       responses:
         "201":
           description: Created
-  /sidecars:
-    get:
-      summary: List sidecars
+  /agent-registrations/self:
+    post:
+      summary: Agent self registration
+      responses:
+        "201":
+          description: Registered
+  /attach-sidecars/self:
+    post:
+      summary: Attach sidecar self registration
+      responses:
+        "201":
+          description: Registered
+  /instances/{id}/environment:
+    post:
+      summary: Assign instance environment
+      parameters:
+        - $ref: "#/components/parameters/id"
       responses:
         "200":
-          description: OK
-    post:
-      summary: Register a sidecar
+          description: Assigned
+  /instances/{id}/nickname:
+    patch:
+      summary: Update instance nickname
+      parameters:
+        - $ref: "#/components/parameters/id"
       responses:
-        "201":
-          description: Created
+        "200":
+          description: Updated
+  /instances/{id}/agent/{action}:
+    post:
+      summary: Attach, deactivate, or reload an Agent
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: action
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [attach, deactivate, reload]
+      responses:
+        "200":
+          description: Operation result
   /agents:
     get:
       summary: List agents
       responses:
         "200":
-          description: OK
+          description: Agents
     post:
-      summary: Register an agent
+      summary: Create agent
       responses:
         "201":
           description: Created
   /agents/{id}/heartbeat:
     post:
-      summary: Record an agent heartbeat
+      summary: Agent heartbeat
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: "#/components/parameters/id"
       responses:
         "200":
-          description: OK
-  /agent-commands:
-    get:
-      summary: List platform-to-agent commands
-      responses:
-        "200":
-          description: OK
-  /agents/{id}/commands:
-    post:
-      summary: Enqueue a manual command for an agent
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "201":
-          description: Created
+          description: Updated
   /agents/{id}/commands/next:
     post:
-      summary: Agent poll endpoint that leases the next command
+      summary: Poll next Agent command
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: "#/components/parameters/id"
       responses:
         "200":
-          description: OK
+          description: Command
   /agent-commands/{id}/ack:
     post:
-      summary: Ack or fail a leased agent command
+      summary: Acknowledge Agent command
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: "#/components/parameters/id"
       responses:
         "200":
-          description: OK
+          description: Acknowledged
   /rules:
     get:
       summary: List rules
       responses:
         "200":
-          description: OK
+          description: Rules
     post:
-      summary: Create a rule and immutable version 1
+      summary: Create rule
       responses:
         "201":
           description: Created
-  /rule-versions:
-    get:
-      summary: List immutable rule versions
-      responses:
-        "200":
-          description: OK
   /rules/{id}/detail:
     get:
-      summary: Return a rule with immutable versions and rollout context
+      summary: Rule ledger detail
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: "#/components/parameters/id"
       responses:
         "200":
           description: Rule detail
+  /rules/{id}/disable:
+    post:
+      summary: Disable all enabled rule versions
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Disabled
+  /rules/{id}/enable:
+    post:
+      summary: Enable retained rule
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Enabled
   /rules/{id}/versions:
     post:
-      summary: Create a new immutable rule version
+      summary: Create rule version
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: "#/components/parameters/id"
       responses:
         "201":
           description: Created
+  /rules/{id}/versions/{version}/disable:
+    post:
+      summary: Disable rule version and unload affected executions
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - $ref: "#/components/parameters/version"
+      responses:
+        "200":
+          description: Disabled
+  /rules/{id}/versions/{version}/enable:
+    post:
+      summary: Enable retained rule version
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - $ref: "#/components/parameters/version"
+      responses:
+        "200":
+          description: Enabled
   /operation-plans:
     get:
-      summary: List rollout operation plans
+      summary: List operation plans
       responses:
         "200":
-          description: OK
+          description: Plans
     post:
-      summary: Create a rollout operation plan
+      summary: Create operation plan
       responses:
         "201":
           description: Created
-  /rollout-executions:
-    get:
-      summary: List rollout instance executions
-      responses:
-        "200":
-          description: OK
   /operation-plans/{id}/transition:
     post:
-      summary: Transition a rollout operation plan using expected status and version
+      summary: Transition operation plan
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: "#/components/parameters/id"
       responses:
         "200":
-          description: OK
-  /recording-rules:
-    get:
-      summary: List recording rules
-      responses:
-        "200":
-          description: OK
+          description: Updated
+  /operation-plans/{id}/unload:
     post:
-      summary: Create a recording rule
-      responses:
-        "201":
-          description: Created
-  /recording-rule-versions:
-    get:
-      summary: List immutable recording-rule versions
-      responses:
-        "200":
-          description: OK
-  /recording-rules/{id}/versions:
-    post:
-      summary: Create a new immutable recording-rule version
+      summary: Unload operation plan
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: "#/components/parameters/id"
       responses:
-        "201":
-          description: Created
-  /recording-sessions:
+        "200":
+          description: Unload started
+  /rollout-executions:
     get:
-      summary: List recording sessions
+      summary: List rollout executions
       responses:
         "200":
-          description: OK
-    post:
-      summary: Create a recording session
-      responses:
-        "201":
-          description: Created
-  /recording-sessions/{id}/transition:
-    post:
-      summary: Transition a recording session and enqueue Agent start or stop commands
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Updated session
-  /recording-sessions/{id}/events:
-    post:
-      summary: Ingest one authenticated, bounded Agent recording batch
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Idempotent batch receipt and encrypted object reference
-  /datasets:
-    get:
-      summary: List dataset versions
-      responses:
-        "200":
-          description: OK
-    post:
-      summary: Create a dataset version from a completed recording session
-      responses:
-        "201":
-          description: Created
-  /datasources:
-    get:
-      summary: List datasource registrations
-      responses:
-        "200":
-          description: OK
-    post:
-      summary: Register a datasource for controlled extraction
-      responses:
-        "201":
-          description: Created
-  /extraction-templates:
-    get:
-      summary: List extraction templates
-      responses:
-        "200":
-          description: OK
-    post:
-      summary: Create an extraction template
-      responses:
-        "201":
-          description: Created
-  /extraction-tasks:
-    get:
-      summary: List extraction tasks
-      responses:
-        "200":
-          description: OK
-    post:
-      summary: Create an extraction task
-      responses:
-        "201":
-          description: Created
-  /extraction-tasks/{id}/transition:
-    post:
-      summary: Transition an extraction task using expected status and version
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: OK
-  /extraction-executions:
-    get:
-      summary: List extraction worker executions
-      responses:
-        "200":
-          description: OK
-  /extraction-results:
-    get:
-      summary: List extraction result artifacts
-      responses:
-        "200":
-          description: OK
-  /replay-plans:
-    get:
-      summary: List replay plans
-      responses:
-        "200":
-          description: OK
-    post:
-      summary: Create a replay plan
-      responses:
-        "201":
-          description: Created
-  /replay-plans/{id}/transition:
-    post:
-      summary: Transition a replay plan using expected status and version
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: OK
-  /replay-executions:
-    get:
-      summary: List replay executions
-      responses:
-        "200":
-          description: OK
-    post:
-      summary: Create a replay execution
-      responses:
-        "201":
-          description: Created
-  /replay-executions/{id}/transition:
-    post:
-      summary: Transition a replay execution using expected status and version
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: OK
-  /replay-batches:
-    get:
-      summary: List replay worker batches
-      responses:
-        "200":
-          description: OK
-  /replay-invocation-results:
-    get:
-      summary: List replay invocation results
-      responses:
-        "200":
-          description: OK
-  /comparison-results:
-    get:
-      summary: List replay comparison results
-      responses:
-        "200":
-          description: OK
-  /approvals:
-    get:
-      summary: List approvals
-      responses:
-        "200":
-          description: OK
-    post:
-      summary: Create an approval request
-      responses:
-        "201":
-          description: Created
-  /approvals/{id}/decisions:
-    post:
-      summary: Approve or reject an approval step
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: OK
-  /audits:
-    get:
-      summary: List hash-chained audit records
-      responses:
-        "200":
-          description: OK
-  /outbox:
-    get:
-      summary: List outbox events
-      responses:
-        "200":
-          description: OK
-  /worker-artifacts:
-    get:
-      summary: List worker output artifacts
-      responses:
-        "200":
-          description: OK
+          description: Executions
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: opaque
+  parameters:
+    id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    version:
+      name: version
+      in: path
+      required: true
+      schema:
+        type: integer

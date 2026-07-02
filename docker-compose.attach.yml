@@ -1,0 +1,29 @@
+services:
+  demo-attach-executor:
+    image: runtime-mock-attach-executor:0.1.0-SNAPSHOT
+    build:
+      context: .
+      dockerfile: runtime-mock-sidecar/Dockerfile
+    container_name: runtime-mock-demo-attach-executor
+    pid: "service:demo-app"
+    depends_on:
+      platform:
+        condition: service_healthy
+      demo-app:
+        condition: service_healthy
+    environment:
+      RUNTIME_MOCK_EXECUTOR_ID: runtime-mock-demo-attach-executor
+      RUNTIME_MOCK_EXECUTOR_TYPE: SIDECAR_CONTAINER
+      RUNTIME_MOCK_PLATFORM_URL: http://platform:18280
+      RUNTIME_MOCK_PLATFORM_TOKEN: runtime-mock-dev-admin-token-change-me
+      RUNTIME_MOCK_SIDECAR_ENDPOINT: http://demo-attach-executor:18480
+      RUNTIME_MOCK_AGENT_JAR: /app/runtime-mock-agent-bootstrap.jar
+      RUNTIME_MOCK_TARGETS_JSON: >-
+        [{"projectName":"runtime-mock","applicationName":"runtime-mock-demo","environmentName":"sit","nickname":"runtime-mock-demo","hostname":"demo-app","processId":"1","processStartId":"runtime-mock-demo:demo-app:1","runtime":"java","javaVersion":"21.0.11","agentJar":"/app/runtime-mock-agent-bootstrap.jar"}]
+    volumes:
+      - runtime-mock-demo-tmp:/tmp
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec \"exec 3<>/dev/tcp/127.0.0.1/18480; printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q 'UP' <&3\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30

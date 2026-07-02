@@ -15,11 +15,8 @@ Java runtime method mock and fault-injection MVP based on Java Instrumentation, 
 - `runtime-mock-agent-bootstrap`: thin `premain` and `agentmain` entrypoints that reflectively load an isolated core jar.
 - `runtime-mock-attach-cli`: dynamic attach command implemented through reflective JDK Attach API access.
 - `runtime-mock-ops`: local emergency operations CLI.
-- `runtime-mock-sidecar`: recording safety library for masking/tokenization and encrypted WAL. It is a library boundary, not a deployed sidecar service.
-- `runtime-mock-storage-spi`: cloud-neutral object storage contract.
-- `runtime-mock-storage-minio`: MinIO object storage adapter.
-- `runtime-mock-platform-server`: Spring Boot 3 / Java 21 platform image. It runs as either the API role
-  or the asynchronous Worker role and uses PostgreSQL, Redis, Kafka and encrypted MinIO storage.
+- `runtime-mock-sidecar`: attach executor and runtime helper boundary used by the demo attach flow.
+- `runtime-mock-platform-server`: Spring Boot 3 / Java 21 platform image backed by PostgreSQL and Redis.
 - `runtime-mock-platform-web`: independent Next.js / React 19 central management UI with TypeScript,
   Tailwind CSS, shadcn/ui, Lucide icons, Monaco Editor, and Runtime Mock domain components.
 - `runtime-mock-demo`: Spring Boot-compatible demo domain and `OrderService`.
@@ -250,41 +247,8 @@ GET  /api/v1/rules/{id}/detail
 GET  /api/v1/operation-plans
 POST /api/v1/operation-plans
 POST /api/v1/operation-plans/{id}/transition
-POST /api/v1/operation-plans/{id}/batches
-POST /api/v1/rollout-batches/{id}/executions
-GET  /api/v1/recording-rules
-POST /api/v1/recording-rules
-POST /api/v1/recording-rules/{id}/versions
-GET  /api/v1/recording-sessions
-POST /api/v1/recording-sessions
-POST /api/v1/recording-sessions/{id}/transition
-POST /api/v1/recording-sessions/{id}/events
-GET  /api/v1/datasets
-POST /api/v1/datasets
-GET  /api/v1/datasources
-POST /api/v1/datasources
-GET  /api/v1/extraction-templates
-POST /api/v1/extraction-templates
-GET  /api/v1/extraction-tasks
-POST /api/v1/extraction-tasks
-POST /api/v1/extraction-tasks/{id}/transition
-GET  /api/v1/extraction-executions
-GET  /api/v1/extraction-results
-GET  /api/v1/replay-plans
-POST /api/v1/replay-plans
-POST /api/v1/replay-plans/{id}/transition
-GET  /api/v1/replay-executions
-POST /api/v1/replay-executions
-POST /api/v1/replay-executions/{id}/transition
-GET  /api/v1/replay-batches
-GET  /api/v1/replay-invocation-results
-GET  /api/v1/comparison-results
-GET  /api/v1/approvals
-POST /api/v1/approvals
-POST /api/v1/approvals/{id}/decisions
-GET  /api/v1/audits
-GET  /api/v1/outbox
-GET  /api/v1/worker-artifacts
+POST /api/v1/operation-plans/{id}/unload
+GET  /api/v1/rollout-executions
 ```
 
 Supporting documents:
@@ -311,12 +275,10 @@ docs/ops/platform-docker.md
 - Bootstrap and bridge jars are compiled as Java 8 bytecode; the modern core jar targets JDK 17/21.
 - Groovy save-time security uses `SecureASTCustomizer`, receiver/import/method/property restrictions, source limits, and loop/method/class/package bans.
 - Groovy runtime execution is bounded; repeated timeout/error conditions lock unsafe rules while business calls remain fail-open.
-- The Spring Boot platform server persists control-plane state with PostgreSQL/Flyway and covers assets, agents, commands, rules, rollouts, recording, datasets, extraction, replay, approvals, Redis-backed fencing, audit hash chain, and outbox events.
-- Rollout execution can enqueue idempotent Agent commands, Agents can poll and ack commands, and ack results advance rollout execution/batch/operation state.
-- Recording-session transitions automatically issue Agent start/stop commands. The Agent observes matched invocations, batches them through a bounded uploader, and the Platform masks, encrypts, indexes, and stores them in MinIO.
-- Extraction and replay run in the dedicated Worker role and create durable result rows plus encrypted MinIO artifacts.
-- Sidecar core supports sensitive payload masking/tokenization and AES-GCM encrypted WAL records.
-- The independent Next.js Web console provides authenticated dashboards, resource lists/details, recording views, and a Monaco rule workbench backed by real Platform APIs.
+- The Spring Boot platform server persists control-plane state with PostgreSQL/Flyway and covers applications, instances, agents, commands, rules, rule versions, rollouts, unload execution, Redis-backed fencing, and audit hash chains.
+- Rollout execution can enqueue idempotent Agent commands; Agents poll and ack commands, and ack results advance rollout execution and operation-plan state.
+- Rule versions are immutable once created; disabling a version starts the 30-day retention countdown and automatically unloads affected runtime bytecode when needed.
+- The independent Next.js Web console provides authenticated dashboards, application instances, rule ledgers, rollout management, and a Monaco rule workbench backed by real Platform APIs.
 
 ## Current Limits
 
@@ -325,6 +287,6 @@ docs/ops/platform-docker.md
 - Dynamic attach can emit JDK warnings on modern Java; prefer `-javaagent` for stable environments.
 - The former local `runtime-mock-control-server` and single-consumer `runtime-mock-web` modules were removed. The Agent serves its local console directly, and all persistent control-plane state lives in `runtime-mock-platform-server`.
 - Platform authentication uses revocable opaque user/Agent Bearer Tokens. OIDC remains an optional future identity-provider adapter.
-- `runtime-mock-sidecar` remains a reusable recording-safety library, not a required deployed process. The active recording path is Agent uploader to authenticated Platform ingestion and encrypted object storage.
-- Extraction and Replay workers are implemented for platform-managed execution, sample-row/JDBC extraction, synthetic/HTTP replay, and result artifacts; remaining production hardening includes SQL plan review, MySQL driver packaging, distributed worker scaling, richer comparison policies, and cleanup execution.
-- Kubernetes, enterprise SSO, cloud KMS, cloud object-storage adapters, performance certification, and multi-region operation are optional future integrations rather than dependencies of the current product.
+- `runtime-mock-sidecar` is used by the local attach demo flow; it is not a separate production storage or replay subsystem.
+- Recording, dataset extraction, replay, approval workflow, outbox publishing, Kafka, and MinIO have been removed from the active product surface.
+- Kubernetes, enterprise SSO, performance certification, and multi-region operation are optional future integrations rather than dependencies of the current product.
