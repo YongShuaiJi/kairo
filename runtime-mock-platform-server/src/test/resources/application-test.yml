@@ -6,27 +6,11 @@ spring:
     driver-class-name: org.h2.Driver
   flyway:
     enabled: true
-  kafka:
-    bootstrap-servers: 127.0.0.1:9092
 
 runtime-mock:
   platform:
     auth:
       mode: header-dev
-    worker:
-      enabled: false
-    object-storage:
-      provider: memory
-    encryption:
-      master-key-base64: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-    kafka:
-      enabled: false
     rollout:
       scheduler:
-        enabled: false
-    extraction:
-      worker:
-        enabled: false
-    replay:
-      worker:
         enabled: false

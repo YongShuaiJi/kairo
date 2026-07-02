@@ -5,6 +5,7 @@ import com.example.runtimemock.agent.core.AgentRuntime;
 
 import java.lang.instrument.Instrumentation;
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class AgentCoreLauncher {
 
@@ -15,6 +16,7 @@ public final class AgentCoreLauncher {
         AgentLaunchConfig config = AgentLaunchConfig.parse(agentArgs);
         AgentRuntime runtime = AgentCore.start(agentArgs, instrumentation);
         try {
+            AtomicReference<AgentCoreHandle> handleRef = new AtomicReference<>();
             runtime.loadMode(loadMode);
             AgentTokenManager tokenManager = new AgentTokenManager(config.token(), config.tokenTtl());
             AgentHttpServer server = new AgentHttpServer(runtime, config.host(), config.port(), tokenManager);
@@ -33,7 +35,12 @@ public final class AgentCoreLauncher {
                 recordingUploader = new PlatformRecordingUploader(runtime, effectiveConfig);
                 runtime.recordingSink(recordingUploader);
                 recordingUploader.start();
-                poller = new PlatformCommandPoller(runtime, effectiveConfig);
+                poller = new PlatformCommandPoller(runtime, effectiveConfig, () -> {
+                    AgentCoreHandle handle = handleRef.get();
+                    if (handle != null) {
+                        handle.close();
+                    }
+                });
                 poller.start();
             }
             final Path[] registration = new Path[1];
@@ -42,7 +49,9 @@ public final class AgentCoreLauncher {
                     token.token(), token.expiresAt(), AgentHttpServer.PROTOCOL_VERSION));
             runtime.recordEvent("agent.register", "system", null, null,
                     "Agent registered at " + registration[0]);
-            return new AgentCoreHandle(server, poller, recordingUploader, tokenManager);
+            AgentCoreHandle handle = new AgentCoreHandle(server, poller, recordingUploader, tokenManager);
+            handleRef.set(handle);
+            return handle;
         } catch (RuntimeException e) {
             AgentCore.stop();
             throw e;

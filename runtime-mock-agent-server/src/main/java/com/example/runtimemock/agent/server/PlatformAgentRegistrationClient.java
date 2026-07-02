@@ -38,6 +38,12 @@ final class PlatformAgentRegistrationClient {
             if (config.platformEnvironmentId() != null) {
                 body.put("environmentId", config.platformEnvironmentId());
             }
+            if (config.platformInstanceId() != null) {
+                body.put("instanceId", config.platformInstanceId());
+            }
+            if (config.platformNickname() != null) {
+                body.put("nickname", config.platformNickname());
+            }
             body.put("hostname", jvmInfo.host());
             body.put("processId", String.valueOf(jvmInfo.pid()));
             body.put("processStartId", jvmInfo.host() + ":" + jvmInfo.pid() + ":" + jvmInfo.startTimeMillis());

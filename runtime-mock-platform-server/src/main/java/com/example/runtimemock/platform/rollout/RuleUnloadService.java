@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -67,9 +68,9 @@ public class RuleUnloadService {
                             "expectedVersion", expectedVersion, "currentStatus", currentStatus,
                             "currentVersion", currentVersion));
         }
-        if (!"SUCCEEDED".equals(currentStatus)) {
+        if (!"SUCCEEDED".equals(currentStatus) && !"FAILED".equals(currentStatus)) {
             throw PlatformException.conflict("OPERATION_PLAN_NOT_UNLOADABLE",
-                    "只有已成功发布的规则计划可以执行卸载",
+                    "只有已成功或失败但存在生效实例的规则计划可以执行卸载",
                     Map.of("id", operationPlanId, "status", currentStatus));
         }
         if (!"rule".equals(String.valueOf(operation.get("resource_type")))) {
@@ -103,9 +104,9 @@ public class RuleUnloadService {
         String rollbackId = "rollback-" + UUID.randomUUID();
         int transitioned = jdbcTemplate.update("""
                 update operation_plan
-                   set status = 'ROLLING_BACK', version = version + 1, updated_by = ?, updated_at = ?
-                 where id = ? and status = 'SUCCEEDED' and version = ?
-                """, context.actor(), timestamp(now), operationPlanId, currentVersion);
+                   set status = 'UNLOADING', version = version + 1, updated_by = ?, updated_at = ?
+                 where id = ? and status = ? and version = ?
+                """, context.actor(), timestamp(now), operationPlanId, currentStatus, currentVersion);
         if (transitioned == 0) {
             throw PlatformException.conflict("RESOURCE_VERSION_CONFLICT",
                     "发布计划状态或版本已发生变化，请刷新后重试",
@@ -136,15 +137,113 @@ public class RuleUnloadService {
         Map<String, Object> updatedOperation = operation(operationPlanId);
         eventWriter.recordEvent(context, "operation_plan.unload", "operation_plan",
                 operationPlanId, ((Number) updatedOperation.get("version")).longValue(),
-                operation, updatedOperation, "ROLLING_BACK", reason,
+                operation, updatedOperation, "UNLOADING", reason,
                 Map.of("rollbackExecutionId", rollbackId, "commandCount", agents.size(),
                         "classId", classId));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("operationPlan", updatedOperation);
-        result.put("rollbackExecution", rollback(rollbackId));
+        Map<String, Object> unloadExecution = unloadExecution(rollbackId);
+        result.put("unloadExecution", unloadExecution);
+        result.put("rollbackExecution", unloadExecution);
         result.put("commandCount", agents.size());
         result.put("classId", classId);
         return result;
+    }
+
+    @Transactional
+    public Map<String, Object> unloadRuleForDeletion(String ruleId, Long ruleVersion,
+                                                     RequestContext context) {
+        rbacService.require(context, "RULE_MANAGE");
+        String versionClause = ruleVersion == null ? "" : " and resource_version = ?";
+        Object[] args = ruleVersion == null
+                ? new Object[]{ruleId}
+                : new Object[]{ruleId, ruleVersion};
+        List<Map<String, Object>> operations = normalize(jdbcTemplate.queryForList("""
+                select *
+                 from operation_plan
+                 where resource_type = 'rule'
+                   and resource_id = ?
+                   %s
+                   and status <> 'UNLOADED'
+                 order by updated_at desc, id
+                """.formatted(versionClause), args));
+        Instant now = clock.instant();
+        int commands = 0;
+        int markedRolledBack = 0;
+        List<String> affectedOperations = new ArrayList<>();
+        for (Map<String, Object> operation : operations) {
+            String operationPlanId = String.valueOf(operation.get("id"));
+            affectedOperations.add(operationPlanId);
+            boolean dispatched = false;
+            if ("SUCCEEDED".equals(String.valueOf(operation.get("status")))) {
+                List<Map<String, Object>> agents = activeAgentsForSuccessfulExecutions(operationPlanId);
+                if (!agents.isEmpty()) {
+                    Map<String, Object> target = ruleTarget(operation);
+                    String className = String.valueOf(target.getOrDefault("class_name", ""));
+                    Map<String, Object> matcher = PlatformJson.readMap(String.valueOf(
+                            target.getOrDefault("matcher_json", "{}")));
+                    String classId = String.valueOf(matcher.getOrDefault("classId", className));
+                    String rollbackId = "rollback-" + UUID.randomUUID();
+                    jdbcTemplate.update("""
+                            insert into rollback_execution(
+                                id, operation_plan_id, rollback_type, status, reason,
+                                created_by, created_at, finished_at
+                            ) values (?, ?, 'RESET_CLASS', 'DISPATCHED', ?, ?, ?, null)
+                            """, rollbackId, operationPlanId, "规则删除自动卸载", context.actor(), timestamp(now));
+                    jdbcTemplate.update("""
+                            update operation_plan
+                               set status = 'UNLOADING',
+                                   version = version + 1,
+                                   updated_by = ?,
+                                   updated_at = ?
+                             where id = ?
+                            """, context.actor(), timestamp(now), operationPlanId);
+                    for (Map<String, Object> agent : agents) {
+                        Map<String, Object> payload = new LinkedHashMap<>();
+                        payload.put("commandType", "RESET_CLASS");
+                        payload.put("operationPlanId", operationPlanId);
+                        payload.put("rollbackExecutionId", rollbackId);
+                        payload.put("ruleId", operation.get("resource_id"));
+                        payload.put("ruleVersion", operation.get("resource_version"));
+                        payload.put("instanceId", agent.get("instance_id"));
+                        payload.put("classId", classId);
+                        payload.put("className", className);
+                        commandService.enqueue(context, String.valueOf(agent.get("id")), "RESET_CLASS",
+                                payload, "delete-rule-unload:" + operationPlanId + ":" + agent.get("id"),
+                                10, now);
+                        commands++;
+                    }
+                    dispatched = true;
+                }
+            }
+            if (!dispatched) {
+                jdbcTemplate.update("""
+                        update operation_plan
+                           set status = 'UNLOADED',
+                               version = version + 1,
+                               updated_by = ?,
+                               updated_at = ?
+                         where id = ?
+                        """, context.actor(), timestamp(now), operationPlanId);
+                jdbcTemplate.update("""
+                        update rollout_instance_execution
+                           set status = 'UNLOADED',
+                               finished_at = coalesce(finished_at, ?),
+                               updated_at = ?
+                         where operation_plan_id = ?
+                           and status <> 'UNLOADED'
+                        """, timestamp(now), timestamp(now), operationPlanId);
+                markedRolledBack++;
+            }
+        }
+        return Map.of(
+                "ruleId", ruleId,
+                "ruleVersion", ruleVersion == null ? "" : ruleVersion,
+                "operationCount", operations.size(),
+                "commandsDispatched", commands,
+                "markedRolledBack", markedRolledBack,
+                "operationIds", affectedOperations
+        );
     }
 
     private Map<String, Object> ruleTarget(Map<String, Object> operation) {
@@ -187,7 +286,7 @@ public class RuleUnloadService {
         return rows.get(0);
     }
 
-    private Map<String, Object> rollback(String id) {
+    private Map<String, Object> unloadExecution(String id) {
         return normalize(jdbcTemplate.queryForList(
                 "select * from rollback_execution where id = ?", id)).get(0);
     }

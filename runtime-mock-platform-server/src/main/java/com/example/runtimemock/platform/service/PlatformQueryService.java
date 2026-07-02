@@ -1,5 +1,6 @@
 package com.example.runtimemock.platform.service;
 
+import com.example.runtimemock.platform.persistence.mapper.RuleLedgerQueryMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -13,77 +14,110 @@ import java.util.TreeMap;
 @Service
 public final class PlatformQueryService {
 
+    private static final String CURRENT_INSTANCE_TABLE = """
+            (select *
+               from instance
+              where status not in ('OFFLINE', 'STOPPED', 'ARCHIVED')) instance
+            """;
+
     private static final Map<String, ResourceDefinition> RESOURCES = Map.ofEntries(
             resource("applications", "application", "created_at desc, id", "id", "name", "project_id"),
             resource("environments", "environment", "created_at desc, id", "id", "name", "type", "application_id"),
-            selectedResource("instances", "instance",
+            selectedResource("instances", CURRENT_INSTANCE_TABLE,
                     """
-                    id, hostname, process_id, runtime, status, application_id, environment_id,
+                    id, nickname, hostname, process_id, runtime, status, application_id, environment_id,
                     (select a.name from application a where a.id = instance.application_id) as application_name,
                     (select p.name from project p
                       join application a on a.project_id = p.id
                      where a.id = instance.application_id) as project_name,
-                    (select e.name from environment e where e.id = instance.environment_id) as environment_name,
+                    (select lower(coalesce(e.type, e.name)) from environment e where e.id = instance.environment_id) as environment_name,
+                    coalesce(
+                        (select ai.status
+                           from agent_instance ai
+                          where ai.instance_id = instance.id
+                          order by ai.last_heartbeat_at desc nulls last, ai.updated_at desc, ai.id
+                          limit 1),
+                        (select aet.status
+                           from attach_executor_target aet
+                           join attach_executor ae on ae.id = aet.executor_id
+                          where aet.instance_id = instance.id
+                          order by aet.last_seen_at desc nulls last, ae.last_heartbeat_at desc nulls last,
+                                   aet.updated_at desc, ae.updated_at desc, aet.executor_id
+                          limit 1)
+                    ) as agent_status,
                     labels_json, last_seen_at, created_at, updated_at, process_start_id,
                     jvm_started_at, java_version, load_mode, agent_version, capabilities_json,
                     lease_expires_at, registration_status
                     """,
-                    "updated_at desc, id", "id", "hostname", "application_id", "environment_id",
-                    "status"),
+                    "updated_at desc, id", "id", "nickname", "hostname",
+                    "(select a.name from application a where a.id = instance.application_id)",
+                    "(select lower(coalesce(e.type, e.name)) from environment e where e.id = instance.environment_id)",
+                    "application_id", "environment_id", "status"),
             resource("sidecars", "sidecar_instance", "updated_at desc, id", "id", "endpoint", "status", "sidecar_version"),
+            resource("attach-executors", "attach_executor", "updated_at desc, id",
+                    "id", "executor_type", "hostname", "endpoint", "status", "executor_version"),
+            selectedResource("attach-targets", "attach_executor_target",
+                    "executor_id, instance_id, process_id, agent_jar, runtime, java_version, status, last_seen_at, created_at, updated_at",
+                    "updated_at desc, executor_id, instance_id", "executor_id", "instance_id", "process_id", "status"),
+            selectedResource("attach-executor-commands", "attach_executor_command",
+                    """
+                    id, executor_id, instance_id, command_type, status, process_id,
+                    agent_jar, attempt, max_attempts, lease_owner, lease_expires_at,
+                    error_message, created_at, updated_at, started_at, finished_at
+                    """,
+                    "updated_at desc, id", "id", "executor_id", "instance_id", "command_type", "status"),
             selectedResource("agents", "agent_instance",
                     "id, instance_id, sidecar_id, status, agent_version, bootstrap_version, listen_host, listen_port, capabilities_json, last_heartbeat_at, created_at, updated_at",
                     "updated_at desc, id", "id", "listen_host", "status", "agent_version"),
             resource("agent-commands", "agent_command", "updated_at desc, id", "id", "agent_id", "command_type", "status"),
-            resource("rules", "rule", "updated_at desc, id", "id", "name", "application_id", "environment_id", "status"),
+            resource("rules", "rule", "updated_at desc, id", "id", "name", "application_id", "environment_id"),
             resource("rule-versions", "rule_version", "created_at desc, id", "id", "rule_id", "status", "risk_level"),
             resource("operation-plans", "operation_plan", "updated_at desc, id", "id", "resource_type", "resource_id", "status"),
             selectedResource("rollout-executions", "rollout_instance_execution",
                     """
                     id, operation_plan_id, instance_id, status, expected_agent_version,
-                    expected_rule_version, command_id, error_message, started_at, finished_at, updated_at
+                    expected_rule_version, command_id, error_message, started_at, finished_at, updated_at,
+                    instance_nickname, application_name, environment_name, java_version,
+                    agent_version, load_mode, process_start_id, instance_last_seen_at,
+                    attach_executor_id
                     """,
-                    "updated_at desc, id", "id", "operation_plan_id", "instance_id", "status"),
+                    "updated_at desc, id", "id", "operation_plan_id", "instance_id",
+                    "instance_nickname", "application_name", "environment_name", "status"),
+            selectedResource("rollout-targets", "rollout_target_snapshot",
+                    """
+                    id, operation_plan_id, instance_id, labels_json, agent_status, captured_at,
+                    instance_nickname, application_name, environment_name, java_version,
+                    agent_version, load_mode, process_start_id, instance_last_seen_at,
+                    attach_executor_id
+                    """,
+                    "captured_at desc, id", "id", "operation_plan_id", "instance_id",
+                    "instance_nickname", "application_name", "environment_name", "agent_status"),
             resource("rollback-executions", "rollback_execution", "created_at desc, id",
                     "id", "operation_plan_id", "rollback_type", "status", "reason"),
-            resource("recording-rules", "recording_rule", "updated_at desc, id", "id", "name", "status"),
-            resource("recording-rule-versions", "recording_rule_version", "created_at desc, id", "id", "recording_rule_id", "status", "protocol"),
-            resource("recording-sessions", "recording_session", "updated_at desc, id", "id", "application_id", "environment_id", "status"),
-            resource("recording-batches", "recording_batch", "created_at desc, id", "id", "recording_session_id", "status", "object_uri"),
-            resource("recording-events", "recording_event_index", "event_time desc, id", "id", "recording_session_id", "trace_id", "span_id", "protocol"),
-            resource("datasets", "dataset_version", "created_at desc, id", "id", "dataset_id", "source_session_id", "retention_policy"),
-            selectedResource("datasources", "datasource_registration",
-                    "id, application_id, environment_id, datasource_type, name, status, created_by, created_at, updated_at",
-                    "updated_at desc, id", "id", "name", "datasource_type", "status"),
-            resource("extraction-templates", "extraction_template", "updated_at desc, id", "id", "name", "datasource_id", "status"),
-            resource("extraction-tasks", "extraction_task", "updated_at desc, id", "id", "template_id", "dataset_id", "status"),
-            resource("extraction-executions", "extraction_execution", "started_at desc, id", "id", "extraction_task_id", "status"),
-            resource("extraction-results", "extraction_result", "created_at desc, id", "id", "extraction_task_id", "dataset_version_id", "result_type"),
-            resource("replay-plans", "replay_plan", "updated_at desc, id", "id", "dataset_id", "target_environment", "target_application", "status"),
-            resource("replay-executions", "replay_execution", "updated_at desc, id", "id", "replay_plan_id", "status"),
-            resource("replay-batches", "replay_batch", "started_at desc, id", "id", "replay_execution_id", "status"),
-            resource("replay-invocation-results", "replay_invocation_result", "created_at desc, id", "id", "replay_batch_id", "status"),
-            resource("comparison-results", "comparison_result", "created_at desc, id", "id", "replay_invocation_result_id", "status"),
-            resource("approvals", "approval_request", "updated_at desc, id", "id", "subject_type", "subject_id", "requester", "status"),
-            resource("audits", "audit_record", "sequence desc", "id", "actor", "action", "resource_type", "resource_id"),
-            resource("outbox", "outbox_event", "created_at desc, id", "id", "aggregate_type", "aggregate_id", "event_type", "status"),
-            resource("worker-artifacts", "worker_artifact", "created_at desc, id", "id", "worker_type", "owner_type", "owner_id", "artifact_type"),
             selectedResource("tokens", "platform_access_token",
                     "id, subject_type, subject_id, display_name, status, created_by, created_at, expires_at, last_used_at, revoked_at",
                     "created_at desc, id", "id", "subject_type", "subject_id", "display_name", "status")
     );
 
     private final JdbcTemplate jdbcTemplate;
+    private final RuleLedgerQueryMapper ruleLedgerQueryMapper;
 
-    public PlatformQueryService(JdbcTemplate jdbcTemplate) {
+    public PlatformQueryService(JdbcTemplate jdbcTemplate, RuleLedgerQueryMapper ruleLedgerQueryMapper) {
         this.jdbcTemplate = jdbcTemplate;
+        this.ruleLedgerQueryMapper = ruleLedgerQueryMapper;
     }
 
     public Map<String, Object> page(String resource, int requestedPage, int requestedSize, String query) {
-        ResourceDefinition definition = definition(resource);
         int page = Math.max(0, requestedPage);
         int size = Math.min(200, Math.max(1, requestedSize));
         String search = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        if ("rules".equals(resource)) {
+            List<Map<String, Object>> items = normalize(ruleLedgerQueryMapper.pageRules(size, page * size, search));
+            long total = ruleLedgerQueryMapper.countRules(search);
+            return Map.of("items", items, "page", page, "size", size, "total", total);
+        }
+
+        ResourceDefinition definition = definition(resource);
         String where = "";
         Object[] args;
         if (search.isEmpty()) {
@@ -119,6 +153,16 @@ public final class PlatformQueryService {
     }
 
     public Map<String, Object> detail(String resource, String id) {
+        if ("rules".equals(resource)) {
+            Map<String, Object> rule = ruleLedgerQueryMapper.ruleDetail(id);
+            if (rule == null) {
+                throw PlatformException.notFound(resource, id);
+            }
+            Map<String, Object> result = new LinkedHashMap<>(normalizeRow(rule));
+            result.put("allowed_actions", allowedActions(resource, String.valueOf(result.getOrDefault("status", ""))));
+            return result;
+        }
+
         ResourceDefinition definition = definition(resource);
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "select " + definition.selectColumns() + " from " + definition.table() + " where id = ?", id);
@@ -126,28 +170,49 @@ public final class PlatformQueryService {
             throw PlatformException.notFound(resource, id);
         }
         Map<String, Object> result = new LinkedHashMap<>(normalizeRow(rows.get(0)));
+        if ("instances".equals(resource)) {
+            enrichInstanceAgent(result, id);
+        }
         result.put("allowed_actions", allowedActions(resource, String.valueOf(result.getOrDefault("status", ""))));
         return result;
     }
 
+    private void enrichInstanceAgent(Map<String, Object> result, String instanceId) {
+        List<Map<String, Object>> agents = normalize(jdbcTemplate.queryForList("""
+                select id, instance_id, sidecar_id, status, agent_version, bootstrap_version,
+                       listen_host, listen_port, capabilities_json, last_heartbeat_at,
+                       lease_expires_at, created_at, updated_at
+                  from agent_instance
+                 where instance_id = ?
+                 order by last_heartbeat_at desc nulls last, updated_at desc, id
+                 limit 1
+                """, instanceId));
+        result.put("agent", agents.isEmpty() ? null : agents.get(0));
+        List<Map<String, Object>> executors = normalize(jdbcTemplate.queryForList("""
+                select ae.id,
+                       ae.executor_type,
+                       ae.hostname,
+                       ae.endpoint,
+                       ae.status,
+                       ae.executor_version,
+                       aet.process_id,
+                       aet.agent_jar,
+                       aet.status as target_status,
+                       aet.last_seen_at
+                  from attach_executor_target aet
+                  join attach_executor ae on ae.id = aet.executor_id
+                 where aet.instance_id = ?
+                 order by ae.last_heartbeat_at desc nulls last, ae.updated_at desc, ae.id
+                 limit 1
+                """, instanceId));
+        result.put("attach_executor", executors.isEmpty() ? null : executors.get(0));
+    }
+
     public Map<String, Object> ruleDetail(String id) {
         Map<String, Object> rule = detail("rules", id);
-        List<Map<String, Object>> versions = normalize(jdbcTemplate.queryForList(
-                "select * from rule_version where rule_id = ? order by version desc", id));
-        List<Map<String, Object>> targets = normalize(jdbcTemplate.queryForList("""
-                select rt.*
-                  from rule_target rt
-                  join rule_version rv on rv.id = rt.rule_version_id
-                 where rv.rule_id = ?
-                 order by rv.version desc, rt.created_at, rt.id
-                """, id));
-        List<Map<String, Object>> capabilities = normalize(jdbcTemplate.queryForList("""
-                select rc.*
-                  from rule_capability rc
-                  join rule_version rv on rv.id = rc.rule_version_id
-                 where rv.rule_id = ?
-                 order by rv.version desc, rc.capability
-                """, id));
+        List<Map<String, Object>> versions = normalize(ruleLedgerQueryMapper.ruleVersions(id));
+        List<Map<String, Object>> targets = normalize(ruleLedgerQueryMapper.ruleTargets(id));
+        List<Map<String, Object>> capabilities = normalize(ruleLedgerQueryMapper.ruleCapabilities(id));
         return Map.of("rule", rule, "versions", versions, "targets", targets, "capabilities", capabilities);
     }
 
@@ -157,12 +222,33 @@ public final class PlatformQueryService {
         Map<String, Object> counts = new LinkedHashMap<>();
         counts.put("agentsTotal", count("agent_instance"));
         counts.put("agentsOnline", countWhere("agent_instance", "status in ('ACTIVE', 'ONLINE')"));
+        counts.put("instancesTotal", count("instance"));
+        counts.put("injectableInstancesOnline", countQuery("""
+                select count(*)
+                  from instance i
+                 where i.status in ('ACTIVE', 'ONLINE')
+                   and (
+                       exists (
+                           select 1
+                             from agent_instance a
+                            where a.instance_id = i.id
+                              and a.status in ('ACTIVE', 'ONLINE')
+                              and (a.lease_expires_at is null or a.lease_expires_at > now())
+                       )
+                       or exists (
+                           select 1
+                             from attach_executor_target t
+                             join attach_executor e on e.id = t.executor_id
+                            where t.instance_id = i.id
+                              and t.status in ('ACTIVE', 'ONLINE')
+                              and e.status in ('ACTIVE', 'ONLINE')
+                              and (e.lease_expires_at is null or e.lease_expires_at > now())
+                       )
+                   )
+                """));
         counts.put("rulesTotal", count("rule"));
         counts.put("rulesActive", countWhere("rule", "status in ('ACTIVE', 'PUBLISHED')"));
-        counts.put("rolloutsRunning", countWhere("operation_plan", "status in ('SCHEDULED', 'RUNNING')"));
-        counts.put("approvalsPending", countWhere("approval_request", "status = 'WAITING_APPROVAL'"));
-        counts.put("recordingsRunning", countWhere("recording_session", "status = 'RECORDING'"));
-        counts.put("workerArtifacts", count("worker_artifact"));
+        counts.put("rolloutsRunning", countWhere("operation_plan", "status = 'RUNNING'"));
         Map<String, Long> trendCounts = new TreeMap<>();
         normalize(jdbcTemplate.queryForList("select * from audit_record")).forEach(row -> {
             String label = String.valueOf(row.getOrDefault("result", "UNKNOWN"));
@@ -212,56 +298,14 @@ public final class PlatformQueryService {
     private List<String> allowedActions(String resource, String status) {
         return switch (resource) {
             case "operation-plans" -> switch (status) {
-                case "DRAFT" -> List.of("WAITING_APPROVAL", "CANCELLED");
-                case "WAITING_APPROVAL" -> List.of("APPROVED", "CANCELLED", "EXPIRED");
-                case "APPROVED" -> List.of("SCHEDULED", "RUNNING", "CANCELLED");
-                case "SCHEDULED" -> List.of("RUNNING", "CANCELLED", "EXPIRED");
-                case "RUNNING" -> List.of("OBSERVING", "SUCCEEDED", "PARTIALLY_SUCCEEDED",
-                        "FAILED", "ROLLING_BACK", "CANCELLED");
-                case "OBSERVING" -> List.of("SUCCEEDED", "PARTIALLY_SUCCEEDED", "FAILED", "ROLLING_BACK");
-                case "PARTIALLY_SUCCEEDED", "FAILED" -> List.of("ROLLING_BACK", "CANCELLED");
-                case "ROLLING_BACK" -> List.of("ROLLED_BACK", "FAILED");
+                case "DRAFT" -> List.of("RUNNING");
                 case "SUCCEEDED" -> List.of("UNLOAD");
+                case "FAILED" -> List.of("UNLOAD");
                 default -> List.of();
             };
             case "rollout-executions" -> "SUCCEEDED".equals(status)
                     ? List.of("UNLOAD_PLAN")
                     : List.of();
-            case "recording-sessions" -> switch (status) {
-                case "DRAFT" -> List.of("WAITING_APPROVAL", "CANCELLED");
-                case "WAITING_APPROVAL" -> List.of("APPROVED", "CANCELLED", "EXPIRED");
-                case "APPROVED" -> List.of("SCHEDULED", "RECORDING", "CANCELLED", "EXPIRED");
-                case "SCHEDULED" -> List.of("RECORDING", "CANCELLED", "EXPIRED");
-                case "RECORDING" -> List.of("PAUSED", "STOPPING", "COMPLETED", "FAILED", "EXPIRED");
-                case "PAUSED" -> List.of("RECORDING", "STOPPING", "COMPLETED", "FAILED", "EXPIRED", "CANCELLED");
-                case "STOPPING" -> List.of("COMPLETED", "FAILED");
-                default -> List.of();
-            };
-            case "extraction-tasks" -> switch (status) {
-                case "DRAFT" -> List.of("QUEUED", "CANCELLED");
-                case "QUEUED" -> List.of("RUNNING", "CANCELLED");
-                case "RUNNING" -> List.of("SUCCEEDED", "FAILED", "CANCELLED");
-                case "FAILED" -> List.of("QUEUED", "CANCELLED");
-                default -> List.of();
-            };
-            case "replay-plans" -> switch (status) {
-                case "DRAFT" -> List.of("WAITING_APPROVAL", "CANCELLED");
-                case "WAITING_APPROVAL" -> List.of("APPROVED", "CANCELLED", "EXPIRED");
-                case "APPROVED" -> List.of("SCHEDULED", "RUNNING", "CANCELLED", "EXPIRED");
-                case "SCHEDULED" -> List.of("RUNNING", "CANCELLED", "EXPIRED");
-                case "RUNNING" -> List.of("OBSERVING", "SUCCEEDED", "PARTIALLY_SUCCEEDED", "FAILED", "ROLLING_BACK");
-                case "OBSERVING" -> List.of("SUCCEEDED", "PARTIALLY_SUCCEEDED", "FAILED", "ROLLING_BACK");
-                case "PARTIALLY_SUCCEEDED", "FAILED" -> List.of("ROLLING_BACK");
-                case "ROLLING_BACK" -> List.of("ROLLED_BACK", "FAILED");
-                default -> List.of();
-            };
-            case "replay-executions" -> switch (status) {
-                case "QUEUED" -> List.of("RUNNING", "CANCELLED");
-                case "RUNNING" -> List.of("PAUSED", "SUCCEEDED", "FAILED", "CANCELLED");
-                case "PAUSED" -> List.of("RUNNING", "CANCELLED");
-                case "FAILED" -> List.of("QUEUED", "CANCELLED");
-                default -> List.of();
-            };
             default -> List.of();
         };
     }
@@ -281,6 +325,11 @@ public final class PlatformQueryService {
 
     private long countWhere(String table, String where) {
         Long value = jdbcTemplate.queryForObject("select count(*) from " + table + " where " + where, Long.class);
+        return value == null ? 0 : value;
+    }
+
+    private long countQuery(String sql) {
+        Long value = jdbcTemplate.queryForObject(sql, Long.class);
         return value == null ? 0 : value;
     }
 

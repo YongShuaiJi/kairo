@@ -1,8 +1,10 @@
 package com.example.runtimemock.platform.api;
 
 import com.example.runtimemock.platform.command.AgentCommandService;
-import com.example.runtimemock.platform.recording.RecordingSessionCommandService;
+import com.example.runtimemock.platform.attach.AttachExecutorCommandService;
+import com.example.runtimemock.platform.attach.PlatformAgentLifecycleService;
 import com.example.runtimemock.platform.rollout.RuleUnloadService;
+import com.example.runtimemock.platform.service.PlatformException;
 import com.example.runtimemock.platform.service.PlatformJdbcService;
 import com.example.runtimemock.platform.service.PlatformMaintenanceService;
 import com.example.runtimemock.platform.service.RequestContext;
@@ -10,7 +12,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -29,20 +33,23 @@ public final class PlatformController {
 
     private final PlatformJdbcService service;
     private final AgentCommandService agentCommandService;
+    private final AttachExecutorCommandService attachExecutorCommandService;
     private final PlatformMaintenanceService maintenanceService;
-    private final RecordingSessionCommandService recordingSessionCommandService;
+    private final PlatformAgentLifecycleService agentLifecycleService;
     private final RuleUnloadService ruleUnloadService;
     private final RequestContextFactory requestContextFactory;
 
     public PlatformController(PlatformJdbcService service, AgentCommandService agentCommandService,
+                              AttachExecutorCommandService attachExecutorCommandService,
                               PlatformMaintenanceService maintenanceService,
-                              RecordingSessionCommandService recordingSessionCommandService,
+                              PlatformAgentLifecycleService agentLifecycleService,
                               RuleUnloadService ruleUnloadService,
                               RequestContextFactory requestContextFactory) {
         this.service = service;
         this.agentCommandService = agentCommandService;
+        this.attachExecutorCommandService = attachExecutorCommandService;
         this.maintenanceService = maintenanceService;
-        this.recordingSessionCommandService = recordingSessionCommandService;
+        this.agentLifecycleService = agentLifecycleService;
         this.ruleUnloadService = ruleUnloadService;
         this.requestContextFactory = requestContextFactory;
     }
@@ -88,11 +95,67 @@ public final class PlatformController {
         return service.registerAgentRuntime(context(httpRequest), request);
     }
 
+    @PostMapping("/attach-sidecars/self")
+    @ResponseStatus(HttpStatus.CREATED)
+    public Map<String, Object> registerAttachSidecar(HttpServletRequest httpRequest,
+                                                     @Valid @RequestBody Map<String, Object> request) {
+        return service.registerAttachSidecar(context(httpRequest), request);
+    }
+
+    @PostMapping("/attach-executors/{id}/heartbeat")
+    public Map<String, Object> heartbeatAttachExecutor(@PathVariable String id,
+                                                       HttpServletRequest httpRequest,
+                                                       @Valid @RequestBody Map<String, Object> request) {
+        return attachExecutorCommandService.heartbeat(id, context(httpRequest), request);
+    }
+
+    @PostMapping("/attach-executors/{id}/commands/next")
+    public Map<String, Object> pollNextAttachExecutorCommand(@PathVariable String id,
+                                                             HttpServletRequest httpRequest,
+                                                             @Valid @RequestBody Map<String, Object> request) {
+        return attachExecutorCommandService.pollNext(id, context(httpRequest), request);
+    }
+
+    @PostMapping("/attach-executor-commands/{id}/ack")
+    public Map<String, Object> ackAttachExecutorCommand(@PathVariable String id,
+                                                        HttpServletRequest httpRequest,
+                                                        @Valid @RequestBody Map<String, Object> request) {
+        return attachExecutorCommandService.ack(id, context(httpRequest), request);
+    }
+
     @PostMapping("/instances/{id}/environment")
     public Map<String, Object> assignInstanceEnvironment(@PathVariable String id,
                                                          HttpServletRequest httpRequest,
                                                          @Valid @RequestBody Map<String, Object> request) {
         return service.assignInstanceEnvironment(id, context(httpRequest), request);
+    }
+
+    @PatchMapping("/instances/{id}/nickname")
+    public Map<String, Object> updateInstanceNickname(@PathVariable String id,
+                                                      HttpServletRequest httpRequest,
+                                                      @Valid @RequestBody Map<String, Object> request) {
+        return service.updateInstanceNickname(id, context(httpRequest), request);
+    }
+
+    @PostMapping("/instances/{id}/agent/attach")
+    public Map<String, Object> attachAgent(@PathVariable String id,
+                                           HttpServletRequest httpRequest,
+                                           @Valid @RequestBody Map<String, Object> request) {
+        return agentLifecycleService.attach(context(httpRequest), id, request);
+    }
+
+    @PostMapping("/instances/{id}/agent/deactivate")
+    public Map<String, Object> deactivateAgent(@PathVariable String id,
+                                               HttpServletRequest httpRequest,
+                                               @Valid @RequestBody Map<String, Object> request) {
+        return agentLifecycleService.deactivate(context(httpRequest), id, request);
+    }
+
+    @PostMapping("/instances/{id}/agent/reload")
+    public Map<String, Object> reloadAgent(@PathVariable String id,
+                                           HttpServletRequest httpRequest,
+                                           @Valid @RequestBody Map<String, Object> request) {
+        return agentLifecycleService.reload(context(httpRequest), id, request);
     }
 
     @GetMapping("/sidecars")
@@ -165,6 +228,42 @@ public final class PlatformController {
         return service.createRule(context(httpRequest), request);
     }
 
+    @DeleteMapping("/rules/{id}")
+    public Map<String, Object> deleteRule(@PathVariable String id,
+                                          HttpServletRequest httpRequest) {
+        throw PlatformException.methodNotAllowed("RULE_MANUAL_DELETE_DISABLED",
+                "规则不支持手动删除，请先停用规则，系统将在保留期结束后自动删除");
+    }
+
+    @PostMapping("/rules/{id}/disable")
+    public Map<String, Object> disableRule(@PathVariable String id,
+                                           HttpServletRequest httpRequest) {
+        return service.disableRule(id, context(httpRequest));
+    }
+
+    @PostMapping("/rules/{id}/enable")
+    public Map<String, Object> enableRule(@PathVariable String id,
+                                          HttpServletRequest httpRequest) {
+        return service.enableRule(id, context(httpRequest));
+    }
+
+    @PostMapping("/rules/{id}/versions/{version}/disable")
+    public Map<String, Object> disableRuleVersion(@PathVariable String id,
+                                                  @PathVariable long version,
+                                                  HttpServletRequest httpRequest) {
+        RequestContext context = context(httpRequest);
+        Map<String, Object> unload = ruleUnloadService.unloadRuleForDeletion(id, version, context);
+        Map<String, Object> ruleVersion = service.disableRuleVersion(id, version, context);
+        return Map.of("unload", unload, "ruleVersion", ruleVersion);
+    }
+
+    @PostMapping("/rules/{id}/versions/{version}/enable")
+    public Map<String, Object> enableRuleVersion(@PathVariable String id,
+                                                 @PathVariable long version,
+                                                 HttpServletRequest httpRequest) {
+        return service.enableRuleVersion(id, version, context(httpRequest));
+    }
+
     @GetMapping("/rule-versions")
     public List<Map<String, Object>> ruleVersions() {
         return service.list("rule_version", "created_at, id");
@@ -176,6 +275,22 @@ public final class PlatformController {
                                                  HttpServletRequest httpRequest,
                                                  @Valid @RequestBody Map<String, Object> request) {
         return service.createRuleVersion(id, context(httpRequest), request);
+    }
+
+    @DeleteMapping("/rules/{id}/versions/{version}")
+    public Map<String, Object> deleteRuleVersion(@PathVariable String id,
+                                                 @PathVariable long version,
+                                                 HttpServletRequest httpRequest) {
+        throw PlatformException.methodNotAllowed("RULE_VERSION_MANUAL_DELETE_DISABLED",
+                "规则版本不支持手动删除，请停用规则，系统将在保留期结束后自动删除");
+    }
+
+    @PostMapping("/rules/{id}/versions/delete")
+    public Map<String, Object> deleteRuleVersions(@PathVariable String id,
+                                                  HttpServletRequest httpRequest,
+                                                  @Valid @RequestBody Map<String, Object> request) {
+        throw PlatformException.methodNotAllowed("RULE_VERSION_MANUAL_DELETE_DISABLED",
+                "规则版本不支持手动删除，请停用规则，系统将在保留期结束后自动删除");
     }
 
     @GetMapping("/operation-plans")
@@ -207,202 +322,6 @@ public final class PlatformController {
     @GetMapping("/rollout-executions")
     public List<Map<String, Object>> rolloutExecutions() {
         return service.list("rollout_instance_execution", "updated_at, id");
-    }
-
-    @GetMapping("/recording-rules")
-    public List<Map<String, Object>> recordingRules() {
-        return service.list("recording_rule", "created_at, id");
-    }
-
-    @PostMapping("/recording-rules")
-    @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> createRecordingRule(HttpServletRequest httpRequest,
-                                                   @Valid @RequestBody Map<String, Object> request) {
-        return service.createRecordingRule(context(httpRequest), request);
-    }
-
-    @GetMapping("/recording-rule-versions")
-    public List<Map<String, Object>> recordingRuleVersions() {
-        return service.list("recording_rule_version", "created_at, id");
-    }
-
-    @PostMapping("/recording-rules/{id}/versions")
-    @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> createRecordingRuleVersion(@PathVariable String id,
-                                                          HttpServletRequest httpRequest,
-                                                          @Valid @RequestBody Map<String, Object> request) {
-        return service.createRecordingRuleVersion(id, context(httpRequest), request);
-    }
-
-    @GetMapping("/datasources")
-    public List<Map<String, Object>> datasources() {
-        return service.listDatasources();
-    }
-
-    @PostMapping("/datasources")
-    @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> createDatasource(HttpServletRequest httpRequest,
-                                                @Valid @RequestBody Map<String, Object> request) {
-        return service.createDatasource(context(httpRequest), request);
-    }
-
-    @GetMapping("/extraction-templates")
-    public List<Map<String, Object>> extractionTemplates() {
-        return service.list("extraction_template", "created_at, id");
-    }
-
-    @PostMapping("/extraction-templates")
-    @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> createExtractionTemplate(HttpServletRequest httpRequest,
-                                                        @Valid @RequestBody Map<String, Object> request) {
-        return service.createExtractionTemplate(context(httpRequest), request);
-    }
-
-    @GetMapping("/extraction-tasks")
-    public List<Map<String, Object>> extractionTasks() {
-        return service.list("extraction_task", "created_at, id");
-    }
-
-    @GetMapping("/extraction-executions")
-    public List<Map<String, Object>> extractionExecutions() {
-        return service.list("extraction_execution", "started_at, id");
-    }
-
-    @GetMapping("/extraction-results")
-    public List<Map<String, Object>> extractionResults() {
-        return service.list("extraction_result", "created_at, id");
-    }
-
-    @PostMapping("/extraction-tasks")
-    @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> createExtractionTask(HttpServletRequest httpRequest,
-                                                    @Valid @RequestBody Map<String, Object> request) {
-        return service.createExtractionTask(context(httpRequest), request);
-    }
-
-    @PostMapping("/extraction-tasks/{id}/transition")
-    public Map<String, Object> transitionExtractionTask(@PathVariable String id,
-                                                        HttpServletRequest httpRequest,
-                                                        @Valid @RequestBody Map<String, Object> request) {
-        return service.transitionExtractionTask(id, context(httpRequest), request);
-    }
-
-    @GetMapping("/replay-executions")
-    public List<Map<String, Object>> replayExecutions() {
-        return service.list("replay_execution", "created_at, id");
-    }
-
-    @GetMapping("/replay-batches")
-    public List<Map<String, Object>> replayBatches() {
-        return service.list("replay_batch", "started_at, id");
-    }
-
-    @GetMapping("/replay-invocation-results")
-    public List<Map<String, Object>> replayInvocationResults() {
-        return service.list("replay_invocation_result", "created_at, id");
-    }
-
-    @GetMapping("/comparison-results")
-    public List<Map<String, Object>> comparisonResults() {
-        return service.list("comparison_result", "created_at, id");
-    }
-
-    @PostMapping("/replay-executions")
-    @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> createReplayExecution(HttpServletRequest httpRequest,
-                                                     @Valid @RequestBody Map<String, Object> request) {
-        return service.createReplayExecution(context(httpRequest), request);
-    }
-
-    @PostMapping("/replay-executions/{id}/transition")
-    public Map<String, Object> transitionReplayExecution(@PathVariable String id,
-                                                         HttpServletRequest httpRequest,
-                                                         @Valid @RequestBody Map<String, Object> request) {
-        return service.transitionReplayExecution(id, context(httpRequest), request);
-    }
-
-    @GetMapping("/recording-sessions")
-    public List<Map<String, Object>> recordingSessions() {
-        return service.list("recording_session", "created_at, id");
-    }
-
-    @PostMapping("/recording-sessions")
-    @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> createRecordingSession(HttpServletRequest httpRequest,
-                                                      @Valid @RequestBody Map<String, Object> request) {
-        return service.createRecordingSession(context(httpRequest), request);
-    }
-
-    @PostMapping("/recording-sessions/{id}/transition")
-    public Map<String, Object> transitionRecordingSession(@PathVariable String id,
-                                                          HttpServletRequest httpRequest,
-                                                          @Valid @RequestBody Map<String, Object> request) {
-        return recordingSessionCommandService.transition(id, context(httpRequest), request);
-    }
-
-    @GetMapping("/datasets")
-    public List<Map<String, Object>> datasets() {
-        return service.list("dataset_version", "created_at, id");
-    }
-
-    @PostMapping("/datasets")
-    @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> createDataset(HttpServletRequest httpRequest,
-                                             @Valid @RequestBody Map<String, Object> request) {
-        return service.createDatasetVersion(context(httpRequest), request);
-    }
-
-    @GetMapping("/replay-plans")
-    public List<Map<String, Object>> replayPlans() {
-        return service.list("replay_plan", "created_at, id");
-    }
-
-    @PostMapping("/replay-plans")
-    @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> createReplayPlan(HttpServletRequest httpRequest,
-                                                @Valid @RequestBody Map<String, Object> request) {
-        return service.createReplayPlan(context(httpRequest), request);
-    }
-
-    @PostMapping("/replay-plans/{id}/transition")
-    public Map<String, Object> transitionReplayPlan(@PathVariable String id,
-                                                    HttpServletRequest httpRequest,
-                                                    @Valid @RequestBody Map<String, Object> request) {
-        return service.transitionReplayPlan(id, context(httpRequest), request);
-    }
-
-    @GetMapping("/approvals")
-    public List<Map<String, Object>> approvals() {
-        return service.list("approval_request", "created_at, id");
-    }
-
-    @PostMapping("/approvals")
-    @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> createApproval(HttpServletRequest httpRequest,
-                                              @Valid @RequestBody Map<String, Object> request) {
-        return service.createApproval(context(httpRequest), request);
-    }
-
-    @PostMapping("/approvals/{id}/decisions")
-    public Map<String, Object> decideApproval(@PathVariable String id,
-                                              HttpServletRequest httpRequest,
-                                              @Valid @RequestBody Map<String, Object> request) {
-        return service.decideApproval(id, context(httpRequest), request);
-    }
-
-    @GetMapping("/audits")
-    public List<Map<String, Object>> audits() {
-        return service.audits();
-    }
-
-    @GetMapping("/outbox")
-    public List<Map<String, Object>> outbox() {
-        return service.outbox();
-    }
-
-    @GetMapping("/worker-artifacts")
-    public List<Map<String, Object>> workerArtifacts() {
-        return service.list("worker_artifact", "created_at, id");
     }
 
     private RequestContext context(HttpServletRequest request) {

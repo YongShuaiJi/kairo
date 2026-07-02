@@ -167,6 +167,15 @@ public class AgentCommandService {
                 ((Number) updated.get("attempts")).longValue(), current, updated, resultStatus,
                 optionalString(request, "reason", "ack agent command"),
                 Map.of("agentId", updated.get("agent_id"), "commandType", updated.get("command_type")));
+        if ("STOP_AGENT".equals(String.valueOf(updated.get("command_type")))) {
+            jdbcTemplate.update("""
+                    update agent_instance
+                       set status = ?,
+                           updated_at = ?
+                     where id = ?
+                    """, "ACKED".equals(resultStatus) ? "DISABLED" : "ACTIVE",
+                    timestamp(now), updated.get("agent_id"));
+        }
         advanceRolloutFromCommand(context, commandId, "ACKED".equals(resultStatus), errorMessage, result);
         advanceRollbackFromCommand(context, updated);
         return updated;
@@ -204,11 +213,11 @@ public class AgentCommandService {
             return;
         }
         String operationPlanId = String.valueOf(rollback.get("operation_plan_id"));
-        String operationStatus = succeeded ? "ROLLED_BACK" : "FAILED";
+        String operationStatus = succeeded ? "UNLOADED" : "FAILED";
         jdbcTemplate.update("""
                 update operation_plan
                    set status = ?, version = version + 1, updated_by = ?, updated_at = ?
-                 where id = ? and status = 'ROLLING_BACK'
+                 where id = ? and status = 'UNLOADING'
                 """, operationStatus, context.actor(), timestamp(now), operationPlanId);
         if (succeeded) {
             jdbcTemplate.update("""
@@ -290,8 +299,8 @@ public class AgentCommandService {
         }
         boolean allSucceeded = executions.stream()
                 .allMatch(row -> "SUCCEEDED".equals(String.valueOf(row.get("status"))));
-        if (!allSucceeded && automaticRollbackEnabled(operation)) {
-            startAutomaticRollback(context, operation, executions);
+        if (!allSucceeded && automaticUnloadEnabled(operation)) {
+            startAutomaticUnload(context, operation, executions);
             return;
         }
         String newStatus = allSucceeded ? "SUCCEEDED" : "FAILED";
@@ -351,19 +360,22 @@ public class AgentCommandService {
         return "SUCCEEDED".equals(status) || "FAILED".equals(status) || "CANCELLED".equals(status);
     }
 
-    private boolean automaticRollbackEnabled(Map<String, Object> operation) {
+    private boolean automaticUnloadEnabled(Map<String, Object> operation) {
         Map<String, Object> strategy =
                 PlatformJson.readMap(String.valueOf(operation.get("strategy_json")));
-        return Boolean.parseBoolean(String.valueOf(strategy.getOrDefault("automaticRollback", true)));
+        Object value = strategy.containsKey("automaticUnload")
+                ? strategy.get("automaticUnload")
+                : strategy.getOrDefault("automaticRollback", true);
+        return Boolean.parseBoolean(String.valueOf(value));
     }
 
-    private void startAutomaticRollback(RequestContext context, Map<String, Object> operation,
-                                        List<Map<String, Object>> executions) {
+    private void startAutomaticUnload(RequestContext context, Map<String, Object> operation,
+                                      List<Map<String, Object>> executions) {
         String operationPlanId = String.valueOf(operation.get("id"));
         Instant now = clock.instant();
         int transitioned = jdbcTemplate.update("""
                 update operation_plan
-                   set status = 'ROLLING_BACK', version = version + 1, updated_by = ?, updated_at = ?
+                   set status = 'UNLOADING', version = version + 1, updated_by = ?, updated_at = ?
                  where id = ? and status = 'RUNNING' and version = ?
                 """, context.actor(), timestamp(now), operationPlanId,
                 ((Number) operation.get("version")).longValue());
@@ -376,7 +388,7 @@ public class AgentCommandService {
                     id, operation_plan_id, rollback_type, status, reason,
                     created_by, created_at, finished_at
                 ) values (?, ?, 'RESET_ALL', 'DISPATCHED', ?, ?, ?, null)
-                """, rollbackId, operationPlanId, "实例执行失败后自动恢复",
+                """, rollbackId, operationPlanId, "实例执行失败后自动卸载",
                 context.actor(), timestamp(now));
         List<Map<String, Object>> agents = normalizeRows(jdbcTemplate.queryForList("""
                 select distinct a.*
@@ -392,7 +404,7 @@ public class AgentCommandService {
                     Map.of("commandType", "RESET_ALL",
                             "operationPlanId", operationPlanId,
                             "rollbackExecutionId", rollbackId),
-                    "rollback:" + operationPlanId + ":" + agent.get("id"), 10, now);
+                    "unload:" + operationPlanId + ":" + agent.get("id"), 10, now);
         }
         if (agents.isEmpty()) {
             jdbcTemplate.update("""
@@ -402,15 +414,15 @@ public class AgentCommandService {
                     """, timestamp(now), rollbackId);
             jdbcTemplate.update("""
                     update operation_plan
-                       set status = 'ROLLED_BACK', version = version + 1, updated_by = ?, updated_at = ?
-                     where id = ? and status = 'ROLLING_BACK'
+                       set status = 'UNLOADED', version = version + 1, updated_by = ?, updated_at = ?
+                     where id = ? and status = 'UNLOADING'
                     """, context.actor(), timestamp(now), operationPlanId);
         }
         Map<String, Object> current = normalizeRow(jdbcTemplate.queryForMap(
                 "select * from operation_plan where id = ?", operationPlanId));
-        eventWriter.recordEvent(context, "operation_plan.auto_rollback", "operation_plan",
+        eventWriter.recordEvent(context, "operation_plan.auto_unload", "operation_plan",
                 operationPlanId, ((Number) current.get("version")).longValue(),
-                operation, current, "ROLLING_BACK", "实例执行失败，已启动自动恢复",
+                operation, current, "UNLOADING", "实例执行失败，已启动自动卸载",
                 Map.of("rollbackExecutionId", rollbackId,
                         "executionCount", executions.size(),
                         "commandCount", agents.size()));

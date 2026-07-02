@@ -26,11 +26,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "spring.datasource.driver-class-name=org.h2.Driver",
         "runtime-mock.platform.auth.mode=local-token",
         "runtime-mock.platform.auth.bootstrap-token=bootstrap-test-token",
-        "runtime-mock.platform.worker.enabled=false",
-        "runtime-mock.platform.rollout.scheduler.enabled=false",
-        "runtime-mock.platform.extraction.worker.enabled=false",
-        "runtime-mock.platform.replay.worker.enabled=false",
-        "runtime-mock.platform.kafka.enabled=false"
+        "runtime-mock.platform.rollout.scheduler.enabled=false"
 })
 @AutoConfigureMockMvc
 class PlatformLocalTokenIntegrationTest {

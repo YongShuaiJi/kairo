@@ -23,13 +23,15 @@ final class PlatformCommandPoller implements AutoCloseable {
 
     private final AgentRuntime runtime;
     private final AgentLaunchConfig config;
+    private final Runnable shutdownCallback;
     private final HttpClient httpClient;
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private final ScheduledExecutorService executor;
 
-    PlatformCommandPoller(AgentRuntime runtime, AgentLaunchConfig config) {
+    PlatformCommandPoller(AgentRuntime runtime, AgentLaunchConfig config, Runnable shutdownCallback) {
         this.runtime = runtime;
         this.config = config;
+        this.shutdownCallback = shutdownCallback;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .build();
@@ -99,6 +101,12 @@ final class PlatformCommandPoller implements AutoCloseable {
             case "RESET_ALL" -> {
                 runtime.resetAll("platform");
                 yield Map.of("resetAll", true);
+            }
+            case "STOP_AGENT" -> {
+                runtime.resetAll("platform");
+                runtime.disableAll(true);
+                scheduleShutdown();
+                yield Map.of("stopping", true, "restoredBytecode", true);
             }
             case "START_RECORDING" -> startRecording(payload);
             case "STOP_RECORDING" -> stopRecording(payload);
@@ -173,6 +181,19 @@ final class PlatformCommandPoller implements AutoCloseable {
         String sessionId = requiredText(payload, "sessionId");
         var registration = runtime.stopRecording(sessionId, "platform");
         return Map.of("sessionId", sessionId, "stopped", registration != null);
+    }
+
+    private void scheduleShutdown() {
+        Thread thread = new Thread(() -> {
+            try {
+                Thread.sleep(500L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            shutdownCallback.run();
+        }, "runtime-mock-agent-stop");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     private String requiredText(JsonNode node, String name) {

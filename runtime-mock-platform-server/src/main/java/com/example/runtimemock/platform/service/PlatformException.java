@@ -38,6 +38,10 @@ public final class PlatformException extends RuntimeException {
         return new PlatformException(400, code, message, false, Map.of());
     }
 
+    public static PlatformException methodNotAllowed(String code, String message) {
+        return new PlatformException(405, code, message, false, Map.of());
+    }
+
     public static PlatformException forbidden(String capability) {
         return new PlatformException(403, "FORBIDDEN",
                 "当前身份缺少所需权限：" + capability, false, Map.of("capability", capability));
@@ -106,7 +110,7 @@ public final class PlatformException extends RuntimeException {
             case "INVALID_ROLLOUT_RESOURCE" -> "发布资源与所选应用或环境不匹配";
             case "INVALID_ROLLOUT_VERSION" -> "所选资源版本不存在或不可发布";
             case "INVALID_ENVIRONMENT" -> "环境不存在或不属于所选应用";
-            case "INVALID_ENVIRONMENT_TYPE" -> "环境类型只能是 DEV、SIT、UAT 或 PROD";
+            case "INVALID_ENVIRONMENT_TYPE" -> "环境类型只能是 dev、sit、uat 或 prod";
             default -> "请求处理失败（" + code + "）";
         };
     }

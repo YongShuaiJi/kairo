@@ -22,19 +22,26 @@ public final class RuntimeMockAgent {
     }
 
     public static void agentmain(String agentArgs, Instrumentation instrumentation) {
-        start(agentArgs, instrumentation, "agentmain");
+        start(agentArgs, instrumentation, "attach");
     }
 
     private static void start(String agentArgs, Instrumentation instrumentation, String loadMode) {
-        if (coreHandle != null) {
-            return;
-        }
+        AgentArguments arguments = AgentArguments.parse(agentArgs);
+        boolean reload = "true".equalsIgnoreCase(arguments.stringValue("reload", "false"));
         synchronized (RuntimeMockAgent.class) {
             if (coreHandle != null) {
-                return;
+                if (!reload) {
+                    return;
+                }
+                try {
+                    coreHandle.close();
+                } catch (Exception e) {
+                    System.err.println("[runtime-mock] Agent reload failed to stop old core: " + e);
+                } finally {
+                    coreHandle = null;
+                }
             }
             try {
-                AgentArguments arguments = AgentArguments.parse(agentArgs);
                 if (arguments.bootstrapJar() != null) {
                     BootstrapJarInstaller.install(instrumentation, arguments.bootstrapJar());
                 }

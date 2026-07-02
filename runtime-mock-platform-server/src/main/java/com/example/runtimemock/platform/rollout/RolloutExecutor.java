@@ -5,7 +5,7 @@ import com.example.runtimemock.platform.service.PlatformJdbcService;
 import com.example.runtimemock.platform.service.PlatformJson;
 import com.example.runtimemock.platform.service.RequestContext;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -23,8 +23,6 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
-@ConditionalOnProperty(prefix = "runtime-mock.platform",
-        name = {"worker.enabled", "rollout.scheduler.enabled"}, havingValue = "true")
 public class RolloutExecutor {
 
     private final JdbcTemplate jdbcTemplate;
@@ -32,6 +30,9 @@ public class RolloutExecutor {
     private final PlatformJdbcService eventWriter;
     private final Clock clock;
     private final AtomicBoolean running = new AtomicBoolean(false);
+
+    @Value("${runtime-mock.platform.rollout.scheduler.enabled:true}")
+    private boolean schedulerEnabled;
 
     @Autowired
     public RolloutExecutor(JdbcTemplate jdbcTemplate, AgentCommandService commandService,
@@ -50,6 +51,9 @@ public class RolloutExecutor {
     @Scheduled(fixedDelayString = "${runtime-mock.platform.rollout.scheduler.fixed-delay-ms:3000}",
             initialDelayString = "${runtime-mock.platform.rollout.scheduler.fixed-delay-ms:3000}")
     public void scheduledRun() {
+        if (!schedulerEnabled) {
+            return;
+        }
         if (!running.compareAndSet(false, true)) {
             return;
         }
@@ -68,17 +72,13 @@ public class RolloutExecutor {
         List<Map<String, Object>> operations = normalizeRows(jdbcTemplate.queryForList("""
                 select *
                   from operation_plan
-                 where status in ('APPROVED', 'RUNNING')
+                 where status = 'RUNNING'
                  order by updated_at, id
                  limit 50
                 """));
         for (Map<String, Object> candidate : operations) {
-            Map<String, Object> operation = startApprovedOperation(context, candidate);
-            if (operation == null) {
-                continue;
-            }
             operationCount++;
-            RolloutProgress progress = processOperation(context, operation);
+            RolloutProgress progress = processOperation(context, candidate);
             targetCount += progress.targets();
             commandCount += progress.commands();
         }
@@ -87,36 +87,6 @@ public class RolloutExecutor {
                 "targetsCaptured", targetCount,
                 "commandsEnqueued", commandCount
         );
-    }
-
-    private Map<String, Object> startApprovedOperation(RequestContext context,
-                                                       Map<String, Object> operation) {
-        if (!"APPROVED".equals(String.valueOf(operation.get("status")))) {
-            return operation;
-        }
-        Instant now = clock.instant();
-        long currentVersion = ((Number) operation.get("version")).longValue();
-        int updated = jdbcTemplate.update("""
-                update operation_plan
-                   set status = 'RUNNING',
-                       version = version + 1,
-                       updated_by = ?,
-                       updated_at = ?
-                 where id = ?
-                   and status = 'APPROVED'
-                   and version = ?
-                """, context.actor(), timestamp(now), operation.get("id"), currentVersion);
-        if (updated == 0) {
-            return null;
-        }
-        Map<String, Object> runningOperation = normalizeRow(jdbcTemplate.queryForMap(
-                "select * from operation_plan where id = ?", operation.get("id")));
-        eventWriter.recordEvent(context, "operation_plan.execution_started", "operation_plan",
-                String.valueOf(operation.get("id")),
-                ((Number) runningOperation.get("version")).longValue(),
-                operation, runningOperation, "SUCCESS", "已开始向目标实例发布规则",
-                Map.of("targetMode", "ALL_ACTIVE_INSTANCES"));
-        return runningOperation;
     }
 
     private RolloutProgress processOperation(RequestContext context, Map<String, Object> operation) {
@@ -160,14 +130,25 @@ public class RolloutExecutor {
         List<String> requestedInstances = stringList(strategy.get("instanceIds"));
         String operationId = String.valueOf(operation.get("id"));
         List<Map<String, Object>> instances = normalizeRows(jdbcTemplate.queryForList("""
-                select *
-                  from instance
-                 where application_id = ?
-                   and environment_id = ?
-                   and status = 'ACTIVE'
-                   and registration_status = 'ASSIGNED'
-                   and (lease_expires_at is null or lease_expires_at > current_timestamp)
-                 order by created_at, id
+                select i.*,
+                       a.name as application_name,
+                       lower(coalesce(e.type, e.name)) as environment_name,
+                       (
+                           select t.executor_id
+                             from attach_executor_target t
+                            where t.instance_id = i.id
+                            order by t.last_seen_at desc nulls last, t.updated_at desc, t.executor_id
+                            limit 1
+                       ) as attach_executor_id
+                  from instance i
+                  join application a on a.id = i.application_id
+                  left join environment e on e.id = i.environment_id
+                 where i.application_id = ?
+                   and i.environment_id = ?
+                   and i.status = 'ACTIVE'
+                   and i.registration_status = 'ASSIGNED'
+                   and (i.lease_expires_at is null or i.lease_expires_at > current_timestamp)
+                 order by i.created_at, i.id
                 """, operation.get("application_id"), operation.get("environment_id")));
         Instant now = clock.instant();
         int captured = 0;
@@ -184,10 +165,22 @@ public class RolloutExecutor {
             try {
                 jdbcTemplate.update("""
                         insert into rollout_target_snapshot(
-                            id, operation_plan_id, instance_id, labels_json, agent_status, captured_at
-                        ) values (?, ?, ?, ?, ?, ?)
+                            id, operation_plan_id, instance_id, labels_json, agent_status, captured_at,
+                            instance_nickname, application_name, environment_name, java_version,
+                            agent_version, load_mode, process_start_id, instance_last_seen_at,
+                            attach_executor_id
+                        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, "rollout-target-" + UUID.randomUUID(), operationId, instanceId,
-                        instance.get("labels_json"), "UNKNOWN", timestamp(now));
+                        instance.get("labels_json"), "UNKNOWN", timestamp(now),
+                        snapshotText(instance, "nickname", instanceId),
+                        snapshotText(instance, "application_name", ""),
+                        snapshotText(instance, "environment_name", ""),
+                        snapshotText(instance, "java_version", ""),
+                        snapshotText(instance, "agent_version", ""),
+                        snapshotText(instance, "load_mode", ""),
+                        snapshotText(instance, "process_start_id", ""),
+                        instance.get("last_seen_at"),
+                        snapshotText(instance, "attach_executor_id", ""));
             } catch (DuplicateKeyException ignored) {
                 // A retry reuses the immutable target snapshot.
             }
@@ -196,11 +189,23 @@ public class RolloutExecutor {
                         insert into rollout_instance_execution(
                             id, rollout_batch_id, operation_plan_id, instance_id, status,
                             expected_agent_version, expected_rule_version, command_id, error_message,
-                            started_at, finished_at, version, updated_by, updated_at
-                        ) values (?, null, ?, ?, 'PENDING', 'unknown', ?, null, null, null, null, 1, ?, ?)
+                            started_at, finished_at, version, updated_by, updated_at,
+                            instance_nickname, application_name, environment_name, java_version,
+                            agent_version, load_mode, process_start_id, instance_last_seen_at,
+                            attach_executor_id
+                        ) values (?, null, ?, ?, 'PENDING', 'unknown', ?, null, null, null, null, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, "rollout-execution-" + UUID.randomUUID(), operationId, instanceId,
                         ((Number) operation.get("resource_version")).longValue(),
-                        context.actor(), timestamp(now));
+                        context.actor(), timestamp(now),
+                        snapshotText(instance, "nickname", instanceId),
+                        snapshotText(instance, "application_name", ""),
+                        snapshotText(instance, "environment_name", ""),
+                        snapshotText(instance, "java_version", ""),
+                        snapshotText(instance, "agent_version", ""),
+                        snapshotText(instance, "load_mode", ""),
+                        snapshotText(instance, "process_start_id", ""),
+                        instance.get("last_seen_at"),
+                        snapshotText(instance, "attach_executor_id", ""));
                 captured++;
             } catch (DuplicateKeyException ignored) {
                 // Concurrent scheduler passes may already have created the execution.
@@ -389,6 +394,15 @@ public class RolloutExecutor {
     private String optionalText(Map<String, Object> values, String key, String defaultValue) {
         Object value = values.get(key);
         return value == null ? defaultValue : String.valueOf(value);
+    }
+
+    private String snapshotText(Map<String, Object> values, String key, String defaultValue) {
+        Object value = values.get(key);
+        if (value == null) {
+            return defaultValue;
+        }
+        String text = String.valueOf(value);
+        return text.isBlank() ? defaultValue : text;
     }
 
     private boolean matchesLabels(Map<String, Object> instanceLabels, Map<String, Object> selectorLabels) {

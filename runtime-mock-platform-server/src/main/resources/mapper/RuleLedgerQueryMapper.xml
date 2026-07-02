@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.runtimemock.platform.persistence.mapper.RuleLedgerQueryMapper">
+
+    <sql id="ruleLedgerColumns">
+        id, application_id, environment_id, name, status, current_draft_version, latest_version,
+        (select a.name from application a where a.id = rule.application_id) as application_name,
+        (select lower(coalesce(e.type, e.name)) from environment e where e.id = rule.environment_id) as environment_name,
+        (select concat(rt.class_name, '#', rt.method_name)
+           from rule_target rt
+           join rule_version rv on rv.id = rt.rule_version_id
+          where rv.rule_id = rule.id and rv.status &lt;&gt; 'DISABLED'
+          order by rv.version desc, rt.created_at, rt.id
+          limit 1) as target_method,
+        (select rv.status
+           from rule_version rv
+          where rv.rule_id = rule.id and rv.version = rule.latest_version
+          limit 1) as latest_version_status,
+        (select count(*) from rule_version rv where rv.rule_id = rule.id) as version_count,
+        (select count(*) from rule_version rv where rv.rule_id = rule.id and rv.status &lt;&gt; 'DISABLED') as enabled_version_count,
+        (select count(*) from rule_version rv where rv.rule_id = rule.id and rv.status = 'DISABLED') as disabled_version_count,
+        coalesce(
+            (select rrs.rule_version
+               from rule_runtime_status rrs
+               join rule_version rv on rv.rule_id = rrs.rule_id and rv.version = rrs.rule_version
+              where rrs.rule_id = rule.id and rrs.status = 'ACTIVE'
+                and rv.status &lt;&gt; 'DISABLED'
+              order by rrs.updated_at desc, rrs.rule_version desc
+              limit 1),
+            (select rv.version
+               from rule_version rv
+              where rv.rule_id = rule.id and rv.status = 'PUBLISHED'
+              order by rv.version desc
+              limit 1)
+        ) as online_version,
+        created_by, created_at, updated_by, updated_at
+    </sql>
+
+    <sql id="ruleSearch">
+        <if test="query != null and query != ''">
+            where lower(coalesce(name, '')) like concat('%', #{query}, '%')
+               or lower(coalesce(application_id, '')) like concat('%', #{query}, '%')
+               or lower(coalesce(environment_id, '')) like concat('%', #{query}, '%')
+               or lower(coalesce((select a.name from application a where a.id = rule.application_id), '')) like concat('%', #{query}, '%')
+               or lower(coalesce((select coalesce(e.type, e.name) from environment e where e.id = rule.environment_id), '')) like concat('%', #{query}, '%')
+        </if>
+    </sql>
+
+    <select id="pageRules" resultType="map">
+        select <include refid="ruleLedgerColumns"/>
+          from rule
+        <include refid="ruleSearch"/>
+         order by updated_at desc, id
+         limit #{limit} offset #{offset}
+    </select>
+
+    <select id="countRules" resultType="long">
+        select count(*)
+          from rule
+        <include refid="ruleSearch"/>
+    </select>
+
+    <select id="ruleDetail" resultType="map">
+        select <include refid="ruleLedgerColumns"/>
+          from rule
+         where id = #{id}
+    </select>
+
+    <select id="ruleVersions" resultType="map">
+        select *
+          from rule_version
+         where rule_id = #{ruleId}
+         order by version desc
+    </select>
+
+    <select id="ruleTargets" resultType="map">
+        select rt.*
+          from rule_target rt
+          join rule_version rv on rv.id = rt.rule_version_id
+         where rv.rule_id = #{ruleId}
+         order by rv.version desc, rt.created_at, rt.id
+    </select>
+
+    <select id="ruleCapabilities" resultType="map">
+        select rc.*
+          from rule_capability rc
+          join rule_version rv on rv.id = rc.rule_version_id
+         where rv.rule_id = #{ruleId}
+         order by rv.version desc, rc.capability
+    </select>
+
+</mapper>

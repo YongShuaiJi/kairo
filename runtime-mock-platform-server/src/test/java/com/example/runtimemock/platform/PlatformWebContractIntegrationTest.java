@@ -68,17 +68,6 @@ class PlatformWebContractIntegrationTest {
         ));
         assertThat(agent.toString()).doesNotContain("token_hash").doesNotContain("must-never-be-returned");
 
-        JsonNode datasource = postJson("/api/v1/datasources", Map.of(
-                "id", "web-contract-datasource",
-                "applicationId", "app-default",
-                "environmentId", "env-dev",
-                "datasourceType", "POSTGRESQL",
-                "name", "Contract datasource",
-                "config", Map.of("jdbcUrl", "jdbc:postgresql://db/example", "password", "must-never-be-returned"),
-                "reason", "web contract test"
-        ));
-        assertThat(datasource.toString()).doesNotContain("config_json").doesNotContain("must-never-be-returned");
-
         mockMvc.perform(get("/api/v1/query/instances")
                 .param("q", "contract-host")
                 .header("X-Actor", "system"))
@@ -141,11 +130,6 @@ class PlatformWebContractIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         assertThat(agents).doesNotContain("token_hash").doesNotContain("must-never-be-returned");
 
-        String datasources = mockMvc.perform(get("/api/v1/query/datasources").header("X-Actor", "system"))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString();
-        assertThat(datasources).doesNotContain("config_json").doesNotContain("must-never-be-returned");
-
         mockMvc.perform(get("/api/v1/dashboard/overview").header("X-Actor", "system"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.counts").isMap())
@@ -185,7 +169,7 @@ class PlatformWebContractIntegrationTest {
 
         String environmentId = jdbcTemplate.queryForObject("""
                 select id from environment
-                 where application_id = ? and type = 'DEV'
+                 where application_id = ? and type = 'dev'
                 """, String.class, applicationId);
         JsonNode assigned = postJson("/api/v1/instances/" + instanceId + "/environment", Map.of(
                 "environmentId", environmentId
@@ -255,14 +239,13 @@ class PlatformWebContractIntegrationTest {
                 .andExpect(jsonPath("$.code").value("FIELD_REQUIRED"))
                 .andExpect(jsonPath("$.message").value("缺少必填字段：environmentId"));
 
-        mockMvc.perform(post("/api/v1/datasources")
+        mockMvc.perform(post("/api/v1/rules")
                         .header("X-Actor", "system")
-                        .header("Idempotency-Key", "cross-scoped-datasource-environment")
+                        .header("Idempotency-Key", "cross-scoped-rule-environment")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(Map.of(
                                 "applicationId", "app-default",
                                 "environmentId", "environment-does-not-exist",
-                                "datasourceType", "TEST_FIXTURE",
                                 "name", "Invalid environment"
                         ))))
                 .andExpect(status().isBadRequest())

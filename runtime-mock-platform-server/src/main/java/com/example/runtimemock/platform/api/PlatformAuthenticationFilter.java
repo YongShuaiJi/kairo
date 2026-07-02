@@ -64,7 +64,6 @@ final class PlatformAuthenticationFilter extends OncePerRequestFilter {
                 || ("POST".equals(method)
                 && (("/api/v1/agents/" + context.actor() + "/heartbeat").equals(path)
                 || ("/api/v1/agents/" + context.actor() + "/commands/next").equals(path)
-                || path.matches("/api/v1/recording-sessions/[^/]+/events")
                 || path.matches("/api/v1/agent-commands/[^/]+/ack")));
         if (!allowed) {
             throw PlatformException.forbidden("AGENT_PROTOCOL_ONLY");

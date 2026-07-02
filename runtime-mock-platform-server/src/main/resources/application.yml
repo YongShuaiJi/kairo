@@ -11,18 +11,15 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-  kafka:
-    bootstrap-servers: ${RUNTIME_MOCK_KAFKA_BOOTSTRAP_SERVERS:127.0.0.1:9092}
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.apache.kafka.common.serialization.StringSerializer
-      acks: all
-      properties:
-        enable.idempotence: true
   data:
     redis:
       host: ${RUNTIME_MOCK_REDIS_HOST:127.0.0.1}
       port: ${RUNTIME_MOCK_REDIS_PORT:6379}
+
+mybatis-plus:
+  mapper-locations: classpath*:mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: false
 
 management:
   endpoints:
@@ -34,54 +31,29 @@ runtime-mock:
   platform:
     api:
       enabled: ${RUNTIME_MOCK_API_ENABLED:true}
-    worker:
-      enabled: ${RUNTIME_MOCK_WORKER_ENABLED:false}
-    kafka:
-      enabled: ${RUNTIME_MOCK_KAFKA_ENABLED:false}
     fencing:
       redis-enabled: ${RUNTIME_MOCK_FENCING_REDIS_ENABLED:false}
       key-prefix: ${RUNTIME_MOCK_FENCING_KEY_PREFIX:runtime-mock:fencing:}
       default-ttl-seconds: ${RUNTIME_MOCK_FENCING_DEFAULT_TTL_SECONDS:300}
-    object-storage:
-      provider: ${RUNTIME_MOCK_OBJECT_STORAGE_PROVIDER:minio}
-      endpoint: ${RUNTIME_MOCK_OBJECT_STORAGE_ENDPOINT:http://127.0.0.1:9000}
-      access-key: ${RUNTIME_MOCK_OBJECT_STORAGE_ACCESS_KEY:runtime_mock}
-      secret-key: ${RUNTIME_MOCK_OBJECT_STORAGE_SECRET_KEY:}
-      bucket: ${RUNTIME_MOCK_OBJECT_STORAGE_BUCKET:runtime-mock}
-      create-bucket: ${RUNTIME_MOCK_OBJECT_STORAGE_CREATE_BUCKET:true}
-    encryption:
-      master-key-base64: ${RUNTIME_MOCK_MASTER_KEY_BASE64:}
-      master-key-file: ${RUNTIME_MOCK_MASTER_KEY_FILE:}
-      key-version: ${RUNTIME_MOCK_MASTER_KEY_VERSION:local-v1}
     rollout:
       scheduler:
         enabled: ${RUNTIME_MOCK_ROLLOUT_SCHEDULER_ENABLED:true}
         fixed-delay-ms: ${RUNTIME_MOCK_ROLLOUT_SCHEDULER_FIXED_DELAY_MS:3000}
         command-lease-seconds: ${RUNTIME_MOCK_AGENT_COMMAND_LEASE_SECONDS:60}
-    extraction:
-      worker:
-        enabled: ${RUNTIME_MOCK_EXTRACTION_WORKER_ENABLED:true}
-        fixed-delay-ms: ${RUNTIME_MOCK_EXTRACTION_WORKER_FIXED_DELAY_MS:5000}
-        batch-size: ${RUNTIME_MOCK_EXTRACTION_WORKER_BATCH_SIZE:5}
-    replay:
-      worker:
-        enabled: ${RUNTIME_MOCK_REPLAY_WORKER_ENABLED:true}
-        fixed-delay-ms: ${RUNTIME_MOCK_REPLAY_WORKER_FIXED_DELAY_MS:5000}
-        batch-size: ${RUNTIME_MOCK_REPLAY_WORKER_BATCH_SIZE:5}
-    recording:
-      ingestion:
-        enabled: ${RUNTIME_MOCK_RECORDING_INGESTION_ENABLED:false}
-        max-batch-events: ${RUNTIME_MOCK_RECORDING_MAX_BATCH_EVENTS:500}
-    outbox:
-      batch-size: ${RUNTIME_MOCK_OUTBOX_BATCH_SIZE:50}
-      max-attempts: ${RUNTIME_MOCK_OUTBOX_MAX_ATTEMPTS:10}
-      topic-prefix: ${RUNTIME_MOCK_OUTBOX_TOPIC_PREFIX:runtime-mock.platform.}
-      visibility-timeout: ${RUNTIME_MOCK_OUTBOX_VISIBILITY_TIMEOUT:30s}
-      retry-backoff: ${RUNTIME_MOCK_OUTBOX_RETRY_BACKOFF:10s}
-      send-timeout: ${RUNTIME_MOCK_OUTBOX_SEND_TIMEOUT:10s}
-      scheduler:
-        initial-delay-ms: ${RUNTIME_MOCK_OUTBOX_INITIAL_DELAY_MS:2000}
-        fixed-delay-ms: ${RUNTIME_MOCK_OUTBOX_FIXED_DELAY_MS:5000}
+    attach:
+      agent-jar: ${RUNTIME_MOCK_ATTACH_AGENT_JAR:/app/runtime-mock-agent-bootstrap.jar}
+      core-jar: ${RUNTIME_MOCK_ATTACH_CORE_JAR:/app/runtime-mock-agent-core-modern.jar}
+      bootstrap-jar: ${RUNTIME_MOCK_ATTACH_BOOTSTRAP_JAR:/app/runtime-mock-bootstrap-api.jar}
+      agent-host: ${RUNTIME_MOCK_ATTACH_AGENT_HOST:127.0.0.1}
+      agent-port: ${RUNTIME_MOCK_ATTACH_AGENT_PORT:0}
+      platform-url: ${RUNTIME_MOCK_ATTACH_PLATFORM_URL:http://127.0.0.1:18280}
+      platform-token: ${RUNTIME_MOCK_ATTACH_PLATFORM_TOKEN:}
+      sidecar-token: ${RUNTIME_MOCK_ATTACH_SIDECAR_TOKEN:}
+      command-max-attempts: ${RUNTIME_MOCK_ATTACH_COMMAND_MAX_ATTEMPTS:3}
+    runtime-cleanup:
+      retention-ms: ${RUNTIME_MOCK_RUNTIME_CLEANUP_RETENTION_MS:1800000}
+      initial-delay-ms: ${RUNTIME_MOCK_RUNTIME_CLEANUP_INITIAL_DELAY_MS:60000}
+      fixed-delay-ms: ${RUNTIME_MOCK_RUNTIME_CLEANUP_FIXED_DELAY_MS:60000}
     auth:
       mode: ${RUNTIME_MOCK_AUTH_MODE:local-token}
       bootstrap-token: ${RUNTIME_MOCK_BOOTSTRAP_TOKEN:}
