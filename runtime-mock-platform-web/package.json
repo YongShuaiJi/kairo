@@ -11,8 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
-    "api:generate": "node scripts/generate-api.mjs"
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -47,11 +46,9 @@
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.1",
     "eslint-config-next": "15.5.19",
-    "openapi-typescript": "^7.10.1",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.50.1",
-    "vitest": "4.0.16",
-    "yaml": "^2.8.2"
+    "vitest": "4.0.16"
   }
 }

@@ -11,7 +11,6 @@ import {
   Command,
   FlaskConical,
   Menu,
-  Network,
   ScrollText,
   Search,
   Settings,
@@ -28,15 +27,13 @@ import { RuntimeMockIcon } from "@/components/brand/runtime-mock-icon";
 import { ThemeSwitcher } from "@/components/theme/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 
 const navigation = [
   {
     label: "工作空间",
     items: [
       { href: "/overview", label: "运行总览", icon: CircleGauge },
-      { href: "/applications", label: "应用与环境", icon: Box },
-      { href: "/agents", label: "Agent 管理", icon: Network },
+      { href: "/applications", label: "应用实例", icon: Box },
     ],
   },
   {
@@ -57,7 +54,7 @@ const navigation = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const workspaceRoute = pathname.startsWith("/rules/");
+  const workspaceRoute = pathname === "/rules/new" || /^\/rules\/[^/]+\/versions\/(?:new|[^/]+)$/.test(pathname);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -167,11 +164,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className={cn("min-h-screen", workspaceRoute && "lg:h-screen lg:overflow-hidden")}>
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 bg-slate-950 lg:block">{sidebar}</aside>
+      <aside className="theme-sidebar fixed inset-y-0 left-0 z-40 hidden w-64 border-r lg:block">{sidebar}</aside>
       {mobileOpen ? (
         <div className="fixed inset-0 z-50 lg:hidden">
           <button className="absolute inset-0 bg-slate-950/50" onClick={() => setMobileOpen(false)} aria-label="关闭导航" />
-          <aside className="relative h-full w-72 bg-slate-950 shadow-2xl">
+          <aside className="theme-sidebar relative h-full w-72 border-r shadow-2xl">
             <button aria-label="关闭导航菜单" className="absolute right-3 top-3 rounded-lg p-2 text-slate-400 hover:bg-white/10" onClick={() => setMobileOpen(false)}><X className="size-5" /></button>
             {sidebar}
           </aside>
@@ -179,12 +176,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       ) : null}
 
       <div className={cn("lg:pl-64", workspaceRoute && "lg:flex lg:h-screen lg:min-h-0 lg:flex-col lg:overflow-hidden")}>
-        <header className={cn("sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-slate-200/80 bg-white/85 px-4 backdrop-blur-xl sm:px-6", workspaceRoute && "lg:relative lg:shrink-0")}>
+        <header className={cn("theme-panel sticky top-0 z-30 flex h-16 items-center gap-3 border-b px-4 backdrop-blur-xl sm:px-6", workspaceRoute && "lg:relative lg:shrink-0")}>
           <Button aria-label="打开导航菜单" variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)}><Menu /></Button>
-          <button onClick={() => setCommandOpen(true)} className="flex h-9 w-full max-w-md items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 text-left text-sm text-slate-400 hover:border-slate-300 hover:bg-white">
+          <button onClick={() => setCommandOpen(true)} className="theme-field flex h-9 w-full max-w-md items-center gap-2 rounded-lg border px-3 text-left text-sm text-[color:var(--muted)] hover:border-[color:var(--border-strong)]">
             <Search className="size-4" />
             <span className="flex-1">搜索页面与功能</span>
-            <kbd className="hidden rounded border bg-white px-1.5 py-0.5 font-mono text-[10px] text-slate-500 sm:inline-flex">⌘ K</kbd>
+            <kbd className="theme-muted-panel hidden rounded border px-1.5 py-0.5 font-mono text-[10px] text-[color:var(--muted)] sm:inline-flex">⌘ K</kbd>
           </button>
           <div className="ml-auto flex items-center gap-1">
             {user?.demo ? <Badge variant="warning" className="hidden sm:inline-flex">Demo 模式</Badge> : null}
@@ -193,7 +190,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
-                <button aria-label="用户菜单" className="ml-1 flex items-center gap-2 rounded-lg p-1.5 hover:bg-slate-100">
+                <button aria-label="用户菜单" className="ml-1 flex items-center gap-2 rounded-lg p-1.5 hover:bg-[var(--surface-muted)]">
                   <span className="flex size-8 items-center justify-center rounded-lg bg-indigo-100 text-xs font-bold text-indigo-700">{user?.displayName?.slice(0, 1) ?? "R"}</span>
                   <span className="hidden text-left sm:block">
                     <span className="block text-xs font-medium text-slate-800">{user?.displayName ?? "平台用户"}</span>
@@ -203,13 +200,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content align="end" className="z-50 min-w-48 rounded-xl border bg-white p-1.5 shadow-xl">
+                <DropdownMenu.Content align="end" className="theme-panel-elevated z-50 min-w-48 rounded-xl border p-1.5">
                   <div className="px-2 py-2 md:hidden">
                     <ThemeSwitcher />
                   </div>
-                  <DropdownMenu.Separator className="my-1 h-px bg-slate-100 md:hidden" />
-                  {user?.capabilities?.includes("ADMIN") ? <DropdownMenu.Item asChild><Link href="/settings" className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none hover:bg-slate-100"><Settings className="size-4" />账户与设置</Link></DropdownMenu.Item> : null}
-                  <DropdownMenu.Separator className="my-1 h-px bg-slate-100" />
+                  <DropdownMenu.Separator className="my-1 h-px bg-[var(--border)] md:hidden" />
+                  {user?.capabilities?.includes("ADMIN") ? <DropdownMenu.Item asChild><Link href="/settings" className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none hover:bg-[var(--surface-muted)]"><Settings className="size-4" />账户与设置</Link></DropdownMenu.Item> : null}
+                  <DropdownMenu.Separator className="my-1 h-px bg-[var(--border)]" />
                   <DropdownMenu.Item onSelect={logout} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-red-600 outline-none hover:bg-red-50">退出登录</DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
@@ -225,23 +222,33 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <Dialog open={commandOpen} onOpenChange={setCommandOpen}>
-        <DialogContent className="top-[38%] max-w-xl gap-0 p-0">
+        <DialogContent className="top-[36%] max-w-2xl gap-0 overflow-hidden rounded-2xl border border-[color:var(--border-strong)] bg-[var(--surface-elevated)] p-0 shadow-[0_24px_80px_rgb(15_23_42/0.26)]">
           <DialogHeader className="sr-only"><DialogTitle>快速导航</DialogTitle></DialogHeader>
-          <div className="flex items-center gap-3 border-b px-4">
-            <Command className="size-5 text-indigo-600" />
-            <Input value={query} onChange={(event) => setQuery(event.target.value)} autoFocus placeholder="输入页面名称…" className="h-14 border-0 bg-transparent px-0 shadow-none focus:ring-0" />
+          <div className="flex h-16 items-center gap-3 border-b border-[color:var(--border)] bg-[var(--surface)] px-5">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-[color:var(--border)] bg-[var(--surface-subtle)] text-[color:var(--primary)]">
+              <Command className="size-5" />
+            </div>
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              autoFocus
+              placeholder="输入页面名称..."
+              className="command-search-input h-full min-w-0 flex-1 bg-transparent text-base text-[color:var(--foreground)] placeholder:text-[color:var(--muted)]"
+            />
           </div>
-          <div className="max-h-80 overflow-y-auto p-2">
+          <div className="scrollbar-thin max-h-80 overflow-y-auto bg-[var(--surface-elevated)] p-2">
             {commandItems.map((item) => (
-              <button key={item.href} onClick={() => { router.push(item.href); setCommandOpen(false); }} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-100">
-                <item.icon className="size-4 text-slate-400" />
-                {item.label}
-                <span className="ml-auto text-xs text-slate-400">{item.href}</span>
+              <button key={item.href} onClick={() => { router.push(item.href); setCommandOpen(false); }} className="group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm text-[color:var(--foreground)] transition hover:bg-[var(--surface-muted)] focus-visible:bg-[var(--surface-muted)] focus-visible:outline-none">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-subtle)] text-[color:var(--muted)] transition group-hover:text-[color:var(--primary)]">
+                  <item.icon className="size-4" />
+                </span>
+                <span className="font-medium">{item.label}</span>
+                <span className="ml-auto whitespace-nowrap font-mono text-xs text-[color:var(--muted)]">{item.href}</span>
               </button>
             ))}
             {!commandItems.length ? <div className="p-8 text-center text-sm text-slate-400"><FlaskConical className="mx-auto mb-2 size-6" />没有找到匹配功能</div> : null}
           </div>
-          <div className="flex items-center gap-4 border-t bg-slate-50 px-4 py-2 text-[10px] text-slate-400"><span>↑↓ 选择</span><span>Enter 打开</span><span>Esc 关闭</span><ScrollText className="ml-auto size-3.5" /></div>
+          <div className="flex items-center gap-4 border-t border-[color:var(--border)] bg-[var(--surface-subtle)] px-5 py-2.5 text-[10px] text-[color:var(--muted)]"><span>↑↓ 选择</span><span>Enter 打开</span><span>Esc 关闭</span><ScrollText className="ml-auto size-3.5" /></div>
         </DialogContent>
       </Dialog>
     </div>

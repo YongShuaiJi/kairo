@@ -4,105 +4,41 @@ const stamp = "2026-06-18T09:30:00+08:00";
 
 const datasets: Record<string, PlatformRecord[]> = {
   agents: [
-    { id: "agt-01", name: "order-service-01", application: "order-service", environment: "prod", status: "ONLINE", version: "1.8.2", host: "10.24.8.11", lastHeartbeatAt: stamp },
-    { id: "agt-02", name: "payment-service-02", application: "payment-service", environment: "staging", status: "ONLINE", version: "1.8.2", host: "10.24.9.22", lastHeartbeatAt: stamp },
-    { id: "agt-03", name: "inventory-service-01", application: "inventory-service", environment: "prod", status: "DEGRADED", version: "1.7.9", host: "10.24.6.41", lastHeartbeatAt: "2026-06-18T09:24:00+08:00" },
-    { id: "agt-04", name: "gateway-local", application: "api-gateway", environment: "dev", status: "OFFLINE", version: "1.7.7", host: "127.0.0.1", lastHeartbeatAt: "2026-06-17T20:10:00+08:00" },
+    { id: "agt-01", name: "runtime-mock-demo", application: "runtime-mock-demo", environment: "sit", status: "ONLINE", version: "0.1.0", host: "demo", lastHeartbeatAt: stamp },
+    { id: "agt-02", name: "demo-attach-executor", application: "runtime-mock-demo", environment: "sit", status: "ONLINE", version: "0.1.0", host: "demo-attach-executor", lastHeartbeatAt: stamp },
   ],
   instances: [
-    { id: "ins-01", application: "order-service", environment: "prod", host: "10.24.8.11", status: "RUNNING", registeredAt: stamp },
-    { id: "ins-02", application: "payment-service", environment: "staging", host: "10.24.9.22", status: "RUNNING", registeredAt: stamp },
+    { id: "ins-01", nickname: "runtime-mock-demo", application: "runtime-mock-demo", environment: "sit", host: "demo", status: "ACTIVE", agentStatus: "ONLINE", loadMode: "attach", javaVersion: "21.0.11", lastSeenAt: stamp },
   ],
   rules: [
-    { id: "rule-01", name: "订单查询延迟注入", applicationId: "order-service", environmentId: "staging", status: "ACTIVE", currentVersion: 7, updatedAt: stamp },
-    { id: "rule-02", name: "支付超时模拟", applicationId: "payment-service", environmentId: "prod", status: "DRAFT", currentVersion: 3, updatedAt: "2026-06-18T08:12:00+08:00" },
-    { id: "rule-03", name: "库存返回值替换", applicationId: "inventory-service", environmentId: "dev", status: "PAUSED", currentVersion: 12, updatedAt: "2026-06-17T18:40:00+08:00" },
+    { id: "rule-01", name: "sit 下单接口故障注入试用规则", applicationName: "runtime-mock-demo", environmentName: "sit", targetMethod: "com.example.demo.OrderService#createOrder", versionCount: 3, enabledVersionCount: 2, disabledVersionCount: 1, onlineVersion: 1, latestVersion: 3, latestVersionStatus: "DRAFT", updatedAt: stamp },
   ],
   "rule-versions": [
-    { id: "rv-07", ruleId: "rule-01", version: 7, status: "PUBLISHED", author: "平台管理员", createdAt: stamp },
-    { id: "rv-06", ruleId: "rule-01", version: 6, status: "ARCHIVED", author: "研发工程师", createdAt: "2026-06-16T15:22:00+08:00" },
+    { id: "rv-03", ruleId: "rule-01", version: 3, status: "DRAFT", riskLevel: "LOW", executionPhase: "BEFORE", scriptSummary: "return mock.throwException(...)" },
+    { id: "rv-02", ruleId: "rule-01", version: 2, status: "DISABLED", riskLevel: "LOW", executionPhase: "BEFORE", autoDeleteAt: "2026-07-18T09:30:00+08:00", scriptSummary: "return mock.returnValue(...)" },
+    { id: "rv-01", ruleId: "rule-01", version: 1, status: "PUBLISHED", riskLevel: "LOW", executionPhase: "BEFORE", scriptSummary: "return mock.proceed()" },
   ],
   "operation-plans": [
-    { id: "plan-01", name: "订单服务规则发布", ruleId: "rule-01", environment: "staging", status: "RUNNING", progress: 68, updatedAt: stamp },
-    { id: "plan-02", name: "支付服务全量撤回", ruleId: "rule-02", environment: "prod", status: "PENDING_APPROVAL", progress: 0, updatedAt: "2026-06-18T08:32:00+08:00" },
-    { id: "plan-03", name: "库存规则发布", ruleId: "rule-03", environment: "prod", status: "COMPLETED", progress: 100, updatedAt: "2026-06-17T16:20:00+08:00" },
+    { id: "op-01", resourceId: "rule-01", resourceVersion: 1, planType: "RULE_ROLLOUT", status: "SUCCEEDED", updatedAt: stamp },
+    { id: "op-02", resourceId: "rule-01", resourceVersion: 2, planType: "RULE_ROLLOUT", status: "UNLOADED", updatedAt: "2026-06-18T08:32:00+08:00" },
   ],
   "rollout-executions": [
-    { id: "rex-01", operationPlanId: "plan-01", agentId: "agt-01", status: "SUCCESS", durationMs: 182, createdAt: stamp },
-    { id: "rex-02", operationPlanId: "plan-01", agentId: "agt-03", status: "RETRYING", durationMs: 4200, createdAt: stamp },
+    { id: "rex-01", operationPlanId: "op-01", instanceNickname: "runtime-mock-demo", applicationName: "runtime-mock-demo", environmentName: "sit", javaVersion: "21.0.11", loadMode: "attach", commandId: "cmd-01", status: "SUCCEEDED", createdAt: stamp },
   ],
-  "recording-sessions": [
-    { id: "rec-01", name: "支付回调基线采集", application: "payment-service", environment: "staging", status: "RECORDING", sampleCount: 1284, updatedAt: stamp },
-    { id: "rec-02", name: "订单查询脱敏样本", application: "order-service", environment: "prod", status: "COMPLETED", sampleCount: 8421, updatedAt: "2026-06-17T21:12:00+08:00" },
-  ],
-  "recording-rules": [
-    { id: "rr-01", name: "订单查询采集规则", application: "order-service", status: "ACTIVE", sampleRate: "10%", updatedAt: stamp },
-  ],
-  datasets: [
-    { id: "ds-01", name: "订单查询基线 2026-06", source: "rec-02", version: 5, objectCount: 8421, sizeBytes: 152043520, status: "READY", updatedAt: stamp },
-    { id: "ds-02", name: "支付异常样本", source: "rec-01", version: 2, objectCount: 1284, sizeBytes: 27472691, status: "BUILDING", updatedAt: stamp },
-  ],
-  datasources: [
-    { id: "source-01", name: "Staging PostgreSQL", type: "POSTGRESQL", endpoint: "postgres.internal:5432", status: "HEALTHY", updatedAt: stamp },
-    { id: "source-02", name: "MinIO Recording Bucket", type: "S3", endpoint: "minio:9000", status: "HEALTHY", updatedAt: stamp },
-  ],
-  "extraction-tasks": [
-    { id: "ext-01", name: "订单脱敏字段提取", template: "订单查询模板", datasource: "Staging PostgreSQL", status: "RUNNING", progress: 74, updatedAt: stamp },
-    { id: "ext-02", name: "支付错误码提取", template: "支付异常模板", datasource: "MinIO Recording Bucket", status: "COMPLETED", progress: 100, updatedAt: "2026-06-17T13:10:00+08:00" },
-  ],
-  "extraction-templates": [
-    { id: "tpl-01", name: "订单查询模板", sourceType: "POSTGRESQL", fields: 12, status: "ACTIVE", updatedAt: stamp },
-    { id: "tpl-02", name: "支付异常模板", sourceType: "S3", fields: 8, status: "ACTIVE", updatedAt: stamp },
-  ],
-  "extraction-executions": [
-    { id: "exe-01", taskId: "ext-01", status: "RUNNING", processed: 7400, total: 10000, startedAt: stamp },
-  ],
-  "extraction-results": [
-    { id: "result-01", executionId: "exe-01", datasetId: "ds-01", objectCount: 7400, status: "PARTIAL", updatedAt: stamp },
-  ],
-  "replay-plans": [
-    { id: "replay-01", name: "订单接口回归", dataset: "订单查询基线 2026-06", target: "order-service/staging", status: "READY", updatedAt: stamp },
-    { id: "replay-02", name: "支付超时复现", dataset: "支付异常样本", target: "payment-service/dev", status: "RUNNING", updatedAt: stamp },
-  ],
-  "replay-executions": [
-    { id: "rpe-01", planId: "replay-02", status: "RUNNING", progress: 43, successRate: "97.8%", updatedAt: stamp },
-  ],
-  "replay-batches": [
-    { id: "rpb-01", executionId: "rpe-01", sequence: 1, status: "COMPLETED", invocationCount: 500, updatedAt: stamp },
-    { id: "rpb-02", executionId: "rpe-01", sequence: 2, status: "RUNNING", invocationCount: 500, updatedAt: stamp },
-  ],
-  "replay-invocation-results": [
-    { id: "invoke-01", batchId: "rpb-02", operation: "PaymentFacade.pay", status: "MATCHED", durationMs: 42, createdAt: stamp },
-    { id: "invoke-02", batchId: "rpb-02", operation: "PaymentFacade.query", status: "DIFF", durationMs: 68, createdAt: stamp },
-  ],
-  "comparison-results": [
-    { id: "cmp-01", invocationId: "invoke-02", status: "DIFF", path: "$.data.status", expected: "SUCCESS", actual: "PROCESSING", createdAt: stamp },
-  ],
-  approvals: [
-    { id: "approval-01", subject: "支付服务全量撤回", type: "ROLLOUT", requester: "研发工程师", status: "PENDING", risk: "HIGH", createdAt: stamp },
-    { id: "approval-02", subject: "生产录制会话延期", type: "RECORDING", requester: "平台管理员", status: "APPROVED", risk: "MEDIUM", createdAt: "2026-06-17T11:20:00+08:00" },
+  "rollback-executions": [
+    { id: "unload-01", operationPlanId: "op-02", rollbackType: "RESET_CLASS", status: "SUCCEEDED", reason: "规则版本停用自动卸载", finishedAt: "2026-06-18T08:33:00+08:00" },
   ],
   audits: [
-    { id: "audit-01", actor: "平台管理员", action: "RULE_VERSION_PUBLISHED", resource: "订单查询延迟注入 v7", result: "SUCCESS", correlationId: "req-8cf2d1", createdAt: stamp },
-    { id: "audit-02", actor: "研发工程师", action: "ROLLOUT_REQUESTED", resource: "支付服务全量撤回", result: "PENDING_APPROVAL", correlationId: "req-1fd920", createdAt: "2026-06-18T08:32:00+08:00" },
-    { id: "audit-03", actor: "系统", action: "AGENT_HEARTBEAT_MISSED", resource: "inventory-service-01", result: "WARNING", correlationId: "req-b6d21a", createdAt: "2026-06-18T09:24:00+08:00" },
-  ],
-  outbox: [
-    { id: "evt-01", aggregateType: "ROLLOUT", eventType: "BATCH_STARTED", status: "PUBLISHED", attempts: 1, createdAt: stamp },
-  ],
-  "worker-artifacts": [
-    { id: "artifact-01", type: "EXTRACTION_RESULT", storageKey: "extractions/2026/06/result-01.json", sizeBytes: 5242880, status: "AVAILABLE", createdAt: stamp },
+    { id: "audit-01", actor: "平台管理员", action: "RULE_VERSION_PUBLISHED", resource: "sit 下单接口故障注入试用规则 v1", result: "SUCCESS", correlationId: "req-8cf2d1", createdAt: stamp },
+    { id: "audit-02", actor: "系统", action: "RULE_VERSION_DISABLED", resource: "sit 下单接口故障注入试用规则 v2", result: "SUCCESS", correlationId: "req-1fd920", createdAt: "2026-06-18T08:32:00+08:00" },
   ],
   "auth/tokens": [
     { id: "token-01", name: "CI Smoke Token", subject: "runtime-mock-ci", roles: ["ADMIN"], status: "ACTIVE", expiresAt: "2026-09-18T00:00:00+08:00" },
-    { id: "token-02", name: "Read Only Console", subject: "runtime-mock-viewer", roles: ["VIEWER"], status: "ACTIVE", expiresAt: "2026-07-18T00:00:00+08:00" },
   ],
   tokens: [
     { id: "token-01", displayName: "CI Smoke Token", subjectType: "USER", subjectId: "system", status: "ACTIVE", expiresAt: "2026-09-18T00:00:00+08:00" },
-    { id: "token-02", displayName: "Read Only Console", subjectType: "USER", subjectId: "reviewer", status: "ACTIVE", expiresAt: "2026-07-18T00:00:00+08:00" },
   ],
 };
-
 function normalize(path: string) {
   return path.replace(/^\/+|\/+$/g, "").split("?")[0];
 }
@@ -151,24 +87,50 @@ export function demoDetail(path: string, id: string): PlatformRecord | undefined
 export function demoRuleDetail(id: string) {
   const rule = demoDetail("rules", id);
   if (!rule) return undefined;
+  const latestVersion = Number(rule.latestVersion ?? rule.currentVersion ?? 1);
   return {
     rule,
-    versions: [{
-      id: `${id}-version-1`,
-      rule_id: id,
-      version: Number(rule.currentVersion ?? 1),
-      script_json: JSON.stringify({
-        phase: "BEFORE",
-        script: "if (ctx.arguments()[0] == 'demo') {\n  return mock.returnValue('mocked')\n}\nreturn mock.proceed()",
-      }),
-      status: "DRAFT",
-      risk_level: "LOW",
-    }],
+    versions: [
+      {
+        id: `${id}:${latestVersion}`,
+        rule_id: id,
+        version: latestVersion,
+        script_json: JSON.stringify({
+          phase: "BEFORE",
+          script: "if (ctx.arguments()[0] == 'demo') {\n  return mock.returnValue('mocked')\n}\nreturn mock.proceed()",
+        }),
+        matcher_json: JSON.stringify({ sampleRate: 1 }),
+        governance_json: JSON.stringify({ maxHits: 1000 }),
+        status: String(rule.latestVersionStatus ?? "DRAFT"),
+        risk_level: "LOW",
+        script_hash: "demo-script-hash",
+        created_by: "平台管理员",
+        created_at: stamp,
+      },
+      {
+        id: `${id}:${Math.max(1, latestVersion - 1)}`,
+        rule_id: id,
+        version: Math.max(1, latestVersion - 1),
+        script_json: JSON.stringify({ phase: "BEFORE", script: "return mock.proceed()" }),
+        matcher_json: JSON.stringify({ sampleRate: 1 }),
+        governance_json: JSON.stringify({ maxHits: 500 }),
+        status: "PUBLISHED",
+        risk_level: "LOW",
+        script_hash: "demo-previous-script-hash",
+        created_by: "研发工程师",
+        created_at: "2026-06-16T15:22:00+08:00",
+      },
+    ],
     targets: [{
-      rule_version_id: `${id}-version-1`,
+      rule_version_id: `${id}:${latestVersion}`,
       protocol: "JAVA_METHOD",
       class_name: "com.example.DemoService",
       method_name: "execute",
+      matcher_json: JSON.stringify({
+        classId: "com.example.DemoService",
+        classLoaderId: "loader-1",
+        descriptor: "(Ljava/lang/String;)Ljava/lang/String;",
+      }),
     }],
     capabilities: [],
   };
@@ -181,12 +143,11 @@ export function demoDashboard() {
     counts: {
       agentsTotal: datasets.agents?.length ?? 0,
       agentsOnline: datasets.agents?.filter((item) => item.status === "ONLINE").length ?? 0,
+      instancesTotal: datasets.instances?.length ?? 0,
+      injectableInstancesOnline: datasets.instances?.filter((item) => ["ACTIVE", "ONLINE"].includes(String(item.status))).length ?? 0,
       rulesTotal: datasets.rules?.length ?? 0,
       rulesActive: datasets.rules?.filter((item) => item.status === "ACTIVE").length ?? 0,
       rolloutsRunning: datasets["operation-plans"]?.filter((item) => item.status === "RUNNING").length ?? 0,
-      approvalsPending: datasets.approvals?.filter((item) => ["WAITING_APPROVAL", "PENDING"].includes(String(item.status))).length ?? 0,
-      recordingsRunning: datasets["recording-sessions"]?.filter((item) => item.status === "RECORDING").length ?? 0,
-      workerArtifacts: datasets["worker-artifacts"]?.length ?? 0,
     },
     auditTrends: [
       { label: "SUCCESS", value: audits.filter((item) => item.result === "SUCCESS").length },
@@ -208,9 +169,7 @@ export function demoHealth() {
     services: {
       platformApi: { status: "UP", latencyMs: 24 },
       postgresql: { status: "UP", latencyMs: 7 },
-      kafka: { status: "UP", latencyMs: 12 },
       redis: { status: "UP", latencyMs: 3 },
-      minio: { status: "UP", latencyMs: 18 },
     },
     checkedAt: stamp,
   };

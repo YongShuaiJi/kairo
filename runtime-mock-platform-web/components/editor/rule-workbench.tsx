@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { loader } from "@monaco-editor/react";
 import type { editor, IDisposable, languages } from "monaco-editor";
 import {
@@ -65,7 +65,7 @@ const initialTestInput = `{
 
 type InvokePhase = "BEFORE" | "RETURN" | "THROWS";
 type PagedResult = { items: PlatformRecord[]; page: number; size: number; total: number };
-const VISIBLE_ENVIRONMENTS = new Set(["DEV", "SIT", "UAT"]);
+const VISIBLE_ENVIRONMENTS = new Set(["dev", "sit", "uat"]);
 type TargetOption = {
   classId: string;
   className: string;
@@ -80,9 +80,9 @@ type TargetOption = {
   protocol: string;
 };
 
-function stringValue(record: PlatformRecord, ...keys: string[]) {
+function stringValue(record: PlatformRecord | undefined, ...keys: string[]) {
   for (const key of keys) {
-    const value = record[key];
+    const value = record?.[key];
     if (value !== null && value !== undefined && String(value).trim()) return String(value);
   }
   return "";
@@ -101,7 +101,7 @@ function applicationLabel(record: PlatformRecord) {
 }
 
 function environmentLabel(record: PlatformRecord) {
-  return stringValue(record, "environmentName", "environment_name", "environment", "type", "name", "environmentId", "environment_id").toUpperCase();
+  return stringValue(record, "environmentName", "environment_name", "environment", "type", "name", "environmentId", "environment_id").toLowerCase();
 }
 
 const HIDDEN_TARGET_CLASS_PREFIXES = [
@@ -126,6 +126,59 @@ function isBusinessTarget(target: TargetOption) {
 
 function phaseLabel(phase: InvokePhase) {
   return phase === "BEFORE" ? "调用前" : phase === "RETURN" ? "正常返回后" : "抛出异常时";
+}
+
+function targetFullText(target: Pick<TargetOption, "className" | "methodName" | "descriptor" | "classLoaderId" | "parameterTypes" | "returnType" | "instanceCount">) {
+  return [
+    target.className,
+    `#${target.methodName}${target.descriptor}`,
+    `加载器：${target.classLoaderId}`,
+    `${target.parameterTypes?.join(", ") || "无参数"} -> ${target.returnType || "void"} · ${target.instanceCount ?? 0} 个在线实例`,
+  ].join("\n");
+}
+
+function HoverFullContent({
+  children,
+  content,
+}: {
+  children: ReactNode;
+  content: string;
+}) {
+  const triggerRef = useRef<HTMLSpanElement | null>(null);
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+
+  function show() {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPosition({
+      left: Math.min(Math.max(16, rect.left), window.innerWidth - 560),
+      top: Math.min(rect.bottom + 8, window.innerHeight - 220),
+    });
+  }
+
+  return (
+    <span
+      ref={triggerRef}
+      className="block min-w-0"
+      onMouseEnter={show}
+      onMouseMove={show}
+      onPointerEnter={show}
+      onPointerMove={show}
+      onMouseLeave={() => setPosition(null)}
+      onPointerLeave={() => setPosition(null)}
+      title={content}
+    >
+      {children}
+      {position ? (
+        <span
+          className="pointer-events-none fixed z-[80] max-h-52 w-[min(34rem,calc(100vw-2rem))] overflow-auto whitespace-pre-wrap break-all rounded-lg border bg-[var(--surface-elevated)] p-3 font-mono text-[11px] leading-5 text-[color:var(--foreground)] shadow-[var(--shadow-elevated)]"
+          style={{ left: position.left, top: position.top }}
+        >
+          {content}
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 type Monaco = typeof import("monaco-editor");
@@ -263,7 +316,7 @@ function registerGroovy(monaco: Monaco) {
   return [completion, hover];
 }
 
-export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
+export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: string }) {
   const router = useRouter();
   const [script, setScript] = useState(initialScript);
   const [previousScript, setPreviousScript] = useState(emptyPreviousScript);
@@ -287,7 +340,9 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
   const [busy, setBusy] = useState<"validate" | "test" | "save" | null>(null);
   const [dirty, setDirty] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
+  const [editorTheme, setEditorTheme] = useState<"light" | "dark">("light");
   const [leftWidth, setLeftWidth] = useState(300);
+  const [bottomHeight, setBottomHeight] = useState(240);
   const [monacoReady, setMonacoReady] = useState(false);
   const [instances, setInstances] = useState<PlatformRecord[]>([]);
   const [metadataLoading, setMetadataLoading] = useState(true);
@@ -300,6 +355,8 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const disposables = useRef<IDisposable[]>([]);
+  const workbenchFrameRef = useRef<HTMLDivElement | null>(null);
+  const immutableRuleIdentity = Boolean(ruleId);
 
   const markDirty = useCallback((value: string | undefined) => {
     setScript(value ?? "");
@@ -327,8 +384,10 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
     })
     .filter((item): item is readonly [string, string] => Boolean(item))).entries())
     .map(([id, label]) => ({ id, label }))
-    .sort((left, right) => ["DEV", "SIT", "UAT"].indexOf(left.label) - ["DEV", "SIT", "UAT"].indexOf(right.label));
+    .sort((left, right) => ["dev", "sit", "uat"].indexOf(left.label) - ["dev", "sit", "uat"].indexOf(right.label));
   const environmentIds = environments.map((item) => item.id);
+  const selectedApplicationLabel = applications.find((item) => item.id === applicationId)?.label ?? applicationId;
+  const selectedEnvironmentLabel = environments.find((item) => item.id === environmentId)?.label ?? environmentId;
   const targetSelected = Boolean(
     classId.trim()
     && className.trim()
@@ -345,6 +404,45 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
     && executionPhase
     && script.trim(),
   );
+  const monacoTheme = focusMode || editorTheme === "dark" ? "runtime-mock-focus" : "runtime-mock-light";
+  const darkEditorSurface = focusMode || editorTheme === "dark";
+
+  const startBottomResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (focusMode) return;
+    const frame = workbenchFrameRef.current;
+    if (!frame) return;
+    event.preventDefault();
+    setBottomOpen(true);
+
+    const frameRect = frame.getBoundingClientRect();
+    const minBottomHeight = 160;
+    const minEditorHeight = 260;
+    const maxBottomHeight = Math.max(minBottomHeight, frameRect.height - minEditorHeight);
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+
+    const applyHeight = (clientY: number) => {
+      const nextHeight = Math.round(frameRect.bottom - clientY);
+      setBottomHeight(Math.min(maxBottomHeight, Math.max(minBottomHeight, nextHeight)));
+    };
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      applyHeight(moveEvent.clientY);
+    };
+    const handlePointerUp = () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+    applyHeight(event.clientY);
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+  }, [focusMode]);
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -355,6 +453,18 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirty]);
+
+  useEffect(() => {
+    const updateTheme = () => {
+      const root = document.documentElement;
+      const theme = root.dataset.theme ?? (root.classList.contains("theme-night") ? "dark" : "light");
+      setEditorTheme(theme === "dark" || theme === "night" ? "dark" : "light");
+    };
+    updateTheme();
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!dirty) return;
@@ -384,7 +494,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
       })
       .catch((error) => {
         if (!active) return;
-        setMetadataError(error instanceof Error ? error.message : "应用与环境加载失败");
+        setMetadataError(error instanceof Error ? error.message : "应用实例加载失败");
       })
       .finally(() => {
         if (active) setMetadataLoading(false);
@@ -449,9 +559,15 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
       targets: Array<Record<string, unknown>>;
     }>(`rules/${ruleId}/detail`).then((detail) => {
       if (!active) return;
-      const latest = detail.versions[0];
-      const previous = detail.versions[1];
-      const target = detail.targets[0];
+      const selectedVersion = version && version !== "new"
+        ? detail.versions.find((item) => String(item.version ?? item["version"]) === version)
+        : undefined;
+      const latest = selectedVersion ?? detail.versions[0];
+      const latestIndex = detail.versions.findIndex((item) => String(item.id ?? "") === String(latest?.id ?? ""));
+      const previous = latestIndex >= 0 ? detail.versions[latestIndex + 1] : detail.versions[1];
+      const versionId = String(latest?.id ?? "");
+      const target = detail.targets.find((item) => String(item.rule_version_id ?? item.ruleVersionId ?? "") === versionId)
+        ?? detail.targets[0];
       const decodeScript = (value: unknown): { source: string; phase: InvokePhase } => {
         if (typeof value !== "string") return { source: initialScript, phase: "BEFORE" };
         try {
@@ -471,7 +587,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
       };
       const currentScript = decodeScript(latest?.script_json);
       const targetMatcher = (() => {
-        const raw = target?.matcher_json;
+        const raw = target?.matcher_json ?? target?.matcherJson;
         if (raw && typeof raw === "object") return raw as Record<string, unknown>;
         if (typeof raw === "string") {
           try {
@@ -483,21 +599,21 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
         return {};
       })();
       setName(String(detail.rule.name ?? ruleId));
-      setApplicationId(String(detail.rule.application_id ?? ""));
-      setEnvironmentId(String(detail.rule.environment_id ?? ""));
+      setApplicationId(stringValue(detail.rule as PlatformRecord, "application_id", "applicationId", "application"));
+      setEnvironmentId(stringValue(detail.rule as PlatformRecord, "environment_id", "environmentId", "environment"));
       setScript(currentScript.source);
       setExecutionPhase(currentScript.phase);
       setTestInput(JSON.stringify({ phase: currentScript.phase, args: [] }, null, 2));
       setPreviousScript(previous ? decodeScript(previous.script_json).source : emptyPreviousScript);
-      setClassId(String(targetMatcher.classId ?? target?.class_name ?? ""));
-      setClassName(String(target?.class_name ?? ""));
-      setClassLoaderId(String(targetMatcher.classLoaderId ?? ""));
-      setMethodName(String(target?.method_name ?? ""));
-      setMethodDescriptor(String(targetMatcher.descriptor ?? ""));
+      setClassId(String(targetMatcher.classId ?? targetMatcher.class_id ?? target?.class_name ?? target?.className ?? ""));
+      setClassName(stringValue(target as PlatformRecord, "class_name", "className"));
+      setClassLoaderId(String(targetMatcher.classLoaderId ?? targetMatcher.class_loader_id ?? ""));
+      setMethodName(stringValue(target as PlatformRecord, "method_name", "methodName"));
+      setMethodDescriptor(String(targetMatcher.descriptor ?? targetMatcher.methodDescriptor ?? targetMatcher.method_descriptor ?? ""));
       setDirty(false);
     }).catch((error) => toast.error(error instanceof Error ? error.message : "规则详情加载失败"));
     return () => { active = false; };
-  }, [ruleId]);
+  }, [ruleId, version]);
 
   useEffect(() => {
     let active = true;
@@ -543,26 +659,26 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
 
   useEffect(() => {
     if (!monacoRef.current) return;
-    const theme = focusMode ? "runtime-mock-focus" : "runtime-mock-light";
     defineEditorThemes(monacoRef.current);
-    monacoRef.current.editor.setTheme(theme);
-  }, [focusMode]);
+    monacoRef.current.editor.setTheme(monacoTheme);
+  }, [monacoTheme]);
 
   function editorWillMount(monaco: Monaco) {
     defineEditorThemes(monaco);
-    monaco.editor.setTheme(focusMode ? "runtime-mock-focus" : "runtime-mock-light");
+    monaco.editor.setTheme(monacoTheme);
   }
 
   function editorMount(editorInstance: editor.IStandaloneCodeEditor, monaco: Monaco) {
     editorRef.current = editorInstance;
     monacoRef.current = monaco;
     defineEditorThemes(monaco);
-    monaco.editor.setTheme(focusMode ? "runtime-mock-focus" : "runtime-mock-light");
+    monaco.editor.setTheme(monacoTheme);
     disposables.current = registerGroovy(monaco);
     editorInstance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => void save());
   }
 
   function changeApplication(value: string) {
+    if (immutableRuleIdentity) return;
     setApplicationId(value);
     setEnvironmentId("");
     setClassId("");
@@ -579,6 +695,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
   }
 
   function changeEnvironment(value: string) {
+    if (immutableRuleIdentity) return;
     setEnvironmentId(value);
     setClassId("");
     setClassName("");
@@ -594,6 +711,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
   }
 
   function selectTarget(target: TargetOption) {
+    if (immutableRuleIdentity) return;
     setClassId(target.classId);
     setClassName(target.className);
     setClassLoaderId(target.classLoaderId);
@@ -707,6 +825,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
       setDirty(false);
       toast.success(ruleId ? "已创建不可变规则版本" : "规则草稿已保存");
       if (!ruleId && saved.id) router.replace(`/rules/${saved.id}`);
+      if (ruleId) router.replace(`/rules/${ruleId}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存失败，编辑内容仍保留在当前页面");
     } finally {
@@ -748,13 +867,15 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
       )}
     >
       <div className="mb-4 flex shrink-0 flex-wrap items-center gap-3">
-        <Button variant="ghost" size="icon" className={cn(focusMode && "text-slate-300 hover:bg-white/10 hover:text-white")} onClick={() => requestNavigation("/rules")}><ArrowLeft /></Button>
+        <Button variant="ghost" size="icon" className={cn(focusMode && "text-slate-300 hover:bg-white/10 hover:text-white")} onClick={() => requestNavigation(ruleId ? `/rules/${ruleId}` : "/rules")}><ArrowLeft /></Button>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h1 className={cn("truncate text-lg font-semibold", focusMode ? "text-white" : "text-slate-950")}>{name.trim() || "创建规则"}</h1>
             {!ruleId ? <Badge variant="warning">尚未保存</Badge> : dirty ? <Badge variant="warning">未保存</Badge> : <Badge variant="success">已保存</Badge>}
           </div>
-          <p className={cn("text-xs", focusMode ? "text-slate-500" : "text-slate-400")}>{ruleId ? `创建 ${ruleId} 的新版本` : "新建规则"} · Groovy 安全沙箱</p>
+          <p className={cn("text-xs", focusMode ? "text-slate-500" : "text-slate-400")}>
+            {ruleId ? `${version && version !== "new" ? `基于 v${version} 查看/修改并保存为新版本` : `创建 ${ruleId} 的新版本`}` : "新建规则"} · Groovy 安全沙箱
+          </p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button variant="secondary" size="sm" className={cn(focusMode && "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10")} onClick={downloadDraft} disabled={!editorEnabled}><Download />下载草稿</Button>
@@ -766,9 +887,10 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
       </div>
 
       <div
+        ref={workbenchFrameRef}
         data-testid="rule-workbench-frame"
         className={cn(
-          "min-h-0 overflow-clip rounded-xl border bg-white shadow-sm",
+          "theme-panel min-h-0 overflow-clip rounded-xl border shadow-sm",
           focusMode
             ? "flex-1 border-white/10 bg-slate-900 shadow-2xl"
             : "h-[720px] min-h-[620px] border-slate-200 lg:h-auto lg:min-h-0 lg:flex-1",
@@ -778,14 +900,14 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
           className="grid h-full min-h-0 overflow-hidden"
           style={{
             gridTemplateColumns: `${focusMode ? 0 : leftWidth}px minmax(460px,1fr) ${focusMode || !sideOpen ? 0 : 300}px`,
-            gridTemplateRows: bottomOpen && !focusMode ? "minmax(240px,1fr) minmax(180px,34%)" : "minmax(0,1fr) 0px",
+            gridTemplateRows: bottomOpen && !focusMode ? `minmax(240px,1fr) ${bottomHeight}px` : "minmax(0,1fr) 0px",
           }}
         >
           <aside
             data-testid="rule-config-scroll"
-            className={cn("scrollbar-thin min-h-0 overflow-y-auto overscroll-contain border-r bg-slate-50/70", focusMode && "invisible")}
+            className={cn("scrollbar-thin min-h-0 overflow-y-auto overscroll-contain border-r bg-[var(--surface-subtle)]", focusMode && "invisible")}
           >
-            <div className="flex items-center justify-between border-b bg-white px-4 py-3"><span className="flex items-center gap-2 text-sm font-semibold"><Focus className="size-4 text-indigo-600" />目标与策略</span><ChevronDown className="size-4 text-slate-400" /></div>
+            <div className="theme-panel flex items-center justify-between border-b px-4 py-3"><span className="flex items-center gap-2 text-sm font-semibold"><Focus className="size-4 text-indigo-600" />目标与策略</span><ChevronDown className="size-4 text-slate-400" /></div>
             <div className="space-y-4 p-4">
               <div>
                 <div className="mb-3 flex items-center gap-2">
@@ -794,39 +916,61 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                 </div>
                 <label className="block" htmlFor="rule-name">
                   <span className="mb-1.5 block text-xs font-medium text-slate-600">规则名称</span>
-                  <Input id="rule-name" placeholder="例如：支付超时故障注入" value={name} onChange={(event) => { setName(event.target.value); setDirty(true); }} />
+                  <Input
+                    id="rule-name"
+                    placeholder="例如：支付超时故障注入"
+                    value={name}
+                    disabled={immutableRuleIdentity}
+                    onChange={(event) => {
+                      if (immutableRuleIdentity) return;
+                      setName(event.target.value);
+                      setDirty(true);
+                    }}
+                  />
                 </label>
                 <div className="mt-3 block">
                   <span className="mb-1.5 block text-xs font-medium text-slate-600">应用</span>
-                  <Select
-                    value={applicationId}
-                    onValueChange={changeApplication}
-                    disabled={metadataLoading || Boolean(metadataError)}
-                  >
-                    <SelectTrigger id="rule-application" aria-label="应用">
-                      <SelectValue placeholder={metadataLoading ? "正在加载应用…" : "请选择应用"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {applicationId && !applicationIds.includes(applicationId) ? <SelectItem value={applicationId}>{applicationId}</SelectItem> : null}
-                      {applications.map((application) => <SelectItem key={application.id} value={application.id}>{application.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  {immutableRuleIdentity ? (
+                    <div id="rule-application" className="rounded-lg border bg-[var(--field-disabled-bg)] px-3 py-2 text-sm text-[color:var(--foreground)]">
+                      {selectedApplicationLabel || "—"}
+                    </div>
+                  ) : (
+                    <Select
+                      value={applicationId}
+                      onValueChange={changeApplication}
+                      disabled={metadataLoading || Boolean(metadataError)}
+                    >
+                      <SelectTrigger id="rule-application" aria-label="应用">
+                        <SelectValue placeholder={metadataLoading ? "正在加载应用…" : "请选择应用"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {applicationId && !applicationIds.includes(applicationId) ? <SelectItem value={applicationId}>{applicationId}</SelectItem> : null}
+                        {applications.map((application) => <SelectItem key={application.id} value={application.id}>{application.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
                 <div className="mt-3 block">
                   <span className="mb-1.5 block text-xs font-medium text-slate-600">环境</span>
-                  <Select
-                    value={environmentId}
-                    onValueChange={changeEnvironment}
-                    disabled={!applicationId}
-                  >
-                    <SelectTrigger id="rule-environment" aria-label="环境">
-                      <SelectValue placeholder={applicationId ? "请选择环境" : "请先选择应用"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {environmentId && !environmentIds.includes(environmentId) ? <SelectItem value={environmentId}>{environmentId}</SelectItem> : null}
-                      {environments.map((environment) => <SelectItem key={environment.id} value={environment.id}>{environment.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  {immutableRuleIdentity ? (
+                    <div id="rule-environment" className="rounded-lg border bg-[var(--field-disabled-bg)] px-3 py-2 text-sm text-[color:var(--foreground)]">
+                      {selectedEnvironmentLabel || "—"}
+                    </div>
+                  ) : (
+                    <Select
+                      value={environmentId}
+                      onValueChange={changeEnvironment}
+                      disabled={!applicationId}
+                    >
+                      <SelectTrigger id="rule-environment" aria-label="环境">
+                        <SelectValue placeholder={applicationId ? "请选择环境" : "请先选择应用"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {environmentId && !environmentIds.includes(environmentId) ? <SelectItem value={environmentId}>{environmentId}</SelectItem> : null}
+                        {environments.map((environment) => <SelectItem key={environment.id} value={environment.id}>{environment.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
                 {metadataError ? (
                   <div className="mt-3 rounded-lg border border-red-100 bg-red-50 p-3 text-xs leading-5 text-red-700">
@@ -834,7 +978,12 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                   </div>
                 ) : !metadataLoading && !applications.length ? (
                   <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
-                    尚未发现应用实例。请先在“应用与环境”中完成接入。
+                    尚未发现应用实例。请先在“应用实例”中完成接入。
+                  </div>
+                ) : null}
+                {immutableRuleIdentity ? (
+                  <div className="mt-3 rounded-lg border bg-[var(--surface-muted)] px-3 py-2 text-xs leading-5 text-[color:var(--muted-strong)]">
+                    基础信息继承自原规则。新版本只允许调整执行策略和注入脚本。
                   </div>
                 ) : null}
               </div>
@@ -915,27 +1064,43 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                       />
                     </div>
                     {targetSelected ? (
-                      <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 p-3">
+                      <div className="mt-3 rounded-lg border border-[color:var(--border-strong)] bg-[var(--surface-muted)] p-3">
                         <div className="flex items-start gap-2">
-                          <Target className="mt-0.5 size-4 shrink-0 text-indigo-600" />
+                          <Target className="mt-0.5 size-4 shrink-0 text-[color:var(--primary)]" />
                           <div className="min-w-0">
-                            <p className="truncate font-mono text-[11px] text-indigo-900">{className}</p>
-                            <p className="mt-1 truncate font-mono text-xs font-semibold text-indigo-700">#{methodName}{methodDescriptor}</p>
-                            <p className="mt-1 truncate font-mono text-[10px] text-indigo-500">加载器：{classLoaderId}</p>
+                            <HoverFullContent
+                              content={targetFullText({
+                                className,
+                                methodName,
+                                descriptor: methodDescriptor,
+                                classLoaderId,
+                                parameterTypes: [],
+                                returnType: "",
+                                instanceCount: 0,
+                              })}
+                            >
+                              <p className="truncate font-mono text-[11px] text-[color:var(--foreground)]">{className}</p>
+                              <p className="mt-1 truncate font-mono text-xs font-semibold text-[color:var(--primary-strong)]">#{methodName}{methodDescriptor}</p>
+                              <p className="mt-1 truncate font-mono text-[10px] text-[color:var(--muted)]">加载器：{classLoaderId}</p>
+                            </HoverFullContent>
                           </div>
-                          <button type="button" onClick={() => {
-                            setClassId("");
-                            setClassName("");
-                            setClassLoaderId("");
-                            setMethodName("");
-                            setMethodDescriptor("");
-                            setTargetQuery("");
-                            setExecutionPhase("");
-                            setDirty(true);
-                            setDiagnostics([]);
-                            setValidationStatus("idle");
-                            setTestResult(null);
-                          }} className="ml-auto shrink-0 text-[10px] font-medium text-indigo-600 hover:text-indigo-800">更换</button>
+                          {immutableRuleIdentity ? (
+                            <Badge variant="neutral" className="ml-auto shrink-0">已锁定</Badge>
+                          ) : (
+                            <button type="button" onClick={() => {
+                              setClassId("");
+                              setClassName("");
+                              setClassLoaderId("");
+                              setMethodName("");
+                              setMethodDescriptor("");
+                              setTargetQuery("");
+                              setExecutionPhase("");
+                              setDirty(true);
+                              setDiagnostics([]);
+                              setValidationStatus("idle");
+                              setTestResult(null);
+                            }} className="ml-auto shrink-0 text-[10px] font-medium text-[color:var(--primary)] hover:text-[color:var(--primary-strong)]">更换</button>
+                          )}
                         </div>
                       </div>
                     ) : (
@@ -947,28 +1112,32 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                             type="button"
                             key={`${target.classId}#${target.methodName}${target.descriptor}`}
                             onClick={() => selectTarget(target)}
-                            className="w-full min-w-0 overflow-hidden rounded-lg border border-transparent px-3 py-2 text-left hover:border-indigo-100 hover:bg-indigo-50"
+                            className="w-full min-w-0 overflow-visible rounded-lg border border-[color:var(--border)] bg-[var(--surface-muted)] px-3 py-2 text-left transition hover:border-[color:var(--primary)] hover:bg-[var(--surface-strong)]"
                           >
-                            <p className="truncate font-mono text-[10px] text-slate-500">{target.className}</p>
-                            <p className="mt-1 truncate font-mono text-xs font-medium text-slate-800">#{target.methodName}{target.descriptor}</p>
-                            <p className="mt-1 truncate text-[10px] text-slate-400">
-                              {target.parameterTypes.join(", ") || "无参数"} → {target.returnType || "void"} · {target.instanceCount} 个在线实例
-                            </p>
+                            <HoverFullContent content={targetFullText(target)}>
+                              <p className="truncate font-mono text-[10px] text-[color:var(--muted)]">{target.className}</p>
+                              <p className="mt-1 truncate font-mono text-xs font-medium text-[color:var(--foreground)]">#{target.methodName}{target.descriptor}</p>
+                              <p className="mt-1 truncate text-[10px] text-[color:var(--muted)]">
+                                {target.parameterTypes.join(", ") || "无参数"} → {target.returnType || "void"} · {target.instanceCount} 个在线实例
+                              </p>
+                            </HoverFullContent>
                           </button>
                         )) : (
                           <p className="rounded-lg border border-dashed p-3 text-xs leading-5 text-slate-400">当前在线 JVM 中没有发现匹配方法；可切换到手动填写。</p>
                         )}
                       </div>
                     )}
-                    <button type="button" onClick={() => {
-                      setManualTarget(true);
-                      setTargetQuery("");
-                      setClassId("");
-                      setClassName("");
-                      setClassLoaderId("");
-                      setMethodName("");
-                      setMethodDescriptor("");
-                    }} className="mt-2 text-xs font-medium text-indigo-600 hover:text-indigo-700">手动填写精确目标</button>
+                    {!immutableRuleIdentity ? (
+                      <button type="button" onClick={() => {
+                        setManualTarget(true);
+                        setTargetQuery("");
+                        setClassId("");
+                        setClassName("");
+                        setClassLoaderId("");
+                        setMethodName("");
+                        setMethodDescriptor("");
+                      }} className="mt-2 text-xs font-medium text-[color:var(--primary)] hover:text-[color:var(--primary-strong)]">手动填写精确目标</button>
+                    ) : null}
                   </>
                 )}
               </div>
@@ -1019,12 +1188,12 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
           </aside>
 
           <section
-            className={cn("min-h-0 min-w-0 overflow-hidden border-r", focusMode ? "border-white/10 bg-slate-900" : "border-slate-200 bg-[#f8fafd]")}
+            className={cn("min-h-0 min-w-0 overflow-hidden border-r", darkEditorSurface ? "border-white/10 bg-slate-900" : "border-slate-200 bg-[#f8fafd]")}
             data-testid="rule-editor-surface"
-            data-editor-theme={focusMode ? "dark" : "light"}
+            data-editor-theme={darkEditorSurface ? "dark" : "light"}
           >
-            <div className={cn("flex h-11 items-center border-b px-3 text-xs", focusMode ? "border-white/10 bg-[#111a2d] text-slate-300" : "border-slate-200 bg-white/85 text-slate-600")}>
-              <Code2 className={cn("mr-2 size-4", focusMode ? "text-indigo-300" : "text-indigo-600")} />
+            <div className={cn("flex h-11 items-center border-b px-3 text-xs", darkEditorSurface ? "border-white/10 bg-[#111a2d] text-slate-300" : "border-slate-200 bg-white/85 text-slate-600")}>
+              <Code2 className={cn("mr-2 size-4", darkEditorSurface ? "text-indigo-300" : "text-indigo-600")} />
               <span className="font-mono">rule.groovy</span>
               {executionPhase ? <Badge variant="neutral" className={cn("ml-3", focusMode && "border-white/10 bg-white/10 text-slate-300")}>{phaseLabel(executionPhase)}</Badge> : null}
               <div className="ml-auto flex items-center gap-1">
@@ -1034,7 +1203,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                     <button type="button" onClick={() => setSideOpen((value) => !value)} className={cn("rounded p-1.5 hover:bg-slate-200/70", sideOpen ? "text-indigo-600" : "text-slate-400")} aria-label={sideOpen ? "收起诊断面板" : "展开诊断面板"}><PanelRightOpen className="size-3.5" /></button>
                   </>
                 ) : null}
-                <span className={cn("ml-1 flex items-center gap-1.5", focusMode ? "text-slate-500" : "text-slate-400")}><Braces className="size-3.5" />Groovy · UTF-8</span>
+                <span className={cn("ml-1 flex items-center gap-1.5", darkEditorSurface ? "text-slate-500" : "text-slate-400")}><Braces className="size-3.5" />Groovy · UTF-8</span>
               </div>
             </div>
             <div className="relative min-h-0 h-[calc(100%-44px)]">
@@ -1046,22 +1215,22 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
                   onChange={markDirty}
                   beforeMount={editorWillMount}
                   onMount={editorMount}
-                  path={`runtime-mock://rules/${ruleId ?? "new"}/draft.groovy`}
-                  theme={focusMode ? "runtime-mock-focus" : "runtime-mock-light"}
+                  path={`runtime-mock://rules/${ruleId ?? "new"}/${version ?? "draft"}.groovy`}
+                  theme={monacoTheme}
                   options={{ minimap: { enabled: false }, fontFamily: "'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace", fontSize: 13, lineHeight: 22, fontLigatures: true, tabSize: 4, insertSpaces: true, automaticLayout: true, padding: { top: 16, bottom: 16 }, scrollBeyondLastLine: false, bracketPairColorization: { enabled: true }, suggest: { showSnippets: true }, wordWrap: "on", renderLineHighlight: "all", overviewRulerBorder: false, hideCursorInOverviewRuler: true, foldingHighlight: false, smoothScrolling: true }}
                 />
               ) : editorEnabled ? (
-                <div className={cn("flex h-full items-center justify-center text-sm", focusMode ? "bg-slate-900 text-slate-500" : "bg-slate-50 text-slate-400")}><Loader2 className="mr-2 size-4 animate-spin" />正在初始化本地代码编辑器…</div>
+                <div className={cn("flex h-full items-center justify-center text-sm", darkEditorSurface ? "bg-slate-900 text-slate-500" : "bg-slate-50 text-slate-400")}><Loader2 className="mr-2 size-4 animate-spin" />正在初始化本地代码编辑器…</div>
               ) : (
-                <div className="flex h-full items-center justify-center bg-[radial-gradient(circle_at_top,_#f2f3ff_0,_#fbfcfe_45%,_#f8fafc_100%)] p-8 text-center">
-                  <div className="max-w-md rounded-2xl border border-white bg-white/75 px-8 py-7 shadow-[0_18px_45px_-30px_rgba(79,70,229,0.45)] backdrop-blur">
+                <div className={cn("flex h-full items-center justify-center p-8 text-center", darkEditorSurface ? "bg-slate-900" : "bg-[radial-gradient(circle_at_top,_#f2f3ff_0,_#fbfcfe_45%,_#f8fafc_100%)]")}>
+                  <div className="theme-panel-elevated max-w-md rounded-2xl border px-8 py-7 backdrop-blur">
                     <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-2xl border border-indigo-100 bg-indigo-50 text-indigo-600 shadow-sm"><Code2 className="size-5" /></div>
                     <p className="font-semibold text-slate-900">{targetSelected ? "请选择执行阶段" : "请先选择目标方法"}</p>
                     <p className="mt-2 text-xs leading-5 text-slate-500">完成左侧配置后再加载代码编辑器，让注意力保持在当前步骤。编辑器将以安全的 <code className="rounded bg-slate-100 px-1.5 py-0.5 text-indigo-700">mock.proceed()</code> 骨架开始。</p>
-                    <div className="mt-5 flex flex-wrap justify-center gap-2 text-[10px] font-medium text-slate-500">
-                      <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">安全默认脚本</span>
-                      <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">服务端校验</span>
-                      <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">受控试运行</span>
+                    <div className="mt-5 flex flex-wrap justify-center gap-2 text-[10px] font-medium text-[color:var(--muted)]">
+                      <span className="theme-muted-panel rounded-full border px-2.5 py-1">安全默认脚本</span>
+                      <span className="theme-muted-panel rounded-full border px-2.5 py-1">服务端校验</span>
+                      <span className="theme-muted-panel rounded-full border px-2.5 py-1">受控试运行</span>
                     </div>
                   </div>
                 </div>
@@ -1069,7 +1238,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
             </div>
           </section>
 
-          <aside className={cn("scrollbar-thin min-h-0 overflow-y-auto overscroll-contain bg-white", (focusMode || !sideOpen) && "invisible")}>
+          <aside className={cn("theme-panel scrollbar-thin min-h-0 overflow-y-auto overscroll-contain", (focusMode || !sideOpen) && "invisible")}>
             <div className="flex h-11 border-b">
               <button onClick={() => setSideTab("diagnostics")} className={cn("flex-1 border-b-2 text-xs font-medium", sideTab === "diagnostics" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}>诊断 ({diagnostics.length})</button>
               <button onClick={() => setSideTab("context")} className={cn("flex-1 border-b-2 text-xs font-medium", sideTab === "context" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}>上下文</button>
@@ -1078,14 +1247,14 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
               <div className="p-3">
                 {!diagnostics.length ? (
                   validationStatus === "valid"
-                    ? <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-6 text-center"><CheckCircle2 className="mx-auto mb-2 size-6 text-emerald-500" /><p className="text-sm font-medium text-emerald-800">校验通过</p><p className="mt-1 text-xs leading-5 text-emerald-600">未发现语法或安全策略问题。</p></div>
+                    ? <div className="rounded-xl border bg-[var(--surface-muted)] p-6 text-center shadow-sm"><CheckCircle2 className="mx-auto mb-2 size-6 text-[color:var(--success)]" /><p className="text-sm font-medium text-[color:var(--foreground)]">校验通过</p><p className="mt-1 text-xs leading-5 text-[color:var(--muted-strong)]">未发现语法或安全策略问题。</p></div>
                     : validationStatus === "invalid"
-                      ? <div className="rounded-xl border border-red-200 bg-red-50/60 p-6 text-center"><XCircle className="mx-auto mb-2 size-6 text-red-500" /><p className="text-sm font-medium text-red-800">校验未通过</p><p className="mt-1 text-xs leading-5 text-red-600">服务端未返回具体诊断，请稍后重试或检查平台日志。</p></div>
-                      : <div className="rounded-xl border border-dashed p-6 text-center"><ShieldAlert className="mx-auto mb-2 size-6 text-slate-400" /><p className="text-sm font-medium text-slate-700">尚未校验</p><p className="mt-1 text-xs leading-5 text-slate-400">完成规则配置后，点击“校验”进行语法与安全策略检查。</p></div>
+                      ? <div className="rounded-xl border bg-[var(--surface-muted)] p-6 text-center shadow-sm"><XCircle className="mx-auto mb-2 size-6 text-[color:var(--danger)]" /><p className="text-sm font-medium text-[color:var(--foreground)]">校验未通过</p><p className="mt-1 text-xs leading-5 text-[color:var(--muted-strong)]">服务端未返回具体诊断，请稍后重试或检查平台日志。</p></div>
+                      : <div className="rounded-xl border border-dashed bg-[var(--surface-subtle)] p-6 text-center"><ShieldAlert className="mx-auto mb-2 size-6 text-[color:var(--muted)]" /><p className="text-sm font-medium text-[color:var(--foreground)]">尚未校验</p><p className="mt-1 text-xs leading-5 text-[color:var(--muted)]">完成规则配置后，点击“校验”进行语法与安全策略检查。</p></div>
                 ) : diagnostics.map((item, index) => (
-                  <button key={`${item.code}-${index}`} onClick={() => { editorRef.current?.revealPositionInCenter({ lineNumber: item.line, column: item.column }); editorRef.current?.setPosition({ lineNumber: item.line, column: item.column }); editorRef.current?.focus(); }} className="mb-2 w-full rounded-lg border p-3 text-left hover:bg-slate-50">
-                    <div className="flex items-center gap-2">{item.severity === "error" ? <XCircle className="size-4 text-red-500" /> : item.severity === "warning" ? <AlertTriangle className="size-4 text-amber-500" /> : <Info className="size-4 text-sky-500" />}<span className="font-mono text-[10px] text-slate-400">{item.code}</span><span className="ml-auto text-[10px] text-slate-400">{item.line}:{item.column}</span></div>
-                    <p className="mt-2 text-xs leading-5 text-slate-700">{item.message}</p>
+                  <button key={`${item.code}-${index}`} onClick={() => { editorRef.current?.revealPositionInCenter({ lineNumber: item.line, column: item.column }); editorRef.current?.setPosition({ lineNumber: item.line, column: item.column }); editorRef.current?.focus(); }} className="mb-2 w-full rounded-lg border bg-[var(--surface-subtle)] p-3 text-left transition hover:bg-[var(--surface-muted)]">
+                    <div className="flex items-center gap-2">{item.severity === "error" ? <XCircle className="size-4 text-[color:var(--danger)]" /> : item.severity === "warning" ? <AlertTriangle className="size-4 text-[color:var(--warning)]" /> : <Info className="size-4 text-[color:var(--info)]" />}<span className="font-mono text-[10px] text-[color:var(--muted)]">{item.code}</span><span className="ml-auto text-[10px] text-[color:var(--muted)]">{item.line}:{item.column}</span></div>
+                    <p className="mt-2 text-xs leading-5 text-[color:var(--foreground)]">{item.message}</p>
                   </button>
                 ))}
               </div>
@@ -1103,7 +1272,16 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
             )}
           </aside>
 
-          <section className={cn("col-span-3 min-h-0 min-w-0 overflow-hidden border-t bg-white", (!bottomOpen || focusMode) && "invisible")}>
+          <section className={cn("theme-panel relative col-span-3 min-h-0 min-w-0 overflow-hidden border-t", (!bottomOpen || focusMode) && "invisible")}>
+            <div
+              role="separator"
+              aria-label="调整试运行面板高度"
+              aria-orientation="horizontal"
+              onPointerDown={startBottomResize}
+              className="group absolute -top-1 left-0 right-0 z-20 flex h-3 cursor-row-resize touch-none items-center justify-center"
+            >
+              <span className="h-1 w-16 rounded-full bg-transparent transition group-hover:bg-[var(--border-strong)] group-active:bg-[var(--primary)]" />
+            </div>
             <div className="flex h-10 items-center border-b px-3">
               <button onClick={() => setBottomTab("test")} className={cn("flex h-full items-center gap-2 border-b-2 px-3 text-xs font-medium", bottomTab === "test" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}><Beaker className="size-3.5" />试运行</button>
               <button onClick={() => setBottomTab("diff")} className={cn("flex h-full items-center gap-2 border-b-2 px-3 text-xs font-medium", bottomTab === "diff" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}><FileDiff className="size-3.5" />版本 Diff</button>
@@ -1112,8 +1290,8 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
             {bottomTab === "test" ? (
               <div className="grid h-[calc(100%-40px)] min-h-0 grid-cols-2 divide-x">
                 <div className="min-h-0 overflow-y-auto overscroll-contain p-3"><div className="mb-2 flex items-center justify-between"><span className="text-xs font-medium text-slate-600">受控输入（JSON）</span><Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(testInput)}><Copy />复制</Button></div><Textarea value={testInput} onChange={(event) => setTestInput(event.target.value)} className="min-h-24 h-[calc(100%-36px)] resize-none font-mono text-xs" /></div>
-                <div className="scrollbar-thin min-h-0 overflow-y-auto overscroll-contain bg-slate-50/70 p-3 text-xs text-slate-600">
-                  {!testResult ? <div className="flex h-full flex-col items-center justify-center text-slate-400"><div className="mb-3 flex size-10 items-center justify-center rounded-xl border border-slate-200 bg-white shadow-sm"><TerminalSquare className="size-5 text-slate-500" /></div><span>点击“试运行”查看输出、异常、日志和对象差异</span></div> : (
+                <div className="scrollbar-thin min-h-0 overflow-y-auto overscroll-contain bg-[var(--surface-subtle)] p-3 text-xs text-[color:var(--muted-strong)]">
+                  {!testResult ? <div className="flex h-full flex-col items-center justify-center text-slate-400"><div className="theme-panel-elevated mb-3 flex size-10 items-center justify-center rounded-xl border"><TerminalSquare className="size-5 text-slate-500" /></div><span>点击“试运行”查看输出、异常、日志和对象差异</span></div> : (
                     <>
                       <div className="mb-3 flex items-center gap-2">{testResult.status === "SUCCESS" ? <CheckCircle2 className="size-4 text-emerald-500" /> : <XCircle className="size-4 text-red-500" />}<span className="font-semibold text-slate-800">{testResult.status}</span><span className="ml-auto text-slate-400">{testResult.durationMs} ms</span></div>
                       <pre className="whitespace-pre-wrap rounded-lg bg-slate-900 p-3 font-mono leading-5 text-slate-200 shadow-inner">{JSON.stringify(testResult.output ?? testResult.exception, null, 2)}</pre>
@@ -1124,7 +1302,7 @@ export function RuleWorkbench({ ruleId }: { ruleId?: string }) {
               </div>
             ) : (
               <div className="h-[calc(100%-40px)] min-h-0">
-                {monacoReady ? <MonacoDiffEditor original={previousScript} modified={script} language="groovy-runtime-mock" theme="runtime-mock-light" options={{ readOnly: true, renderSideBySide: true, minimap: { enabled: false }, automaticLayout: true, fontSize: 11, lineHeight: 17 }} /> : null}
+                {monacoReady ? <MonacoDiffEditor original={previousScript} modified={script} language="groovy-runtime-mock" theme={monacoTheme} options={{ readOnly: true, renderSideBySide: true, minimap: { enabled: false }, automaticLayout: true, fontSize: 11, lineHeight: 17 }} /> : null}
               </div>
             )}
           </section>

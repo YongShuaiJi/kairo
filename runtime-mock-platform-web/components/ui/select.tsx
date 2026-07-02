@@ -17,9 +17,9 @@ export function SelectTrigger({
   return (
     <SelectPrimitive.Trigger
       className={cn(
-        "flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-sm outline-none transition",
-        "data-[placeholder]:text-slate-400 hover:border-slate-300 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100",
-        "disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:opacity-70",
+        "theme-field flex h-10 w-full items-center justify-between gap-2 rounded-lg border px-3 text-sm shadow-sm outline-none transition",
+        "data-[placeholder]:text-[color:var(--muted)] hover:border-[color:var(--border-strong)]",
+        "disabled:cursor-not-allowed disabled:bg-[var(--field-disabled-bg)] disabled:text-[color:var(--muted)] disabled:opacity-70",
         "[&>span]:min-w-0 [&>span]:truncate",
         className,
       )}
@@ -27,7 +27,7 @@ export function SelectTrigger({
     >
       {children}
       <SelectPrimitive.Icon asChild>
-        <ChevronDown className="size-4 shrink-0 text-slate-400" />
+        <ChevronDown className="size-4 shrink-0 text-[color:var(--muted)]" />
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   );
@@ -46,19 +46,19 @@ export function SelectContent({
         position={position}
         sideOffset={sideOffset}
         className={cn(
-          "relative z-[70] max-h-72 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-700 shadow-xl",
+          "theme-panel-elevated relative z-[70] max-h-72 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-xl border text-sm",
           "data-[state=closed]:animate-out data-[state=open]:animate-in",
           className,
         )}
         {...props}
       >
-        <SelectPrimitive.ScrollUpButton className="flex h-7 items-center justify-center bg-white text-slate-400">
+        <SelectPrimitive.ScrollUpButton className="flex h-7 items-center justify-center bg-[var(--surface-elevated)] text-[color:var(--muted)]">
           <ChevronUp className="size-4" />
         </SelectPrimitive.ScrollUpButton>
         <SelectPrimitive.Viewport className="p-1">
           {children}
         </SelectPrimitive.Viewport>
-        <SelectPrimitive.ScrollDownButton className="flex h-7 items-center justify-center bg-white text-slate-400">
+        <SelectPrimitive.ScrollDownButton className="flex h-7 items-center justify-center bg-[var(--surface-elevated)] text-[color:var(--muted)]">
           <ChevronDown className="size-4" />
         </SelectPrimitive.ScrollDownButton>
       </SelectPrimitive.Content>
@@ -72,7 +72,7 @@ export function SelectLabel({
 }: React.ComponentProps<typeof SelectPrimitive.Label>) {
   return (
     <SelectPrimitive.Label
-      className={cn("px-8 py-1.5 text-xs font-semibold text-slate-500", className)}
+      className={cn("px-8 py-1.5 text-xs font-semibold text-[color:var(--muted)]", className)}
       {...props}
     />
   );
@@ -87,14 +87,14 @@ export function SelectItem({
     <SelectPrimitive.Item
       className={cn(
         "relative flex w-full cursor-default select-none items-center rounded-lg py-2 pl-8 pr-3 text-sm outline-none",
-        "focus:bg-indigo-50 focus:text-indigo-700 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        "focus:bg-[var(--primary-soft)] focus:text-[color:var(--primary-strong)] data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         className,
       )}
       {...props}
     >
       <span className="absolute left-2.5 flex size-4 items-center justify-center">
         <SelectPrimitive.ItemIndicator>
-          <Check className="size-4 text-indigo-600" />
+          <Check className="size-4 text-[color:var(--primary)]" />
         </SelectPrimitive.ItemIndicator>
       </span>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
@@ -106,5 +106,5 @@ export function SelectSeparator({
   className,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Separator>) {
-  return <SelectPrimitive.Separator className={cn("-mx-1 my-1 h-px bg-slate-100", className)} {...props} />;
+  return <SelectPrimitive.Separator className={cn("-mx-1 my-1 h-px bg-[var(--border)]", className)} {...props} />;
 }

@@ -47,7 +47,6 @@ npm run dev
 ## 质量检查
 
 ```bash
-npm run api:generate
 npm run typecheck
 npm run lint
 npm test
@@ -55,6 +54,6 @@ npm run build
 npm run test:e2e
 ```
 
-`docs/api/platform-openapi.yaml` 是 API 类型来源。真实模式已接入 `/auth/me`、脚本校验与
-试运行、聚合仪表盘、统一分页/详情查询、目标搜索、录制批次与事件等 Platform API，不使用
-前端假数据掩盖后端错误。Demo 模式仅用于隔离的前端开发和 Playwright 验收。
+真实模式已接入 `/auth/me`、脚本校验与试运行、聚合仪表盘、统一分页/详情查询、目标搜索、
+规则版本台账、发布计划和卸载记录等 Platform API。Demo 模式仅用于隔离的前端开发和
+Playwright 验收。

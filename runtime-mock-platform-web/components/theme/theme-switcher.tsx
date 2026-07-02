@@ -14,7 +14,7 @@ export function ThemeSwitcher({ compact = false }: { compact?: boolean }) {
   const { mode, setMode } = useTheme();
 
   return (
-    <div className={cn("rounded-xl border border-slate-200 bg-slate-50 p-1", compact ? "grid grid-cols-3" : "flex")}>
+    <div className={cn("theme-muted-panel rounded-xl border p-1", compact ? "grid grid-cols-3" : "flex")}>
       {modes.map((item) => {
         const Icon = item.icon;
         const active = mode === item.value;
@@ -25,7 +25,7 @@ export function ThemeSwitcher({ compact = false }: { compact?: boolean }) {
             onClick={() => setMode(item.value)}
             className={cn(
               "inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition",
-              active ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:bg-white/70 hover:text-slate-800",
+              active ? "bg-[var(--surface-elevated)] text-[color:var(--primary-strong)] shadow-sm" : "text-[color:var(--muted)] hover:bg-[var(--surface-elevated)] hover:text-[color:var(--foreground)]",
             )}
             aria-pressed={active}
           >
@@ -37,4 +37,3 @@ export function ThemeSwitcher({ compact = false }: { compact?: boolean }) {
     </div>
   );
 }
-

@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Fragment, type ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Copy, Plus, RefreshCw, RotateCcw, Search, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Copy, Pencil, Plus, RefreshCw, RotateCcw, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { platformFetch } from "@/lib/api/client";
 import type { PlatformRecord, SessionUser } from "@/lib/api/types";
@@ -22,7 +24,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 
 type PagedResult = { items: PlatformRecord[]; page: number; size: number; total: number };
-const VISIBLE_ENVIRONMENTS = new Set(["DEV", "SIT", "UAT"]);
+const VISIBLE_ENVIRONMENTS = new Set(["dev", "sit", "uat"]);
+type AgentLifecycleAction = "attach" | "deactivate" | "reload";
+type RuleDetailData = {
+  rule: PlatformRecord;
+  versions: PlatformRecord[];
+  targets: PlatformRecord[];
+  capabilities: PlatformRecord[];
+};
 
 function valueOf(record: PlatformRecord, key: string) {
   const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -32,15 +41,39 @@ function valueOf(record: PlatformRecord, key: string) {
 function statusVariant(status: string) {
   const value = status.toUpperCase();
   if (["UP", "ONLINE", "ACTIVE", "READY", "RUNNING", "SUCCESS", "SUCCEEDED", "COMPLETED", "APPROVED", "PUBLISHED", "AVAILABLE", "HEALTHY", "MATCHED", "ACKED"].includes(value)) return "success" as const;
-  if (["PENDING", "WAITING_APPROVAL", "SCHEDULED", "BUILDING", "RETRYING", "RECORDING", "PARTIAL", "MEDIUM", "QUEUED"].includes(value)) return "warning" as const;
+  if (["PENDING", "BUILDING", "RETRYING", "PARTIAL", "MEDIUM", "QUEUED", "STOPPING", "UNLOADING"].includes(value)) return "warning" as const;
   if (["FAILED", "OFFLINE", "REJECTED", "ERROR", "HIGH", "DIFF", "CANCELLED"].includes(value)) return "danger" as const;
-  if (["DRAFT", "PAUSED", "ARCHIVED", "LOW", "ROLLED_BACK"].includes(value)) return "neutral" as const;
+  if (["DRAFT", "PAUSED", "ARCHIVED", "LOW", "UNLOADED", "DISABLED", "STOPPED"].includes(value)) return "neutral" as const;
   return "info" as const;
 }
 
 function environmentName(record: PlatformRecord) {
-  const value = String(valueOf(record, "environmentName") ?? valueOf(record, "type") ?? valueOf(record, "name") ?? "").toUpperCase();
-  return VISIBLE_ENVIRONMENTS.has(value) ? value : value;
+  const value = String(valueOf(record, "environmentName") ?? valueOf(record, "type") ?? valueOf(record, "name") ?? "");
+  const normalized = value.toLowerCase();
+  return VISIBLE_ENVIRONMENTS.has(normalized) ? normalized : value.toLowerCase();
+}
+
+type ApplicationInstanceGroup = {
+  key: string;
+  applicationName: string;
+  environment: string;
+  instances: PlatformRecord[];
+};
+
+function groupApplicationInstances(rows: PlatformRecord[]) {
+  const groups = new Map<string, ApplicationInstanceGroup>();
+  rows.forEach((record) => {
+    const applicationName = String(valueOf(record, "applicationName") ?? "未上报应用");
+    const environment = environmentName(record) || "未分配";
+    const key = `${applicationName}\u0000${environment}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.instances.push(record);
+    } else {
+      groups.set(key, { key, applicationName, environment, instances: [record] });
+    }
+  });
+  return Array.from(groups.values());
 }
 
 function detailTitle(configKey: string, detail: PlatformRecord | null | undefined) {
@@ -66,16 +99,39 @@ function detailValue(key: string, value: unknown, detail: PlatformRecord | null 
   const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
   if (detail && snake === "application_id") return valueOf(detail, "applicationName") ?? value;
   if (detail && snake === "environment_id") return environmentName(detail) || value;
-  if (snake === "environment_name") return String(value ?? "").toUpperCase();
+  if (snake === "environment_name") return String(value ?? "").toLowerCase();
   return value;
 }
 
-function Cell({ value, column }: { value: unknown; column: ResourceColumn }) {
+function versionBadgeStatus(record: PlatformRecord | undefined, columnKey: string, value: unknown) {
+  if (!record) return null;
+  if (columnKey === "onlineVersion") return value ? "ONLINE" : null;
+  if (columnKey === "latestVersion") return valueOf(record, "latestVersionStatus");
+  return null;
+}
+
+function cellTitle(value: unknown) {
+  if (value === null || value === undefined || value === "") return undefined;
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function Cell({ value, column, record }: { value: unknown; column: ResourceColumn; record?: PlatformRecord }) {
   if (value === null || value === undefined || value === "") return <span className="text-slate-300">—</span>;
-  if (["environmentName", "environment_name", "type"].includes(column.key)) {
-    const environment = String(value).toUpperCase();
-    if (VISIBLE_ENVIRONMENTS.has(environment)) return <span>{environment}</span>;
+  if (column.key === "onlineVersion" || column.key === "latestVersion") {
+    const status = versionBadgeStatus(record, column.key, value);
+    return (
+      <span className="inline-flex items-center gap-2 whitespace-nowrap">
+        <span className="font-mono text-xs text-slate-600">v{String(value)}</span>
+        {status ? <Badge variant={statusVariant(String(status))}>{column.key === "onlineVersion" ? "在线" : humanize(status)}</Badge> : null}
+      </span>
+    );
   }
+  if (["environmentName", "environment_name", "type"].includes(column.key)) {
+    const environment = String(value).toLowerCase();
+    if (VISIBLE_ENVIRONMENTS.has(environment)) return <span className="whitespace-nowrap">{environment}</span>;
+  }
+  if (column.key === "loadMode" || column.key === "load_mode") return <span className="whitespace-nowrap">{loadMode(value)}</span>;
   if (column.kind === "status") return <Badge variant={statusVariant(String(value))}>{humanize(String(value))}</Badge>;
   if (column.kind === "date") return <span className="whitespace-nowrap text-slate-500">{formatDate(String(value))}</span>;
   if (column.kind === "bytes") return <span>{formatBytes(Number(value))}</span>;
@@ -90,7 +146,472 @@ function Cell({ value, column }: { value: unknown; column: ResourceColumn }) {
       : column.kind === "mono"
         ? String(value)
         : humanize(value);
-  return <span className={column.kind === "mono" ? "font-mono text-xs text-slate-600" : ""}>{rendered}</span>;
+  if (column.kind === "mono") {
+    return (
+      <span className="inline-block max-w-full truncate whitespace-nowrap font-mono text-xs text-slate-600" title={String(value)}>
+        {shortId(value)}
+      </span>
+    );
+  }
+  return <span className="inline-block max-w-full truncate whitespace-nowrap">{rendered}</span>;
+}
+
+const RULE_COLUMN_WIDTHS: Record<string, string> = {
+  name: "w-[300px] min-w-[300px] max-w-[300px]",
+  applicationName: "w-[240px] min-w-[240px] max-w-[240px]",
+  environmentName: "w-[100px] min-w-[100px] max-w-[100px]",
+  targetMethod: "w-[460px] min-w-[460px] max-w-[460px]",
+  versionCount: "w-[96px] min-w-[96px] max-w-[96px]",
+  enabledVersionCount: "w-[112px] min-w-[112px] max-w-[112px]",
+  disabledVersionCount: "w-[112px] min-w-[112px] max-w-[112px]",
+  onlineVersion: "w-[150px] min-w-[150px] max-w-[150px]",
+  latestVersion: "w-[150px] min-w-[150px] max-w-[150px]",
+};
+
+const RESOURCE_COLUMN_WIDTHS: Record<string, string> = {
+  id: "w-[190px] min-w-[190px] max-w-[190px]",
+  resourceId: "w-[190px] min-w-[190px] max-w-[190px]",
+  resourceVersion: "w-[90px] min-w-[90px] max-w-[90px]",
+  operationPlanId: "w-[190px] min-w-[190px] max-w-[190px]",
+  commandId: "w-[190px] min-w-[190px] max-w-[190px]",
+  instanceId: "w-[190px] min-w-[190px] max-w-[190px]",
+  agentId: "w-[190px] min-w-[190px] max-w-[190px]",
+  instanceNickname: "w-[190px] min-w-[190px] max-w-[190px]",
+  applicationName: "w-[180px] min-w-[180px] max-w-[180px]",
+  environmentName: "w-[100px] min-w-[100px] max-w-[100px]",
+  javaVersion: "w-[100px] min-w-[100px] max-w-[100px]",
+  loadMode: "w-[180px] min-w-[180px] max-w-[180px]",
+  planType: "w-[140px] min-w-[140px] max-w-[140px]",
+  rollbackType: "w-[200px] min-w-[200px] max-w-[200px]",
+  reason: "w-[320px] min-w-[320px] max-w-[320px]",
+  status: "w-[130px] min-w-[130px] max-w-[130px]",
+  updatedAt: "w-[150px] min-w-[150px] max-w-[150px]",
+  finishedAt: "w-[150px] min-w-[150px] max-w-[150px]",
+};
+
+function resourceTableClass(configKey: string) {
+  if (configKey === "rules") return "w-full min-w-[1800px] table-fixed text-left text-sm";
+  if (configKey === "rollouts") return "w-full min-w-[1560px] table-fixed text-left text-sm";
+  return "w-full min-w-[1080px] table-fixed text-left text-sm";
+}
+
+function resourceHeaderCellClass(configKey: string, columnKey: string) {
+  const width = configKey === "rules" ? RULE_COLUMN_WIDTHS[columnKey] ?? "" : RESOURCE_COLUMN_WIDTHS[columnKey] ?? "";
+  const alignment = configKey === "rules" && !["name", "applicationName", "targetMethod"].includes(columnKey) ? "text-center" : "";
+  return `whitespace-nowrap px-4 py-3 ${width} ${alignment}`;
+}
+
+function resourceBodyCellClass(configKey: string, columnKey: string) {
+  if (configKey !== "rules") {
+    const width = RESOURCE_COLUMN_WIDTHS[columnKey] ?? "w-[180px] min-w-[180px] max-w-[180px]";
+    return `whitespace-nowrap px-4 py-3.5 ${width}`;
+  }
+  const width = RULE_COLUMN_WIDTHS[columnKey] ?? "";
+  const alignment = !["name", "applicationName", "targetMethod"].includes(columnKey) ? "text-center" : "";
+  return `whitespace-nowrap px-4 py-3.5 ${width} ${alignment}`;
+}
+
+function resourceCellContentClass(configKey: string, columnKey: string) {
+  if (configKey !== "rules") return "flex min-w-0 max-w-full items-center overflow-hidden whitespace-nowrap";
+  const alignment = !["name", "applicationName", "targetMethod"].includes(columnKey) ? "mx-auto justify-center" : "";
+  return `flex min-w-0 max-w-full items-center overflow-hidden whitespace-nowrap ${alignment}`;
+}
+
+function javaRuntime(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text) return "—";
+  return text.toLowerCase().startsWith("java-") ? `Java ${text.slice(5)}` : humanize(text);
+}
+
+function loadMode(value: unknown) {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (text === "premain") return "启动时加载（premain）";
+  if (text === "attach") return "运行时加载（attach）";
+  return humanize(value);
+}
+
+function instanceOnlineJudgement(detail: PlatformRecord) {
+  const expiresAt = valueOf(detail, "leaseExpiresAt");
+  if (!expiresAt) return "暂无租约信息";
+  const leaseExpiresAt = new Date(String(expiresAt));
+  if (Number.isNaN(leaseExpiresAt.getTime())) return String(expiresAt);
+  return leaseExpiresAt.getTime() >= Date.now()
+    ? `心跳正常，租约有效至 ${formatDate(expiresAt)}`
+    : `心跳已过期，最后租约到 ${formatDate(expiresAt)}`;
+}
+
+function capabilities(value: unknown) {
+  const capabilityText: Record<string, string> = {
+    BYTECODE_TRANSFORM: "字节码修改",
+    DISCOVER_TARGETS: "目标发现",
+    APPLY_RULE: "规则下发",
+    RESET_CLASS: "恢复目标类",
+    RESET_ALL: "恢复全部字节码",
+    RECORD_INVOCATIONS: "调用录制",
+  };
+  if (!value) return [];
+  const parsed = typeof value === "string" ? (() => {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return value.split(",").map((item) => item.trim()).filter(Boolean);
+    }
+  })() : value;
+  return Array.isArray(parsed) ? parsed.map((item) => capabilityText[String(item)] ?? humanize(item)) : [];
+}
+
+function agentOf(detail: PlatformRecord) {
+  const agent = valueOf(detail, "agent");
+  return agent && typeof agent === "object" && !Array.isArray(agent)
+    ? agent as PlatformRecord
+    : null;
+}
+
+function listenAddress(agent: PlatformRecord | null) {
+  if (!agent) return "—";
+  const host = String(valueOf(agent, "listenHost") ?? "");
+  const port = String(valueOf(agent, "listenPort") ?? "");
+  return host && port ? `${host}:${port}` : host || port || "—";
+}
+
+function DetailRow({
+  label,
+  children,
+  mono = false,
+}: {
+  label: string;
+  children: ReactNode;
+  mono?: boolean;
+}) {
+  return (
+    <div className="theme-muted-panel grid grid-cols-[130px_1fr] gap-4 rounded-lg border px-3 py-2.5 text-sm">
+      <span className="text-[color:var(--muted)]">{label}</span>
+      <span className={`break-all whitespace-pre-wrap text-[color:var(--foreground)] ${mono ? "font-mono text-xs" : ""}`}>{children}</span>
+    </div>
+  );
+}
+
+function DetailSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-3">
+      <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{title}</h3>
+      <div className="grid gap-3">{children}</div>
+    </section>
+  );
+}
+
+function EditableNickname({
+  record,
+  nicknamePending,
+  onSubmit,
+}: {
+  record: PlatformRecord;
+  nicknamePending: boolean;
+  onSubmit: (record: PlatformRecord, nickname: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(String(valueOf(record, "nickname") ?? ""));
+
+  useEffect(() => {
+    if (!editing) {
+      setValue(String(valueOf(record, "nickname") ?? ""));
+    }
+  }, [editing, record]);
+
+  function submit() {
+    const next = value.trim();
+    if (!next) {
+      toast.error("昵称不能为空");
+      setValue(String(valueOf(record, "nickname") ?? ""));
+      return;
+    }
+    if (next === String(valueOf(record, "nickname") ?? "")) {
+      setEditing(false);
+      return;
+    }
+    onSubmit(record, next);
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <Input
+        autoFocus
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        onBlur={submit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          }
+          if (event.key === "Escape") {
+            setValue(String(valueOf(record, "nickname") ?? ""));
+            setEditing(false);
+            event.currentTarget.blur();
+          }
+        }}
+        disabled={nicknamePending}
+        aria-label="实例昵称"
+        className="h-9 max-w-72 font-medium"
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setEditing(true);
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+        setEditing(true);
+      }}
+      className="group/nickname inline-flex max-w-72 items-center gap-2 rounded-md px-2 py-1 text-left font-medium text-[color:var(--foreground)] transition hover:bg-[var(--surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-border)]"
+      aria-label="编辑实例昵称"
+      title="编辑昵称"
+    >
+      <span className="truncate">{String(valueOf(record, "nickname") ?? "—")}</span>
+      <Pencil className="size-3.5 shrink-0 text-[color:var(--muted)] opacity-0 transition group-hover/nickname:opacity-100 group-focus-visible/nickname:opacity-100" />
+    </button>
+  );
+}
+
+function ApplicationDetail({
+  detail,
+  nicknamePending,
+  onSubmitNickname,
+}: {
+  detail: PlatformRecord;
+  nicknamePending: boolean;
+  onSubmitNickname: (record: PlatformRecord, nickname: string) => void;
+}) {
+  const agent = agentOf(detail);
+  const capabilityItems = capabilities(valueOf(agent ?? detail, "capabilitiesJson"));
+  return (
+    <div className="space-y-6">
+      <DetailSection title="核心信息">
+        <DetailRow label="实例 ID" mono>{String(valueOf(detail, "id") ?? "—")}</DetailRow>
+        <DetailRow label="应用">{humanize(valueOf(detail, "applicationName"))}</DetailRow>
+        <DetailRow label="环境">{environmentName(detail) || "—"}</DetailRow>
+        <DetailRow label="昵称">
+          <EditableNickname
+            record={detail}
+            nicknamePending={nicknamePending}
+            onSubmit={onSubmitNickname}
+          />
+        </DetailRow>
+        <DetailRow label="状态"><Badge variant={statusVariant(String(valueOf(detail, "status") ?? ""))}>{humanize(valueOf(detail, "status"))}</Badge></DetailRow>
+        <DetailRow label="最近心跳">{formatDate(valueOf(detail, "lastSeenAt"))}</DetailRow>
+      </DetailSection>
+
+      <DetailSection title="运行信息">
+        <DetailRow label="Java 版本">{javaRuntime(valueOf(detail, "runtime") ?? valueOf(detail, "javaVersion"))}</DetailRow>
+        <DetailRow label="JVM 启动时间">{formatDate(valueOf(detail, "jvmStartedAt"))}</DetailRow>
+        <DetailRow label="环境分配状态">{humanize(valueOf(detail, "registrationStatus"))}</DetailRow>
+        <DetailRow label="注册时间">{formatDate(valueOf(detail, "createdAt"))}</DetailRow>
+      </DetailSection>
+
+      <DetailSection title="Agent 信息">
+        {agent ? (
+          <>
+            <DetailRow label="Agent ID" mono>{String(valueOf(agent, "id") ?? "—")}</DetailRow>
+            <DetailRow label="Agent 状态"><Badge variant={statusVariant(String(valueOf(agent, "status") ?? ""))}>{humanize(valueOf(agent, "status"))}</Badge></DetailRow>
+            <DetailRow label="Agent 版本">{humanize(valueOf(agent, "agentVersion"))}</DetailRow>
+            <DetailRow label="加载方式">{loadMode(valueOf(detail, "loadMode"))}</DetailRow>
+            <DetailRow label="最后心跳">{formatDate(valueOf(agent, "lastHeartbeatAt"))}</DetailRow>
+            <DetailRow label="监听地址" mono>{listenAddress(agent)}</DetailRow>
+          </>
+        ) : (
+          <DetailRow label="Agent 状态"><Badge variant="warning">未注册</Badge></DetailRow>
+        )}
+      </DetailSection>
+
+      <details className="theme-panel group rounded-xl border">
+        <summary className="cursor-pointer list-none px-3 py-3 text-sm font-semibold text-[color:var(--foreground)]">
+          <span className="inline-flex items-center gap-2">
+            能力与诊断
+            <span className="text-xs font-normal text-slate-400 group-open:hidden">展开</span>
+            <span className="hidden text-xs font-normal text-slate-400 group-open:inline">收起</span>
+          </span>
+        </summary>
+        <div className="grid gap-3 border-t p-3">
+          <DetailRow label="在线判定">{instanceOnlineJudgement(detail)}</DetailRow>
+          <DetailRow label="可注入能力">
+            {capabilityItems.length ? (
+              <span className="flex flex-wrap gap-1.5">
+                {capabilityItems.map((item) => <Badge key={String(item)} variant="info">{item}</Badge>)}
+              </span>
+            ) : "—"}
+          </DetailRow>
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function JsonBlock({ value }: { value: unknown }) {
+  const text = (() => {
+    if (value === null || value === undefined || value === "") return "—";
+    if (typeof value !== "string") return humanize(value);
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
+  })();
+  return (
+    <pre className="max-h-72 overflow-auto rounded-lg border bg-[var(--surface-subtle)] p-3 font-mono text-xs leading-5 text-[color:var(--foreground)]">
+      {text}
+    </pre>
+  );
+}
+
+function RuleDetail({
+  detail,
+  ruleDetail,
+}: {
+  detail: PlatformRecord;
+  ruleDetail: RuleDetailData | undefined;
+}) {
+  const rule = ruleDetail?.rule ?? detail;
+  const versions = ruleDetail?.versions ?? [];
+  const targets = ruleDetail?.targets ?? [];
+  const capabilitiesList = ruleDetail?.capabilities ?? [];
+  const onlineVersion = valueOf(rule, "onlineVersion") ?? valueOf(detail, "onlineVersion");
+  const latestVersion = valueOf(rule, "latestVersion") ?? valueOf(detail, "latestVersion");
+
+  function versionTargets(version: PlatformRecord) {
+    const versionId = String(valueOf(version, "id") ?? "");
+    return targets.filter((target) => String(valueOf(target, "ruleVersionId") ?? "") === versionId);
+  }
+
+  function versionCapabilities(version: PlatformRecord) {
+    const versionId = String(valueOf(version, "id") ?? "");
+    return capabilitiesList.filter((capability) => String(valueOf(capability, "ruleVersionId") ?? "") === versionId);
+  }
+
+  return (
+    <div className="space-y-6">
+      <DetailSection title="规则信息">
+        <DetailRow label="规则 ID" mono>{String(valueOf(rule, "id") ?? "—")}</DetailRow>
+        <DetailRow label="应用">{humanize(valueOf(rule, "applicationName") ?? valueOf(rule, "applicationId"))}</DetailRow>
+        <DetailRow label="环境">{humanize(valueOf(rule, "environmentName") ?? valueOf(rule, "environmentId"))}</DetailRow>
+        <DetailRow label="状态"><Badge variant={statusVariant(String(valueOf(rule, "status") ?? ""))}>{humanize(valueOf(rule, "status"))}</Badge></DetailRow>
+        <DetailRow label="在线版本">{onlineVersion ? <span className="inline-flex items-center gap-2"><span className="font-mono text-xs">v{String(onlineVersion)}</span><Badge variant="success">在线</Badge></span> : "—"}</DetailRow>
+        <DetailRow label="最新版本">{latestVersion ? <span className="font-mono text-xs">v{String(latestVersion)}</span> : "—"}</DetailRow>
+        <DetailRow label="更新时间">{formatDate(valueOf(rule, "updatedAt"))}</DetailRow>
+      </DetailSection>
+
+      <DetailSection title="版本记录">
+        {versions.length ? versions.map((version) => {
+          const versionNumber = valueOf(version, "version");
+          const isOnline = String(versionNumber) === String(onlineVersion);
+          const status = String(valueOf(version, "status") ?? "");
+          const versionTargetRows = versionTargets(version);
+          const versionCapabilityRows = versionCapabilities(version);
+          return (
+            <details key={String(valueOf(version, "id") ?? versionNumber)} className="theme-panel group rounded-lg border">
+              <summary className="grid cursor-pointer list-none grid-cols-[1fr_auto] gap-3 px-3 py-3 text-sm">
+                <span className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="font-mono font-semibold text-[color:var(--foreground)]">v{String(versionNumber)}</span>
+                  <Badge variant={statusVariant(status)}>{humanize(status)}</Badge>
+                  {isOnline ? <Badge variant="success">当前在线</Badge> : null}
+                  {String(versionNumber) === String(latestVersion) ? <Badge variant="info">最新</Badge> : null}
+                  <span className="text-xs text-[color:var(--muted)]">{formatDate(valueOf(version, "createdAt"))}</span>
+                </span>
+                <span className="text-xs text-[color:var(--muted)] group-open:hidden">查看</span>
+                <span className="hidden text-xs text-[color:var(--muted)] group-open:inline">收起</span>
+              </summary>
+              <div className="space-y-4 border-t p-3">
+                <div className="grid gap-3">
+                  <DetailRow label="版本 ID" mono>{String(valueOf(version, "id") ?? "—")}</DetailRow>
+                  <DetailRow label="创建人">{humanize(valueOf(version, "createdBy"))}</DetailRow>
+                  <DetailRow label="风险等级"><Badge variant={statusVariant(String(valueOf(version, "riskLevel") ?? ""))}>{humanize(valueOf(version, "riskLevel"))}</Badge></DetailRow>
+                  <DetailRow label="脚本摘要" mono>{String(valueOf(version, "scriptHash") ?? "—")}</DetailRow>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-[color:var(--muted)]">目标方法</p>
+                  {versionTargetRows.length ? (
+                    <div className="grid gap-2">
+                      {versionTargetRows.map((target, index) => (
+                        <div key={String(valueOf(target, "id") ?? index)} className="rounded-lg border bg-[var(--surface-subtle)] px-3 py-2 font-mono text-xs">
+                          {String(valueOf(target, "className") ?? "—")}#{String(valueOf(target, "methodName") ?? "—")}
+                        </div>
+                      ))}
+                    </div>
+                  ) : <div className="text-sm text-[color:var(--muted)]">—</div>}
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-[color:var(--muted)]">能力</p>
+                  {versionCapabilityRows.length ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {versionCapabilityRows.map((capability, index) => <Badge key={String(valueOf(capability, "id") ?? index)} variant="info">{humanize(valueOf(capability, "capability"))}</Badge>)}
+                    </div>
+                  ) : <div className="text-sm text-[color:var(--muted)]">—</div>}
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-[color:var(--muted)]">匹配配置</p>
+                  <JsonBlock value={valueOf(version, "matcherJson")} />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-[color:var(--muted)]">脚本配置</p>
+                  <JsonBlock value={valueOf(version, "scriptJson")} />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-[color:var(--muted)]">治理配置</p>
+                  <JsonBlock value={valueOf(version, "governanceJson")} />
+                </div>
+              </div>
+            </details>
+          );
+        }) : (
+          <div className="rounded-lg border px-3 py-5 text-center text-sm text-[color:var(--muted)]">暂无版本记录</div>
+        )}
+      </DetailSection>
+    </div>
+  );
+}
+
+function RolloutExecutionDetail({ detail }: { detail: PlatformRecord }) {
+  const status = String(valueOf(detail, "status") ?? "");
+  const errorMessage = valueOf(detail, "errorMessage");
+
+  return (
+    <div className="space-y-6">
+      <DetailSection title="执行信息">
+        <DetailRow label="执行 ID" mono>{String(valueOf(detail, "id") ?? "—")}</DetailRow>
+        <DetailRow label="发布计划" mono>{String(valueOf(detail, "operationPlanId") ?? "—")}</DetailRow>
+        <DetailRow label="状态"><Badge variant={statusVariant(status)}>{humanize(status)}</Badge></DetailRow>
+        <DetailRow label="规则版本">{humanize(valueOf(detail, "expectedRuleVersion"))}</DetailRow>
+        <DetailRow label="期望 Agent">{humanize(valueOf(detail, "expectedAgentVersion"))}</DetailRow>
+        <DetailRow label="Agent 命令" mono>{String(valueOf(detail, "commandId") ?? "—")}</DetailRow>
+        <DetailRow label="开始时间">{formatDate(valueOf(detail, "startedAt"))}</DetailRow>
+        <DetailRow label="完成时间">{formatDate(valueOf(detail, "finishedAt"))}</DetailRow>
+        {errorMessage ? <DetailRow label="异常信息" mono>{String(errorMessage)}</DetailRow> : null}
+      </DetailSection>
+
+      <details className="theme-panel group rounded-xl border">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 text-sm font-semibold text-[color:var(--foreground)]">
+          <span>命中实例快照</span>
+          <ChevronDown className="size-4 shrink-0 text-[color:var(--muted)] transition group-open:rotate-180" />
+        </summary>
+        <div className="grid gap-3 border-t p-3">
+          <DetailRow label="实例快照">{humanize(valueOf(detail, "instanceNickname"))}</DetailRow>
+          <DetailRow label="实例 ID" mono>{String(valueOf(detail, "instanceId") ?? "—")}</DetailRow>
+          <DetailRow label="应用">{humanize(valueOf(detail, "applicationName"))}</DetailRow>
+          <DetailRow label="环境">{environmentName(detail) || "—"}</DetailRow>
+          <DetailRow label="Java 版本">{javaRuntime(valueOf(detail, "javaVersion"))}</DetailRow>
+          <DetailRow label="Agent 版本">{humanize(valueOf(detail, "agentVersion"))}</DetailRow>
+          <DetailRow label="加载方式">{loadMode(valueOf(detail, "loadMode"))}</DetailRow>
+          <DetailRow label="进程启动标识" mono>{String(valueOf(detail, "processStartId") ?? "—")}</DetailRow>
+          <DetailRow label="实例最后心跳">{formatDate(valueOf(detail, "instanceLastSeenAt"))}</DetailRow>
+          <DetailRow label="Attach 执行器" mono>{String(valueOf(detail, "attachExecutorId") ?? "—")}</DetailRow>
+        </div>
+      </details>
+    </div>
+  );
 }
 
 function initialForm(form: ResourceForm | undefined) {
@@ -105,6 +626,9 @@ function resourceOptionValue(source: ResourceField["source"], record: PlatformRe
 function resourceOptionLabel(source: ResourceField["source"], record: PlatformRecord) {
   const id = String(valueOf(record, "id") ?? "");
   const name = String(valueOf(record, "name") ?? id);
+  if (source === "applications") {
+    return name;
+  }
   if (source === "environments") {
     return environmentName(record);
   }
@@ -133,7 +657,7 @@ function ResourceSelectField({
     if (field.source === "environments") {
       const applicationField = field.dependsOn?.find((key) => key.toLowerCase().includes("application")) ?? "applicationId";
       return String(valueOf(record, "applicationId") ?? "") === form[applicationField]
-        && VISIBLE_ENVIRONMENTS.has(String(valueOf(record, "type") ?? valueOf(record, "name") ?? "").toUpperCase());
+        && VISIBLE_ENVIRONMENTS.has(String(valueOf(record, "type") ?? valueOf(record, "name") ?? "").toLowerCase());
     }
     if (field.source === "rules") {
       return String(valueOf(record, "applicationId") ?? "") === form.applicationId
@@ -266,6 +790,7 @@ function TargetSelectField({
 
 export function ResourcePage({ resourceKey }: { resourceKey: string }) {
   const config = resourceConfigs[resourceKey];
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
@@ -275,6 +800,9 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
   const [created, setCreated] = useState<PlatformRecord | null>(null);
   const [assignmentEnvironment, setAssignmentEnvironment] = useState("");
   const [confirmingUnload, setConfirmingUnload] = useState(false);
+  const [editingNicknameId, setEditingNicknameId] = useState("");
+  const [editingNicknameValue, setEditingNicknameValue] = useState("");
+  const [collapsedApplicationGroups, setCollapsedApplicationGroups] = useState<Set<string>>(() => new Set());
 
   const activeTab = config.tabs?.find((tab) => tab.endpoint === activeEndpoint);
   const columns = activeTab?.columns.length ? activeTab.columns : config.columns;
@@ -299,10 +827,6 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
   const transitionCapability: Record<string, string> = {
     "operation-plans": "ROLLOUT_MANAGE",
     "rollout-executions": "ROLLOUT_MANAGE",
-    "recording-sessions": "RECORD_ARGUMENTS",
-    "extraction-tasks": "DATA_EXTRACT",
-    "replay-plans": "IMPORT_TO_TEST",
-    "replay-executions": "REPLAY_EXECUTE",
   };
 
   const resourceQuery = useQuery({
@@ -311,16 +835,25 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
     refetchInterval: activeEndpoint === "agents" ? 15_000 : false,
   });
   const rows = resourceQuery.data?.items ?? [];
+  const applicationGroups = config.key === "applications" ? groupApplicationInstances(rows) : [];
 
   const detailQuery = useQuery({
     queryKey: ["detail", activeEndpoint, selected?.id],
     queryFn: () => platformFetch<PlatformRecord>(`details/${activeEndpoint}/${selected?.id}`),
     enabled: Boolean(selected?.id),
   });
+  const ruleDetailQuery = useQuery({
+    queryKey: ["rule-detail", selected?.id],
+    queryFn: () => platformFetch<RuleDetailData>(`rules/${selected?.id}/detail`),
+    enabled: config.key === "rules" && Boolean(selected?.id),
+  });
   const detail = detailQuery.data ?? selected;
   const allowedActions = Array.isArray(detail?.allowed_actions) ? detail.allowed_actions.map(String) : [];
   const detailApplicationId = String(valueOf(detail ?? {}, "applicationId") ?? "");
   const detailEnvironmentId = String(valueOf(detail ?? {}, "environmentId") ?? "");
+  const detailAgent = detail ? agentOf(detail) : null;
+  const detailAgentStatus = String(valueOf(detailAgent ?? {}, "status") ?? "").toUpperCase();
+  const detailAgentCanDeactivate = Boolean(detailAgent?.id && ["ACTIVE", "ONLINE"].includes(detailAgentStatus));
 
   useEffect(() => {
     setAssignmentEnvironment("");
@@ -333,7 +866,7 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
   });
   const assignmentOptions = (assignmentOptionsQuery.data?.items ?? []).filter((record) =>
     String(valueOf(record, "applicationId") ?? "") === detailApplicationId
-      && VISIBLE_ENVIRONMENTS.has(String(valueOf(record, "type") ?? valueOf(record, "name") ?? "").toUpperCase()),
+      && VISIBLE_ENVIRONMENTS.has(String(valueOf(record, "type") ?? valueOf(record, "name") ?? "").toLowerCase()),
   );
 
   const assignmentMutation = useMutation({
@@ -348,6 +881,43 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
       await queryClient.invalidateQueries({ queryKey: ["resource", activeEndpoint] });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "环境分配失败"),
+  });
+
+  const nicknameMutation = useMutation({
+    mutationFn: ({ id, nickname }: { id: string; nickname: string }) => platformFetch<PlatformRecord>(`instances/${id}/nickname`, {
+      method: "PATCH",
+      body: JSON.stringify({ nickname }),
+      idempotencyKey: crypto.randomUUID(),
+    }),
+    onSuccess: async () => {
+      toast.success("昵称已更新");
+      setEditingNicknameId("");
+      setEditingNicknameValue("");
+      await queryClient.invalidateQueries({ queryKey: ["resource", activeEndpoint] });
+      await queryClient.invalidateQueries({ queryKey: ["detail", activeEndpoint] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "昵称更新失败"),
+  });
+
+  const agentLifecycleMutation = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: AgentLifecycleAction }) => platformFetch<PlatformRecord>(`instances/${id}/agent/${action}`, {
+      method: "POST",
+      body: JSON.stringify({ reason: `通过 Web 控制台执行 Agent ${action}` }),
+      idempotencyKey: crypto.randomUUID(),
+    }),
+    onSuccess: async (_result, variables) => {
+      const message: Record<AgentLifecycleAction, string> = {
+        attach: "Attach 已执行，等待 Agent 注册心跳",
+        deactivate: "停用命令已下发，Agent 将恢复字节码并停止服务",
+        reload: "重新加载已执行，等待 Agent 注册心跳",
+      };
+      toast.success(message[variables.action]);
+      await queryClient.invalidateQueries({ queryKey: ["resource", activeEndpoint] });
+      await queryClient.invalidateQueries({ queryKey: ["detail", activeEndpoint] });
+      await queryClient.invalidateQueries({ queryKey: ["rule-detail"] });
+      void detailQuery.refetch();
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "Agent 操作失败"),
   });
 
   const createMutation = useMutation({
@@ -379,10 +949,6 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
     };
     const transitionPath: Record<string, string> = {
       "operation-plans": "operation-plans",
-      "recording-sessions": "recording-sessions",
-      "extraction-tasks": "extraction-tasks",
-      "replay-plans": "replay-plans",
-      "replay-executions": "replay-executions",
     };
     try {
       const token = await platformFetch<{ token: string }>("fencing-tokens", {
@@ -474,6 +1040,36 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
     });
   }
 
+  function startEditingNickname(record: PlatformRecord) {
+    setEditingNicknameId(String(record.id ?? ""));
+    setEditingNicknameValue(String(valueOf(record, "nickname") ?? ""));
+  }
+
+  function submitNickname(record: PlatformRecord, nickname?: string) {
+    const id = String(record.id ?? "");
+    const original = String(valueOf(record, "nickname") ?? "");
+    const next = (nickname ?? editingNicknameValue).trim();
+    if (!id) return;
+    if (!nickname && editingNicknameId !== id) return;
+    if (!next) {
+      toast.error("昵称不能为空");
+      setEditingNicknameValue(original);
+      return;
+    }
+    if (next === original) {
+      setEditingNicknameId("");
+      setEditingNicknameValue("");
+      return;
+    }
+    nicknameMutation.mutate({ id, nickname: next });
+  }
+
+  function runAgentLifecycle(action: AgentLifecycleAction) {
+    const id = String(detail?.id ?? "");
+    if (!id) return;
+    agentLifecycleMutation.mutate({ id, action });
+  }
+
   return (
     <>
       <PageHeader
@@ -484,9 +1080,9 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
       />
 
       {config.tabs ? (
-        <div className="mb-4 flex gap-1 overflow-x-auto rounded-xl border bg-white p-1">
+        <div className="theme-panel scrollbar-thin mb-4 flex gap-1 overflow-x-auto rounded-xl border p-1">
           {config.tabs.map((tab) => (
-            <button key={tab.endpoint} onClick={() => setActiveEndpoint(tab.endpoint)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition ${activeEndpoint === tab.endpoint ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>{tab.label}</button>
+            <button key={tab.endpoint} onClick={() => setActiveEndpoint(tab.endpoint)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition ${activeEndpoint === tab.endpoint ? "bg-[var(--primary)] text-white shadow-sm" : "text-[color:var(--muted)] hover:bg-[var(--surface-muted)] hover:text-[color:var(--foreground)]"}`}>{tab.label}</button>
           ))}
         </div>
       ) : null}
@@ -511,20 +1107,184 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
           </div>
         ) : !rows.length ? (
           <EmptyState icon={config.icon} title={`暂无${activeTab?.label ?? config.singular}`} description={query ? "没有找到匹配的数据，请调整搜索条件。" : "当前还没有数据，可以从右上角的主操作开始。"} />
-        ) : (
+        ) : config.key === "applications" ? (
           <div className="scrollbar-thin overflow-x-auto">
             <table className="w-full min-w-[760px] text-left text-sm">
-              <thead className="bg-slate-50/80 text-xs font-medium uppercase tracking-wide text-slate-500">
-                <tr>{columns.map((column) => <th key={column.key} className="px-4 py-3">{column.label}</th>)}<th className="w-16 px-4 py-3"><span className="sr-only">操作</span></th></tr>
+              <thead className="theme-muted-panel text-xs font-medium uppercase tracking-wide text-[color:var(--muted)]">
+                <tr>
+                  <th className="px-4 py-3">应用名称</th>
+                  <th className="px-4 py-3">环境</th>
+                  <th className="w-16 px-4 py-3"><span className="sr-only">展开</span></th>
+                </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y">
+                {applicationGroups.map((group) => {
+                  const expanded = !collapsedApplicationGroups.has(group.key);
+                  return (
+                    <Fragment key={group.key}>
+                      <tr
+                        key={group.key}
+                        className="theme-row cursor-pointer transition"
+                        onClick={() => {
+                          setCollapsedApplicationGroups((current) => {
+                            const next = new Set(current);
+                            if (next.has(group.key)) {
+                              next.delete(group.key);
+                            } else {
+                              next.add(group.key);
+                            }
+                            return next;
+                          });
+                        }}
+                      >
+                        <td className="px-4 py-4">
+                          <div className="flex items-center gap-3">
+                            <ChevronDown className={`size-4 text-slate-400 transition ${expanded ? "rotate-0" : "-rotate-90"}`} />
+                            <span className="font-semibold text-[color:var(--foreground)]">{group.applicationName}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-4 text-[color:var(--foreground)]">{group.environment}</td>
+                        <td className="px-4 py-4 text-right text-xs text-slate-400" />
+                      </tr>
+                      {expanded ? (
+                        <tr key={`${group.key}-instances`} className="bg-[var(--surface-subtle)]">
+                          <td colSpan={3} className="px-4 pb-4 pt-0">
+                            <div className="theme-panel scrollbar-thin overflow-x-auto rounded-xl border">
+                              <table className="w-full min-w-[760px] text-left text-sm">
+                                <thead className="theme-muted-panel text-xs font-medium uppercase tracking-wide text-[color:var(--muted)]">
+                                  <tr>
+                                    {columns.map((column) => <th key={column.key} className="px-4 py-3">{column.label}</th>)}
+                                    <th className="w-16 px-4 py-3"><span className="sr-only">操作</span></th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y">
+                                  {group.instances.map((record, index) => (
+                                    <tr key={String(record.id ?? `${group.key}-${index}`)} onClick={() => setSelected(record)} className="theme-row cursor-pointer transition">
+                                      {columns.map((column, columnIndex) => (
+                                        <td key={column.key} className="max-w-72 px-4 py-3.5">
+                                          {column.key === "nickname" ? editingNicknameId === String(record.id ?? "") ? (
+                                            <Input
+                                              autoFocus
+                                              value={editingNicknameValue}
+                                              onClick={(event) => event.stopPropagation()}
+                                              onChange={(event) => setEditingNicknameValue(event.target.value)}
+                                              onBlur={() => submitNickname(record)}
+                                              onKeyDown={(event) => {
+                                                if (event.key === "Enter") {
+                                                  event.currentTarget.blur();
+                                                }
+                                                if (event.key === "Escape") {
+                                                  setEditingNicknameId("");
+                                                  setEditingNicknameValue("");
+                                                  event.currentTarget.blur();
+                                                }
+                                              }}
+                                              disabled={nicknameMutation.isPending}
+                                              aria-label="实例昵称"
+                                              className="h-9 max-w-64 font-medium"
+                                            />
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={(event) => {
+                                                event.stopPropagation();
+                                                startEditingNickname(record);
+                                              }}
+                                              className="group/nickname inline-flex max-w-64 items-center gap-2 rounded-md px-2 py-1.5 text-left font-medium text-[color:var(--foreground)] transition hover:bg-[var(--surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-border)]"
+                                              aria-label="编辑实例昵称"
+                                              title="编辑昵称"
+                                            >
+                                              <span className="truncate">{String(valueOf(record, "nickname") ?? "—")}</span>
+                                              <Pencil className="size-3.5 shrink-0 text-[color:var(--muted)] opacity-0 transition group-hover/nickname:opacity-100 group-focus-visible/nickname:opacity-100" />
+                                            </button>
+                                          ) : columnIndex === 0 ? <div className="font-medium text-[color:var(--foreground)]"><Cell value={valueOf(record, column.key)} column={column} record={record} /></div> : <Cell value={valueOf(record, column.key)} column={column} record={record} />}
+                                        </td>
+                                      ))}
+                                      <td className="px-4 py-3.5 text-right"><Button variant="ghost" size="icon" aria-label="查看详情"><ChevronRight /></Button></td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="scrollbar-thin overflow-x-auto">
+            <table className={resourceTableClass(config.key)}>
+              <thead className="theme-muted-panel text-xs font-medium uppercase tracking-wide text-[color:var(--muted)]">
+                <tr>
+                  {columns.map((column) => <th key={column.key} className={resourceHeaderCellClass(config.key, column.key)}>{column.label}</th>)}
+                  <th className="w-16 whitespace-nowrap px-4 py-3"><span className="sr-only">操作</span></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
                 {rows.map((record, index) => (
-                  <tr key={String(record.id ?? index)} onClick={() => setSelected(record)} className="cursor-pointer bg-white transition hover:bg-indigo-50/35">
-                    {columns.map((column, columnIndex) => (
-                      <td key={column.key} className="max-w-72 px-4 py-3.5">
-                        {columnIndex === 0 ? <div className="font-medium text-slate-900"><Cell value={valueOf(record, column.key)} column={column} /></div> : <Cell value={valueOf(record, column.key)} column={column} />}
-                      </td>
-                    ))}
+                  <tr
+                    key={String(record.id ?? index)}
+                    onClick={() => {
+                      if (config.key === "rules" && record.id) {
+                        router.push(`/rules/${record.id}`);
+                        return;
+                      }
+                      setSelected(record);
+                    }}
+                    className="theme-row cursor-pointer transition"
+                  >
+                    {columns.map((column, columnIndex) => {
+                      const cellValue = valueOf(record, column.key);
+                      const content = config.key === "applications" && column.key === "nickname" ? editingNicknameId === String(record.id ?? "") ? (
+                        <Input
+                          autoFocus
+                          value={editingNicknameValue}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={(event) => setEditingNicknameValue(event.target.value)}
+                          onBlur={() => submitNickname(record)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.currentTarget.blur();
+                            }
+                            if (event.key === "Escape") {
+                              setEditingNicknameId("");
+                              setEditingNicknameValue("");
+                              event.currentTarget.blur();
+                            }
+                          }}
+                          disabled={nicknameMutation.isPending}
+                          aria-label="实例昵称"
+                          className="h-9 max-w-64 font-medium"
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            startEditingNickname(record);
+                          }}
+                          className="group/nickname inline-flex max-w-64 items-center gap-2 rounded-md px-2 py-1.5 text-left font-medium text-[color:var(--foreground)] transition hover:bg-[var(--surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-border)]"
+                          aria-label="编辑实例昵称"
+                          title="编辑昵称"
+                        >
+                          <span className="truncate">{String(valueOf(record, "nickname") ?? "—")}</span>
+                          <Pencil className="size-3.5 shrink-0 text-[color:var(--muted)] opacity-0 transition group-hover/nickname:opacity-100 group-focus-visible/nickname:opacity-100" />
+                        </button>
+                      ) : columnIndex === 0 ? (
+                        <div className="font-medium text-[color:var(--foreground)]"><Cell value={cellValue} column={column} record={record} /></div>
+                      ) : (
+                        <Cell value={cellValue} column={column} record={record} />
+                      );
+                      return (
+                        <td key={column.key} className={resourceBodyCellClass(config.key, column.key)} title={cellTitle(cellValue)}>
+                          <div className={resourceCellContentClass(config.key, column.key)}>{content}</div>
+                        </td>
+                      );
+                    })}
                     <td className="px-4 py-3.5 text-right"><Button variant="ghost" size="icon" aria-label="查看详情"><ChevronRight /></Button></td>
                   </tr>
                 ))}
@@ -549,27 +1309,19 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
             <DialogDescription className="mt-1">详情来自独立查询接口；敏感凭据和 Token 不会回显。</DialogDescription>
           </div>
           <div className="scrollbar-thin flex-1 overflow-y-auto p-6">
-            {detailQuery.isLoading ? <div className="space-y-3">{[1, 2, 3, 4].map((item) => <Skeleton key={item} className="h-12" />)}</div> : (
-              <div className="grid gap-3">
-                {detail ? Object.entries(detail).filter(([key]) => shouldShowDetailField(key, detail)).map(([key, value]) => {
-                  const renderedValue = detailValue(key, value, detail);
-                  const isRawId = key.toLowerCase() === "id" || String(renderedValue).match(/^[a-z]+-[0-9a-f-]{24,}$/);
-                  return (
-                  <div key={key} className="grid grid-cols-[130px_1fr] gap-4 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2.5 text-sm">
-                    <span className="text-slate-500">{fieldLabel(key)}</span>
-                    <span className={`break-all whitespace-pre-wrap text-slate-800 ${isRawId ? "font-mono text-xs" : ""}`}>
-                      {key.toLowerCase().endsWith("_at") || key.toLowerCase().endsWith("at")
-                        ? formatDate(renderedValue)
-                        : humanize(renderedValue)}
-                    </span>
-                  </div>
-                );}) : null}
-                {config.key === "applications" && detail?.id && !detailEnvironmentId ? (
-                  <div className="mt-2 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+            {detailQuery.isLoading || ruleDetailQuery.isLoading ? <div className="space-y-3">{[1, 2, 3, 4].map((item) => <Skeleton key={item} className="h-12" />)}</div> : config.key === "applications" && detail ? (
+              <div className="space-y-4">
+                <ApplicationDetail
+                  detail={detail}
+                  nicknamePending={nicknameMutation.isPending}
+                  onSubmitNickname={submitNickname}
+                />
+                {detail.id && !detailEnvironmentId ? (
+                  <div className="rounded-xl border border-[color:var(--border)] bg-[var(--primary-soft)] p-4">
                     <p className="text-sm font-semibold text-indigo-950">为实例分配环境</p>
-                    <p className="mt-1 text-xs leading-5 text-indigo-700">Agent 已完成真实运行时注册，选择 DEV、SIT 或 UAT 后才会参与目标发现和规则发布。</p>
+                    <p className="mt-1 text-xs leading-5 text-indigo-700">Agent 已完成真实运行时注册，选择 dev、sit 或 uat 后才会参与目标发现和规则发布。</p>
                     <Select value={assignmentEnvironment} onValueChange={setAssignmentEnvironment} disabled={assignmentOptionsQuery.isLoading}>
-                      <SelectTrigger className="mt-3 bg-white" aria-label="分配环境">
+                      <SelectTrigger className="mt-3" aria-label="分配环境">
                         <SelectValue placeholder={assignmentOptionsQuery.isLoading ? "正在加载环境…" : "请选择环境"} />
                       </SelectTrigger>
                       <SelectContent>
@@ -582,9 +1334,29 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
                   </div>
                 ) : null}
               </div>
+            ) : config.key === "rules" && detail ? (
+              <RuleDetail detail={detail} ruleDetail={ruleDetailQuery.data} />
+            ) : activeEndpoint === "rollout-executions" && detail ? (
+              <RolloutExecutionDetail detail={detail} />
+            ) : (
+              <div className="grid gap-3">
+                {detail ? Object.entries(detail).filter(([key]) => shouldShowDetailField(key, detail)).map(([key, value]) => {
+                  const renderedValue = detailValue(key, value, detail);
+                  const isRawId = key.toLowerCase() === "id" || String(renderedValue).match(/^[a-z]+-[0-9a-f-]{24,}$/);
+                  return (
+                  <div key={key} className="theme-muted-panel grid grid-cols-[130px_1fr] gap-4 rounded-lg border px-3 py-2.5 text-sm">
+                    <span className="text-[color:var(--muted)]">{fieldLabel(key)}</span>
+                    <span className={`break-all whitespace-pre-wrap text-[color:var(--foreground)] ${isRawId ? "font-mono text-xs" : ""}`}>
+                      {key.toLowerCase().endsWith("_at") || key.toLowerCase().endsWith("at")
+                        ? formatDate(renderedValue)
+                        : humanize(renderedValue)}
+                    </span>
+                  </div>
+                );}) : null}
+              </div>
             )}
           </div>
-          <div className="flex flex-wrap items-center gap-2 border-t bg-white p-4">
+          <div className="theme-panel flex flex-wrap items-center gap-2 border-t p-4">
             <span className="mr-auto font-mono text-xs text-slate-400">{detail?.id ? shortId(String(detail.id)) : ""}</span>
             {can(transitionCapability[activeEndpoint] ?? "__UNAVAILABLE__")
               ? allowedActions.map((action) => action === "UNLOAD" || action === "UNLOAD_PLAN"
@@ -595,6 +1367,31 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
               <Button onClick={() => assignmentMutation.mutate()} disabled={!assignmentEnvironment || assignmentMutation.isPending}>
                 {assignmentMutation.isPending ? "正在分配…" : "确认分配环境"}
               </Button>
+            ) : null}
+            {config.key === "applications" && detail?.id && can("AGENT_MANAGE") ? (
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={() => runAgentLifecycle("attach")}
+                  disabled={agentLifecycleMutation.isPending}
+                >
+                  {agentLifecycleMutation.isPending ? "执行中…" : "加载 Agent"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => runAgentLifecycle("deactivate")}
+                  disabled={!detailAgentCanDeactivate || agentLifecycleMutation.isPending}
+                >
+                  停用 Agent
+                </Button>
+                <Button
+                  onClick={() => runAgentLifecycle("reload")}
+                  disabled={agentLifecycleMutation.isPending}
+                >
+                  <RefreshCw />
+                  重新加载
+                </Button>
+              </>
             ) : null}
             {config.key === "rules" && detail?.id ? <Button asChild><Link href={`/rules/${detail.id}`}>创建新版本</Link></Button> : null}
           </div>
@@ -610,7 +1407,7 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
-            这是运行时变更操作。命令全部得到 Agent 确认后，计划状态才会变为“已回滚”；任一实例失败则标记为“失败”。
+            这是运行时变更操作。命令全部得到 Agent 确认后，计划状态才会变为“已卸载”；任一实例失败则标记为“失败”。
           </div>
           <DialogFooter>
             <Button variant="secondary" onClick={() => setConfirmingUnload(false)} disabled={unloadMutation.isPending}>暂不卸载</Button>

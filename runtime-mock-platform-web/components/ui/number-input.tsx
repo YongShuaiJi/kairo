@@ -31,12 +31,12 @@ export function NumberInput({
   };
 
   return (
-    <div className={cn("flex h-10 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm focus-within:border-indigo-400 focus-within:ring-4 focus-within:ring-indigo-100", className)}>
+    <div className={cn("theme-field flex h-10 overflow-hidden rounded-lg border shadow-sm focus-within:border-[var(--focus-border)] focus-within:ring-4 focus-within:ring-[var(--focus-ring)]", className)}>
       <Button
         type="button"
         variant="ghost"
         size="icon"
-        className="h-full w-9 shrink-0 rounded-none border-r border-slate-100 text-slate-400 hover:bg-slate-50 hover:text-indigo-600"
+        className="h-full w-9 shrink-0 rounded-none border-r text-[color:var(--muted)] hover:bg-[var(--surface-muted)] hover:text-[color:var(--primary)]"
         disabled={disabled || (min !== undefined && parsed <= min)}
         onClick={() => normalize((Number.isFinite(parsed) ? parsed : 0) - step)}
         aria-label="减少"
@@ -53,13 +53,13 @@ export function NumberInput({
           const next = event.target.value;
           if (next === "" || next === "-" || /^-?\d+$/.test(next)) onValueChange(next);
         }}
-        className="h-full min-w-0 flex-1 rounded-none border-0 px-2 text-center shadow-none focus:ring-0"
+        className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent px-2 text-center shadow-none focus:ring-0"
       />
       <Button
         type="button"
         variant="ghost"
         size="icon"
-        className="h-full w-9 shrink-0 rounded-none border-l border-slate-100 text-slate-400 hover:bg-slate-50 hover:text-indigo-600"
+        className="h-full w-9 shrink-0 rounded-none border-l text-[color:var(--muted)] hover:bg-[var(--surface-muted)] hover:text-[color:var(--primary)]"
         disabled={disabled || (max !== undefined && parsed >= max)}
         onClick={() => normalize((Number.isFinite(parsed) ? parsed : 0) + step)}
         aria-label="增加"
