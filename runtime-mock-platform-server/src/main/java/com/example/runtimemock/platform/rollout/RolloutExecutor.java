@@ -1,6 +1,7 @@
 package com.example.runtimemock.platform.rollout;
 
 import com.example.runtimemock.platform.command.AgentCommandService;
+import com.example.runtimemock.platform.service.BusinessIdService;
 import com.example.runtimemock.platform.service.PlatformJdbcService;
 import com.example.runtimemock.platform.service.PlatformJson;
 import com.example.runtimemock.platform.service.RequestContext;
@@ -19,7 +20,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
@@ -28,6 +28,7 @@ public class RolloutExecutor {
     private final JdbcTemplate jdbcTemplate;
     private final AgentCommandService commandService;
     private final PlatformJdbcService eventWriter;
+    private final BusinessIdService businessIdService;
     private final Clock clock;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -36,15 +37,16 @@ public class RolloutExecutor {
 
     @Autowired
     public RolloutExecutor(JdbcTemplate jdbcTemplate, AgentCommandService commandService,
-                           PlatformJdbcService eventWriter) {
-        this(jdbcTemplate, commandService, eventWriter, Clock.systemUTC());
+                           PlatformJdbcService eventWriter, BusinessIdService businessIdService) {
+        this(jdbcTemplate, commandService, eventWriter, businessIdService, Clock.systemUTC());
     }
 
     RolloutExecutor(JdbcTemplate jdbcTemplate, AgentCommandService commandService,
-                    PlatformJdbcService eventWriter, Clock clock) {
+                    PlatformJdbcService eventWriter, BusinessIdService businessIdService, Clock clock) {
         this.jdbcTemplate = jdbcTemplate;
         this.commandService = commandService;
         this.eventWriter = eventWriter;
+        this.businessIdService = businessIdService;
         this.clock = clock;
     }
 
@@ -152,6 +154,9 @@ public class RolloutExecutor {
                 """, operation.get("application_id"), operation.get("environment_id")));
         Instant now = clock.instant();
         int captured = 0;
+        String businessName = eventWriter.rolloutBusinessName(
+                String.valueOf(operation.get("resource_type")),
+                String.valueOf(operation.get("resource_id")));
         for (Map<String, Object> instance : instances) {
             String instanceId = String.valueOf(instance.get("id"));
             if (!requestedInstances.isEmpty() && !requestedInstances.contains(instanceId)) {
@@ -170,7 +175,7 @@ public class RolloutExecutor {
                             agent_version, load_mode, process_start_id, instance_last_seen_at,
                             attach_executor_id
                         ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, "rollout-target-" + UUID.randomUUID(), operationId, instanceId,
+                        """, businessIdService.nextId("rollout_target", businessName), operationId, instanceId,
                         instance.get("labels_json"), "UNKNOWN", timestamp(now),
                         snapshotText(instance, "nickname", instanceId),
                         snapshotText(instance, "application_name", ""),
@@ -194,7 +199,7 @@ public class RolloutExecutor {
                             agent_version, load_mode, process_start_id, instance_last_seen_at,
                             attach_executor_id
                         ) values (?, null, ?, ?, 'PENDING', 'unknown', ?, null, null, null, null, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, "rollout-execution-" + UUID.randomUUID(), operationId, instanceId,
+                        """, businessIdService.nextId("rollout_execution", businessName), operationId, instanceId,
                         ((Number) operation.get("resource_version")).longValue(),
                         context.actor(), timestamp(now),
                         snapshotText(instance, "nickname", instanceId),
@@ -305,10 +310,8 @@ public class RolloutExecutor {
                 select * from rule_version where rule_id = ? and version = ?
                 """, ruleId, version));
         String versionStatus = String.valueOf(ruleVersion.get("status"));
-        if (!"APPROVED".equals(versionStatus)
-                && !"ACTIVE".equals(versionStatus)
-                && !"PUBLISHED".equals(versionStatus)) {
-            throw new IllegalStateException("规则版本尚未获批，不能发布："
+        if (!"ENABLED".equals(versionStatus)) {
+            throw new IllegalStateException("规则版本已停用，不能发布："
                     + ruleId + ":" + version + " status=" + versionStatus);
         }
         List<Map<String, Object>> targets = normalizeRows(jdbcTemplate.queryForList("""

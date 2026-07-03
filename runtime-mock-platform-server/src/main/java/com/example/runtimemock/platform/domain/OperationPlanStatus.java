@@ -6,12 +6,13 @@ public enum OperationPlanStatus {
     SUCCEEDED,
     FAILED,
     UNLOADING,
-    UNLOADED;
+    UNLOADED,
+    ABANDONED;
 
     public boolean canTransitionTo(OperationPlanStatus target) {
         return switch (this) {
             case DRAFT -> target == RUNNING;
-            case RUNNING, SUCCEEDED, FAILED, UNLOADING, UNLOADED -> false;
+            case RUNNING, SUCCEEDED, FAILED, UNLOADING, UNLOADED, ABANDONED -> false;
         };
     }
 }

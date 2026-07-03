@@ -36,6 +36,10 @@ public interface RuleVersionLifecycleMapper {
                          @Param("applicationId") String applicationId,
                          @Param("environmentId") String environmentId);
 
+    int countEnabledRuleInScope(@Param("ruleId") String ruleId,
+                                @Param("applicationId") String applicationId,
+                                @Param("environmentId") String environmentId);
+
     int countEnabledRuleVersion(@Param("ruleId") String ruleId, @Param("version") long version);
 
     int deleteExpiredCapabilities(@Param("now") Timestamp now);

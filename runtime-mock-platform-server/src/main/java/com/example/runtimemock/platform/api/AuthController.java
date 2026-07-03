@@ -70,6 +70,15 @@ public final class AuthController {
         return accessTokenService.issue(context, request);
     }
 
+    @PostMapping("/tokens/{id}/renew")
+    public Map<String, Object> renew(@PathVariable String id,
+                                     HttpServletRequest httpRequest,
+                                     @RequestBody Map<String, Object> request) {
+        var context = requestContextFactory.from(httpRequest);
+        rbacService.require(context, "ADMIN");
+        return accessTokenService.renew(context, id, request);
+    }
+
     @DeleteMapping("/tokens/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void revoke(@PathVariable String id, HttpServletRequest request) {

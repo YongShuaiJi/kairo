@@ -2,11 +2,13 @@ package com.example.runtimemock.platform;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
@@ -36,6 +38,28 @@ class PlatformLocalTokenIntegrationTest {
 
     @Autowired
     ObjectMapper objectMapper;
+
+    @Autowired
+    JdbcTemplate jdbcTemplate;
+
+    @BeforeEach
+    void ensureDefaultTopology() {
+        jdbcTemplate.update("""
+                insert into project(id, organization_id, name, created_at)
+                select 'proj-default', 'org-default', 'Default Project', current_timestamp
+                 where not exists (select 1 from project where id = 'proj-default')
+                """);
+        jdbcTemplate.update("""
+                insert into application(id, project_id, name, created_at)
+                select 'app-default', 'proj-default', 'Default Application', current_timestamp
+                 where not exists (select 1 from application where id = 'app-default')
+                """);
+        jdbcTemplate.update("""
+                insert into environment(id, application_id, name, type, created_at)
+                select 'env-dev', 'app-default', 'dev', 'dev', current_timestamp
+                 where not exists (select 1 from environment where id = 'env-dev')
+                """);
+    }
 
     @Test
     void returnsUtf8ChineseErrorsFromSecurityAndIdempotencyFilters() throws Exception {
@@ -71,6 +95,14 @@ class PlatformLocalTokenIntegrationTest {
 
         mockMvc.perform(get("/api/v1/instances")
                         .header("Authorization", "Bearer bootstrap-test-token"))
+                .andExpect(status().isOk());
+
+        JsonNode permanent = postJson("/api/v1/auth/tokens", Map.of(
+                "username", "system"
+        ), "bootstrap-test-token");
+        assertThat(permanent.path("expiresAt").isNull()).isTrue();
+        mockMvc.perform(get("/api/v1/auth/me")
+                        .header("Authorization", "Bearer " + permanent.path("token").asText()))
                 .andExpect(status().isOk());
 
         createAgent("token-instance-1", "token-agent-1");

@@ -3,6 +3,7 @@ package com.example.runtimemock.platform.rollout;
 import com.example.runtimemock.platform.command.AgentCommandService;
 import com.example.runtimemock.platform.fencing.FencingTokenService;
 import com.example.runtimemock.platform.service.PlatformException;
+import com.example.runtimemock.platform.service.BusinessIdService;
 import com.example.runtimemock.platform.service.PlatformJdbcService;
 import com.example.runtimemock.platform.service.PlatformJson;
 import com.example.runtimemock.platform.service.RbacService;
@@ -19,7 +20,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @Service
 public class RuleUnloadService {
@@ -29,26 +29,30 @@ public class RuleUnloadService {
     private final FencingTokenService fencingTokenService;
     private final AgentCommandService commandService;
     private final PlatformJdbcService eventWriter;
+    private final BusinessIdService businessIdService;
     private final Clock clock;
 
     @Autowired
     public RuleUnloadService(JdbcTemplate jdbcTemplate, RbacService rbacService,
                              FencingTokenService fencingTokenService,
                              AgentCommandService commandService,
-                             PlatformJdbcService eventWriter) {
+                             PlatformJdbcService eventWriter,
+                             BusinessIdService businessIdService) {
         this(jdbcTemplate, rbacService, fencingTokenService, commandService,
-                eventWriter, Clock.systemUTC());
+                eventWriter, businessIdService, Clock.systemUTC());
     }
 
     RuleUnloadService(JdbcTemplate jdbcTemplate, RbacService rbacService,
                       FencingTokenService fencingTokenService,
                       AgentCommandService commandService,
-                      PlatformJdbcService eventWriter, Clock clock) {
+                      PlatformJdbcService eventWriter,
+                      BusinessIdService businessIdService, Clock clock) {
         this.jdbcTemplate = jdbcTemplate;
         this.rbacService = rbacService;
         this.fencingTokenService = fencingTokenService;
         this.commandService = commandService;
         this.eventWriter = eventWriter;
+        this.businessIdService = businessIdService;
         this.clock = clock;
     }
 
@@ -101,12 +105,19 @@ public class RuleUnloadService {
 
         fencingTokenService.consume(context, "operation_plan", operationPlanId, fencingToken);
         Instant now = clock.instant();
-        String rollbackId = "rollback-" + UUID.randomUUID();
+        String rollbackId = businessIdService.nextId("rollback_execution",
+                eventWriter.rolloutBusinessName(String.valueOf(operation.get("resource_type")),
+                        String.valueOf(operation.get("resource_id"))));
         int transitioned = jdbcTemplate.update("""
                 update operation_plan
-                   set status = 'UNLOADING', version = version + 1, updated_by = ?, updated_at = ?
+                   set status = 'UNLOADING',
+                       version = version + 1,
+                       terminal_source = 'MANUAL',
+                       terminal_reason = ?,
+                       updated_by = ?,
+                       updated_at = ?
                  where id = ? and status = ? and version = ?
-                """, context.actor(), timestamp(now), operationPlanId, currentStatus, currentVersion);
+                """, reason, context.actor(), timestamp(now), operationPlanId, currentStatus, currentVersion);
         if (transitioned == 0) {
             throw PlatformException.conflict("RESOURCE_VERSION_CONFLICT",
                     "发布计划状态或版本已发生变化，请刷新后重试",
@@ -183,7 +194,9 @@ public class RuleUnloadService {
                     Map<String, Object> matcher = PlatformJson.readMap(String.valueOf(
                             target.getOrDefault("matcher_json", "{}")));
                     String classId = String.valueOf(matcher.getOrDefault("classId", className));
-                    String rollbackId = "rollback-" + UUID.randomUUID();
+                    String rollbackId = businessIdService.nextId("rollback_execution",
+                            eventWriter.rolloutBusinessName(String.valueOf(operation.get("resource_type")),
+                                    String.valueOf(operation.get("resource_id"))));
                     jdbcTemplate.update("""
                             insert into rollback_execution(
                                 id, operation_plan_id, rollback_type, status, reason,
@@ -194,6 +207,8 @@ public class RuleUnloadService {
                             update operation_plan
                                set status = 'UNLOADING',
                                    version = version + 1,
+                                   terminal_source = 'RULE_DELETION',
+                                   terminal_reason = '规则删除自动卸载',
                                    updated_by = ?,
                                    updated_at = ?
                              where id = ?
@@ -221,6 +236,8 @@ public class RuleUnloadService {
                         update operation_plan
                            set status = 'UNLOADED',
                                version = version + 1,
+                               terminal_source = 'RULE_DELETION',
+                               terminal_reason = '规则删除时没有可达 Agent，直接标记已卸载',
                                updated_by = ?,
                                updated_at = ?
                          where id = ?

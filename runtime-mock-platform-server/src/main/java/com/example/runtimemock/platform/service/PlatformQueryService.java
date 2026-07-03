@@ -22,6 +22,50 @@ public final class PlatformQueryService {
 
     private static final Map<String, ResourceDefinition> RESOURCES = Map.ofEntries(
             resource("applications", "application", "created_at desc, id", "id", "name", "project_id"),
+            selectedResource("rollout-environments",
+                    """
+                    (
+                        select lower(coalesce(e.type, e.name)) as id,
+                               lower(coalesce(e.type, e.name)) as name,
+                               lower(coalesce(e.type, e.name)) as type,
+                               max(r.updated_at) as updated_at
+                          from environment e
+                          join rule r on r.environment_id = e.id
+                          join rule_version rv on rv.rule_id = r.id
+                         where rv.status = 'ENABLED'
+                         group by lower(coalesce(e.type, e.name))
+                    ) rollout_environment
+                    """,
+                    "id, name, type, updated_at",
+                    """
+                    case type
+                        when 'dev' then 1
+                        when 'sit' then 2
+                        when 'uat' then 3
+                        when 'prod' then 4
+                        else 99
+                    end, id
+                    """,
+                    "id", "name", "type"),
+            selectedResource("rollout-applications",
+                    """
+                    (
+                        select a.id,
+                               a.name,
+                               a.project_id,
+                               e.id as environment_id,
+                               lower(coalesce(e.type, e.name)) as environment_key,
+                               max(r.updated_at) as updated_at
+                          from application a
+                          join rule r on r.application_id = a.id
+                          join environment e on e.id = r.environment_id
+                          join rule_version rv on rv.rule_id = r.id
+                         where rv.status = 'ENABLED'
+                         group by a.id, a.name, a.project_id, e.id, lower(coalesce(e.type, e.name))
+                    ) rollout_application
+                    """,
+                    "id, name, project_id, environment_id, environment_key, updated_at",
+                    "updated_at desc, id, environment_id", "id", "name", "project_id", "environment_key"),
             resource("environments", "environment", "created_at desc, id", "id", "name", "type", "application_id"),
             selectedResource("instances", CURRENT_INSTANCE_TABLE,
                     """
@@ -71,7 +115,15 @@ public final class PlatformQueryService {
                     "updated_at desc, id", "id", "listen_host", "status", "agent_version"),
             resource("agent-commands", "agent_command", "updated_at desc, id", "id", "agent_id", "command_type", "status"),
             resource("rules", "rule", "updated_at desc, id", "id", "name", "application_id", "environment_id"),
-            resource("rule-versions", "rule_version", "created_at desc, id", "id", "rule_id", "status", "risk_level"),
+            selectedResource("rule-versions",
+                    """
+                    (
+                        select *
+                          from rule_version
+                         where status = 'ENABLED'
+                    ) rule_version
+                    """,
+                    "*", "created_at desc, id", "id", "rule_id", "status", "risk_level"),
             resource("operation-plans", "operation_plan", "updated_at desc, id", "id", "resource_type", "resource_id", "status"),
             selectedResource("rollout-executions", "rollout_instance_execution",
                     """
@@ -94,9 +146,20 @@ public final class PlatformQueryService {
                     "instance_nickname", "application_name", "environment_name", "agent_status"),
             resource("rollback-executions", "rollback_execution", "created_at desc, id",
                     "id", "operation_plan_id", "rollback_type", "status", "reason"),
-            selectedResource("tokens", "platform_access_token",
-                    "id, subject_type, subject_id, display_name, status, created_by, created_at, expires_at, last_used_at, revoked_at",
-                    "created_at desc, id", "id", "subject_type", "subject_id", "display_name", "status")
+            selectedResource("tokens",
+                    """
+                    (
+                        select id, subject_type, subject_id,
+                               case
+                                   when status = 'ACTIVE' and (expires_at is null or expires_at > current_timestamp) then 'VALID'
+                                   else 'INVALID'
+                               end as status,
+                               created_by, created_at, expires_at, last_used_at, revoked_at
+                          from platform_access_token
+                    ) platform_access_token
+                    """,
+                    "id, subject_type, subject_id, status, created_by, created_at, expires_at, last_used_at, revoked_at",
+                    "created_at desc, id", "id", "subject_id", "status")
     );
 
     private final JdbcTemplate jdbcTemplate;
@@ -173,6 +236,14 @@ public final class PlatformQueryService {
         if ("instances".equals(resource)) {
             enrichInstanceAgent(result, id);
         }
+        if ("tokens".equals(resource)) {
+            Map<String, Object> tokenDetail = new LinkedHashMap<>();
+            tokenDetail.put("id", result.get("id"));
+            tokenDetail.put("subject_id", result.get("subject_id"));
+            tokenDetail.put("expires_at", result.get("expires_at"));
+            tokenDetail.put("allowed_actions", List.of());
+            return tokenDetail;
+        }
         result.put("allowed_actions", allowedActions(resource, String.valueOf(result.getOrDefault("status", ""))));
         return result;
     }
@@ -247,7 +318,7 @@ public final class PlatformQueryService {
                    )
                 """));
         counts.put("rulesTotal", count("rule"));
-        counts.put("rulesActive", countWhere("rule", "status in ('ACTIVE', 'PUBLISHED')"));
+        counts.put("rulesActive", countWhere("rule", "status = 'ENABLED'"));
         counts.put("rolloutsRunning", countWhere("operation_plan", "status = 'RUNNING'"));
         Map<String, Long> trendCounts = new TreeMap<>();
         normalize(jdbcTemplate.queryForList("select * from audit_record")).forEach(row -> {
@@ -274,7 +345,8 @@ public final class PlatformQueryService {
                   from rule_target rt
                   join rule_version rv on rv.id = rt.rule_version_id
                   join rule r on r.id = rv.rule_id
-                 where (lower(rt.class_name) like ? or lower(rt.method_name) like ?)
+                 where rv.status = 'ENABLED'
+                   and (lower(rt.class_name) like ? or lower(rt.method_name) like ?)
                 """);
         List<Object> args = new java.util.ArrayList<>();
         args.add("%" + search + "%");

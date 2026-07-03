@@ -39,6 +39,7 @@ public class PlatformJdbcService {
     private final RbacService rbacService;
     private final FencingTokenService fencingTokenService;
     private final RuleVersionLifecycleMapper ruleVersionLifecycleMapper;
+    private final BusinessIdService businessIdService;
     private final Clock clock;
     private final ObjectMapper mapper = JsonMapper.builder()
             .enable(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY)
@@ -48,17 +49,21 @@ public class PlatformJdbcService {
     @Autowired
     public PlatformJdbcService(JdbcTemplate jdbcTemplate, RbacService rbacService,
                                FencingTokenService fencingTokenService,
-                               RuleVersionLifecycleMapper ruleVersionLifecycleMapper) {
-        this(jdbcTemplate, rbacService, fencingTokenService, ruleVersionLifecycleMapper, Clock.systemUTC());
+                               RuleVersionLifecycleMapper ruleVersionLifecycleMapper,
+                               BusinessIdService businessIdService) {
+        this(jdbcTemplate, rbacService, fencingTokenService, ruleVersionLifecycleMapper,
+                businessIdService, Clock.systemUTC());
     }
 
     PlatformJdbcService(JdbcTemplate jdbcTemplate, RbacService rbacService,
                         FencingTokenService fencingTokenService,
-                        RuleVersionLifecycleMapper ruleVersionLifecycleMapper, Clock clock) {
+                        RuleVersionLifecycleMapper ruleVersionLifecycleMapper,
+                        BusinessIdService businessIdService, Clock clock) {
         this.jdbcTemplate = jdbcTemplate;
         this.rbacService = rbacService;
         this.fencingTokenService = fencingTokenService;
         this.ruleVersionLifecycleMapper = ruleVersionLifecycleMapper;
+        this.businessIdService = businessIdService;
         this.clock = clock;
     }
 
@@ -123,7 +128,6 @@ public class PlatformJdbcService {
     public Map<String, Object> createInstance(RequestContext context, Map<String, Object> request) {
         rbacService.require(context, "INSTANCE_MANAGE");
         Instant now = clock.instant();
-        String id = optionalString(request, "id", "instance-" + UUID.randomUUID());
         String applicationId = requiredString(request, "applicationId", null);
         String environmentId = optionalString(request, "environmentId", null);
         requireExists("application", applicationId);
@@ -131,6 +135,10 @@ public class PlatformJdbcService {
             validateEnvironment(applicationId, environmentId);
         }
         String applicationName = String.valueOf(getById("application", applicationId).get("name"));
+        String id = optionalString(request, "id", null);
+        if (id == null || id.isBlank()) {
+            id = businessIdService.nextId("instance", instanceBusinessName(request, applicationName));
+        }
         String nickname = uniqueInstanceNickname(
                 optionalString(request, "nickname", applicationName), applicationName, now);
         jdbcTemplate.update("""
@@ -207,7 +215,7 @@ public class PlatformJdbcService {
         }
         String instanceId;
         if (existingInstances.isEmpty()) {
-            instanceId = "instance-" + UUID.randomUUID();
+            instanceId = businessIdService.nextId("instance", registrationApplication.applicationName());
             String nickname = uniqueInstanceNickname(
                     optionalString(request, "nickname", registrationApplication.applicationName()),
                     registrationApplication.applicationName(), now);
@@ -325,10 +333,12 @@ public class PlatformJdbcService {
             jdbcTemplate.update("delete from agent_capability where agent_id = ?", agentId);
         }
         insertAgentCapabilities(agentId, optionalList(request, "capabilities"), now);
+        int restoredOperationPlans = restoreAgentGoneOperationPlans(context, instanceId, now);
         recordAudit(context, "agent_instance.self_register", "agent_instance", agentId, 1,
                 "", hash(request), "SUCCESS", "Agent 运行时自动注册",
                 Map.of("instanceId", instanceId, "applicationId", applicationId,
-                        "environmentAssigned", environmentId != null));
+                        "environmentAssigned", environmentId != null,
+                        "restoredOperationPlans", restoredOperationPlans));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("instanceId", instanceId);
         result.put("agentId", agentId);
@@ -338,6 +348,7 @@ public class PlatformJdbcService {
         result.put("environmentId", environmentId);
         result.put("status", environmentId == null ? "PENDING_ASSIGNMENT" : "ACTIVE");
         result.put("leaseExpiresAt", leaseExpiresAt.toString());
+        result.put("restoredOperationPlans", restoredOperationPlans);
         return result;
     }
 
@@ -550,7 +561,7 @@ public class PlatformJdbcService {
                 "select * from instance where process_start_id = ?", processStartId);
         String instanceId;
         if (existingInstances.isEmpty()) {
-            instanceId = "instance-" + UUID.randomUUID();
+            instanceId = businessIdService.nextId("instance", registrationApplication.applicationName());
             String nickname = uniqueInstanceNickname(
                     optionalString(request, "nickname", registrationApplication.applicationName()),
                     registrationApplication.applicationName(), now);
@@ -722,6 +733,8 @@ public class PlatformJdbcService {
                         """, timestamp(now), executorId, instanceId);
                 continue;
             }
+            markExecutionsAbandonedForInstance(instanceId, now);
+            markPlansAbandonedForInstanceIfNoLiveTargets(instanceId, now);
             jdbcTemplate.update("delete from rule_runtime_status where instance_id = ?", instanceId);
             jdbcTemplate.update("delete from rule_instance_binding where instance_id = ?", instanceId);
             jdbcTemplate.update("delete from instance_label where instance_id = ?", instanceId);
@@ -736,8 +749,52 @@ public class PlatformJdbcService {
                             where a.sidecar_id = s.id
                        )
                     """, instanceId);
-            jdbcTemplate.update("delete from instance where id = ?", instanceId);
+            jdbcTemplate.update("""
+                    update instance
+                       set status = 'ARCHIVED',
+                           updated_at = ?
+                     where id = ?
+                    """, timestamp(now), instanceId);
         }
+    }
+
+    private void markExecutionsAbandonedForInstance(Object instanceId, Instant now) {
+        jdbcTemplate.update("""
+                update rollout_instance_execution
+                   set status = 'ABANDONED',
+                       error_message = '目标实例已被运行时清理',
+                       finished_at = coalesce(finished_at, ?),
+                       updated_at = ?
+                 where instance_id = ?
+                   and status <> 'ABANDONED'
+                """, timestamp(now), timestamp(now), instanceId);
+    }
+
+    private void markPlansAbandonedForInstanceIfNoLiveTargets(Object instanceId, Instant now) {
+        jdbcTemplate.update("""
+                update operation_plan op
+                   set status = 'ABANDONED',
+                       version = version + 1,
+                       terminal_source = 'INSTANCE_GONE',
+                       terminal_reason = '目标实例已被运行时清理，计划仅保留历史痕迹',
+                       updated_by = 'runtime-maintenance',
+                       updated_at = ?
+                 where op.status <> 'ABANDONED'
+                   and exists (
+                       select 1
+                         from rollout_instance_execution rie
+                        where rie.operation_plan_id = op.id
+                          and rie.instance_id = ?
+                   )
+                   and not exists (
+                       select 1
+                         from rollout_instance_execution rie
+                         join instance i on i.id = rie.instance_id
+                        where rie.operation_plan_id = op.id
+                          and rie.instance_id <> ?
+                          and i.status not in ('OFFLINE', 'ARCHIVED')
+                   )
+                """, timestamp(now), instanceId, instanceId);
     }
 
     private Map<String, Object> mergedTargetRequest(Map<String, Object> envelope, Map<String, Object> target) {
@@ -756,6 +813,7 @@ public class PlatformJdbcService {
         rbacService.require(context, "AGENT_MANAGE");
         Instant now = clock.instant();
         String id = optionalString(request, "id", "agent-" + UUID.randomUUID());
+        String agentStatus = requiredString(request, "status", "ACTIVE");
         jdbcTemplate.update("""
                 insert into agent_instance(
                     id, instance_id, sidecar_id, status, agent_version, bootstrap_version,
@@ -766,7 +824,7 @@ public class PlatformJdbcService {
                 id,
                 optionalString(request, "instanceId", null),
                 optionalString(request, "sidecarId", null),
-                requiredString(request, "status", "ACTIVE"),
+                agentStatus,
                 requiredString(request, "agentVersion", "unknown"),
                 requiredString(request, "bootstrapVersion", "unknown"),
                 requiredString(request, "listenHost", "127.0.0.1"),
@@ -777,9 +835,14 @@ public class PlatformJdbcService {
                 timestamp(now),
                 timestamp(now));
         insertAgentCapabilities(id, optionalList(request, "capabilities"), now);
+        String instanceId = optionalString(request, "instanceId", null);
+        int restoredOperationPlans = instanceId == null || !isOnlineRuntimeStatus(agentStatus)
+                ? 0
+                : restoreAgentGoneOperationPlans(context, instanceId, now);
         recordAudit(context, "agent_instance.create", "agent_instance", id, 1,
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "create agent"),
-                Map.of("status", requiredString(request, "status", "ACTIVE")));
+                Map.of("status", agentStatus,
+                        "restoredOperationPlans", restoredOperationPlans));
         return safeAgent(getById("agent_instance", id));
     }
 
@@ -803,6 +866,11 @@ public class PlatformJdbcService {
                        last_seen_at = ?, updated_at = ?, lease_expires_at = ?
                  where id = (select instance_id from agent_instance where id = ?)
                 """, timestamp(now), timestamp(now), timestamp(leaseExpiresAt), id);
+        String instanceId = jdbcTemplate.queryForObject(
+                "select instance_id from agent_instance where id = ?", String.class, id);
+        int restoredOperationPlans = instanceId == null || !isOnlineRuntimeStatus(status)
+                ? 0
+                : restoreAgentGoneOperationPlans(context, instanceId, now);
         jdbcTemplate.update("""
                 insert into agent_heartbeat(id, agent_id, status, metrics_json, received_at)
                 values (?, ?, ?, ?, ?)
@@ -810,15 +878,78 @@ public class PlatformJdbcService {
                 jsonValue(request, "metrics", Map.of()), timestamp(now));
         recordAudit(context, "agent_instance.heartbeat", "agent_instance", id, 1,
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "agent heartbeat"),
-                Map.of("status", status));
+                Map.of("status", status, "restoredOperationPlans", restoredOperationPlans));
         return safeAgent(getById("agent_instance", id));
+    }
+
+    private boolean isOnlineRuntimeStatus(String status) {
+        return "ACTIVE".equalsIgnoreCase(status) || "ONLINE".equalsIgnoreCase(status);
+    }
+
+    private int restoreAgentGoneOperationPlans(RequestContext context, String instanceId, Instant now) {
+        List<Map<String, Object>> operations = normalizeRows(jdbcTemplate.queryForList("""
+                select distinct op.*
+                  from operation_plan op
+                  join rollout_instance_execution rie on rie.operation_plan_id = op.id
+                  join rule_version rv on rv.rule_id = op.resource_id
+                                      and rv.version = op.resource_version
+                 where rie.instance_id = ?
+                   and op.status = 'UNLOADED'
+                   and op.terminal_source = 'AGENT_GONE'
+                   and op.resource_type = 'rule'
+                   and rv.status = 'ENABLED'
+                 order by op.updated_at, op.id
+                """, instanceId));
+        int restored = 0;
+        for (Map<String, Object> operation : operations) {
+            String operationId = String.valueOf(operation.get("id"));
+            long version = ((Number) operation.get("version")).longValue();
+            int updated = jdbcTemplate.update("""
+                    update operation_plan
+                       set status = 'RUNNING',
+                           version = version + 1,
+                           terminal_source = '',
+                           terminal_reason = '',
+                           updated_by = ?,
+                           updated_at = ?
+                     where id = ?
+                       and status = 'UNLOADED'
+                       and terminal_source = 'AGENT_GONE'
+                       and version = ?
+                    """, context.actor(), timestamp(now), operationId, version);
+            if (updated == 0) {
+                continue;
+            }
+            jdbcTemplate.update("""
+                    update rollout_instance_execution
+                       set status = 'PENDING',
+                           command_id = null,
+                           error_message = 'Agent 重新注册，等待自动恢复发布',
+                           started_at = null,
+                           finished_at = null,
+                           version = version + 1,
+                           updated_by = ?,
+                           updated_at = ?
+                     where operation_plan_id = ?
+                       and instance_id = ?
+                    """, context.actor(), timestamp(now), operationId, instanceId);
+            Map<String, Object> current = getById("operation_plan", operationId);
+            recordEvent(context, "operation_plan.restore_after_agent_register", "operation_plan",
+                    operationId, ((Number) current.get("version")).longValue(),
+                    operation, current, "RUNNING",
+                    "Agent 重新注册，自动恢复非手动卸载的发布计划",
+                    Map.of("instanceId", instanceId));
+            restored++;
+        }
+        return restored;
     }
 
     @Transactional
     public Map<String, Object> createRule(RequestContext context, Map<String, Object> request) {
         rbacService.require(context, "RULE_MANAGE");
         Instant now = clock.instant();
-        String id = optionalString(request, "id", "rule-" + UUID.randomUUID());
+        rejectClientProvidedRuleId(request);
+        String id = businessIdService.nextId("rule", ruleBusinessName(request));
         ApplicationEnvironment scope = requireApplicationEnvironment(request);
         jdbcTemplate.update("""
                 insert into rule(
@@ -830,7 +961,7 @@ public class PlatformJdbcService {
                 scope.applicationId(),
                 scope.environmentId(),
                 requiredString(request, "name", null),
-                requiredString(request, "status", "DRAFT"),
+                ruleLifecycleStatus(request, "status", "ENABLED"),
                 1L,
                 1L,
                 context.actor(),
@@ -853,7 +984,7 @@ public class PlatformJdbcService {
         insertRuleVersion(context, ruleId, version, request, now);
         jdbcTemplate.update("""
                 update rule
-                   set current_draft_version = ?, latest_version = ?, updated_by = ?, updated_at = ?
+                   set current_draft_version = ?, latest_version = ?, status = 'ENABLED', updated_by = ?, updated_at = ?
                  where id = ?
                 """, version, version, context.actor(), timestamp(now), ruleId);
         recordAudit(context, "rule_version.create", "rule", ruleId, version,
@@ -906,9 +1037,7 @@ public class PlatformJdbcService {
         if (!"DISABLED".equals(currentStatus)) {
             return before;
         }
-        String restoredStatus = before.get("disabled_from_status") == null
-                ? "DRAFT"
-                : String.valueOf(before.get("disabled_from_status"));
+        String restoredStatus = "ENABLED";
         ruleVersionLifecycleMapper.enableRuleVersion(ruleId, version, restoredStatus);
         refreshRuleVersionPointers(ruleId, context);
         Map<String, Object> enabled = single(normalizeRows(optionalRow(ruleVersionLifecycleMapper.findRuleVersion(ruleId, version))),
@@ -1022,7 +1151,7 @@ public class PlatformJdbcService {
     public Map<String, Object> createOperationPlan(RequestContext context, Map<String, Object> request) {
         rbacService.require(context, "ROLLOUT_MANAGE");
         Instant now = clock.instant();
-        String id = optionalString(request, "id", "operation-" + UUID.randomUUID());
+        rejectClientProvidedDeliveryId(request);
         String applicationId = requiredString(request, "applicationId", null);
         String environmentId = requiredString(request, "environmentId", null);
         String resourceType = requiredString(request, "resourceType", null);
@@ -1031,6 +1160,7 @@ public class PlatformJdbcService {
         requireExists("application", applicationId);
         validateEnvironment(applicationId, environmentId);
         validateRolloutResource(applicationId, environmentId, resourceType, resourceId, resourceVersion);
+        String id = businessIdService.nextId("operation_plan", rolloutBusinessName(resourceType, resourceId));
         jdbcTemplate.update("""
                 insert into operation_plan(
                     id, application_id, environment_id, plan_type, resource_type, resource_id, resource_version,
@@ -1058,6 +1188,77 @@ public class PlatformJdbcService {
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "create operation plan"),
                 Map.of("status", OperationPlanStatus.DRAFT.name()));
         return getById("operation_plan", id);
+    }
+
+    private void rejectClientProvidedDeliveryId(Map<String, Object> request) {
+        Object id = request.get("id");
+        if (id != null && !String.valueOf(id).isBlank()) {
+            throw PlatformException.badRequest("CLIENT_DELIVERY_ID_DISABLED",
+                    "发布相关 ID 由平台按业务缩写、日期和顺序号生成，禁止客户端传入随机或自定义 ID");
+        }
+    }
+
+    private void rejectClientProvidedRuleId(Map<String, Object> request) {
+        Object id = request.get("id");
+        if (id != null && !String.valueOf(id).isBlank()) {
+            throw PlatformException.badRequest("CLIENT_RULE_ID_DISABLED",
+                    "规则 ID 由平台按业务缩写、日期和顺序号生成，禁止客户端传入随机或自定义 ID");
+        }
+    }
+
+    private String instanceBusinessName(Map<String, Object> request, String applicationName) {
+        return String.join(" ",
+                optionalString(request, "nickname", applicationName),
+                optionalString(request, "hostname", ""),
+                optionalString(request, "processId", ""));
+    }
+
+    private String ruleBusinessName(Map<String, Object> request) {
+        String explicitCode = optionalString(request, "businessCode", null);
+        if (explicitCode == null || explicitCode.isBlank()) {
+            explicitCode = optionalString(request, "businessAbbreviation", null);
+        }
+        if (explicitCode != null && !explicitCode.isBlank()) {
+            return explicitCode;
+        }
+        Map<String, Object> target = primaryRuleTarget(request);
+        String className = optionalString(target, "className", optionalString(target, "class_name", ""));
+        String methodName = optionalString(target, "methodName", optionalString(target, "method_name", ""));
+        String targetName = String.join(" ", simpleClassName(className), methodName).trim();
+        String name = optionalString(request, "name", "rule");
+        return targetName.isBlank() ? name : targetName + " " + name;
+    }
+
+    private Map<String, Object> primaryRuleTarget(Map<String, Object> request) {
+        List<?> targets = optionalList(request, "targets");
+        if (!targets.isEmpty()) {
+            return asMap(targets.get(0), "targets");
+        }
+        Object target = request.get("target");
+        return target == null ? Map.of() : asMap(target, "target");
+    }
+
+    private String simpleClassName(String className) {
+        if (className == null || className.isBlank()) {
+            return "";
+        }
+        String normalized = className.replace('$', '.');
+        int lastDot = normalized.lastIndexOf('.');
+        return lastDot >= 0 ? normalized.substring(lastDot + 1) : normalized;
+    }
+
+    public String rolloutBusinessName(String resourceType, String resourceId) {
+        if ("rule".equals(resourceType)) {
+            List<Map<String, Object>> rules = normalizeRows(jdbcTemplate.queryForList(
+                    "select name from rule where id = ?", resourceId));
+            if (!rules.isEmpty()) {
+                String name = String.valueOf(rules.get(0).get("name"));
+                if (!"RL".equals(businessIdService.abbreviation(name))) {
+                    return name;
+                }
+            }
+        }
+        return resourceId;
     }
 
     @Transactional
@@ -1094,9 +1295,6 @@ public class PlatformJdbcService {
                             "expectedVersion", expectedVersion));
         }
         Map<String, Object> updatedPlan = getById("operation_plan", id);
-        if (targetStatus == OperationPlanStatus.RUNNING) {
-            approveRuleVersionForOperation(updatedPlan, context, now);
-        }
         recordAudit(context, "operation_plan.transition", "operation_plan", id, newVersion,
                 hash(original), hash(updatedPlan),
                 "SUCCESS", reason,
@@ -1148,7 +1346,7 @@ public class PlatformJdbcService {
                 versionId,
                 ruleId,
                 version,
-                requiredString(request, "versionStatus", "DRAFT"),
+                ruleLifecycleStatus(request, "versionStatus", "ENABLED"),
                 requiredString(request, "riskLevel", "MEDIUM"),
                 jsonValue(request, "matcher", Map.of()),
                 optionalString(request, "scriptHash", hash(script)),
@@ -1183,25 +1381,6 @@ public class PlatformJdbcService {
         }
     }
 
-    private void approveRuleVersionForOperation(Map<String, Object> operation,
-                                                RequestContext context, Instant now) {
-        if (!"rule".equals(String.valueOf(operation.get("resource_type")))) {
-            return;
-        }
-        String ruleId = String.valueOf(operation.get("resource_id"));
-        long version = ((Number) operation.get("resource_version")).longValue();
-        jdbcTemplate.update("""
-                update rule_version
-                   set status = 'APPROVED'
-                 where rule_id = ? and version = ? and status = 'DRAFT'
-                """, ruleId, version);
-        jdbcTemplate.update("""
-                update rule
-                   set status = 'APPROVED', updated_by = ?, updated_at = ?
-                 where id = ?
-                """, context.actor(), timestamp(now), ruleId);
-    }
-
     private void validateRolloutResource(String applicationId, String environmentId,
                                          String resourceType, String resourceId,
                                          long resourceVersion) {
@@ -1212,6 +1391,10 @@ public class PlatformJdbcService {
         if (ruleVersionLifecycleMapper.countRuleInScope(resourceId, applicationId, environmentId) == 0) {
             throw PlatformException.badRequest("INVALID_ROLLOUT_RESOURCE",
                     "所选规则不属于当前应用和环境");
+        }
+        if (ruleVersionLifecycleMapper.countEnabledRuleInScope(resourceId, applicationId, environmentId) == 0) {
+            throw PlatformException.badRequest("RULE_DISABLED",
+                    "所选规则已停用，不能创建发布计划");
         }
         if (ruleVersionLifecycleMapper.countEnabledRuleVersion(resourceId, resourceVersion) == 0) {
             throw PlatformException.badRequest("INVALID_ROLLOUT_VERSION",
@@ -1536,6 +1719,23 @@ public class PlatformJdbcService {
             throw PlatformException.badRequest("FIELD_REQUIRED", "Missing required field: " + key);
         }
         return value;
+    }
+
+    private String ruleLifecycleStatus(Map<String, Object> request, String key, String defaultValue) {
+        String value = optionalString(request, key, defaultValue);
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        if ("DISABLED".equals(normalized)) {
+            throw PlatformException.badRequest("INVALID_RULE_STATUS",
+                    "规则或规则版本停用必须通过停用接口处理，不能在创建时直接写入停用状态");
+        }
+        if ("ENABLED".equals(normalized)) {
+            return "ENABLED";
+        }
+        throw PlatformException.badRequest("INVALID_RULE_STATUS",
+                "创建规则或规则版本时状态只允许 ENABLED，停用必须通过停用接口处理");
     }
 
     private String optionalString(Map<String, Object> request, String key, String defaultValue) {

@@ -35,7 +35,7 @@
         select version, status
           from rule_version
          where rule_id = #{ruleId}
-           and status &lt;&gt; 'DISABLED'
+           and status = 'ENABLED'
          order by version desc
          limit 1
     </select>
@@ -68,12 +68,27 @@
            and environment_id = #{environmentId}
     </select>
 
+    <select id="countEnabledRuleInScope" resultType="int">
+        select count(*)
+          from rule
+         where id = #{ruleId}
+           and application_id = #{applicationId}
+           and environment_id = #{environmentId}
+           and status = 'ENABLED'
+           and exists (
+               select 1
+                 from rule_version rv
+                where rv.rule_id = rule.id
+                  and rv.status = 'ENABLED'
+           )
+    </select>
+
     <select id="countEnabledRuleVersion" resultType="int">
         select count(*)
           from rule_version
          where rule_id = #{ruleId}
            and version = #{version}
-           and status &lt;&gt; 'DISABLED'
+           and status = 'ENABLED'
     </select>
 
     <delete id="deleteExpiredCapabilities">
@@ -136,21 +151,21 @@
            set current_draft_version = (
                    select rv.version
                      from rule_version rv
-                    where rv.rule_id = r.id and rv.status &lt;&gt; 'DISABLED'
+                    where rv.rule_id = r.id and rv.status = 'ENABLED'
                     order by rv.version desc
                     limit 1
                ),
                latest_version = (
                    select rv.version
                      from rule_version rv
-                    where rv.rule_id = r.id and rv.status &lt;&gt; 'DISABLED'
+                    where rv.rule_id = r.id and rv.status = 'ENABLED'
                     order by rv.version desc
                     limit 1
                ),
                status = coalesce((
                    select rv.status
                      from rule_version rv
-                    where rv.rule_id = r.id and rv.status &lt;&gt; 'DISABLED'
+                    where rv.rule_id = r.id and rv.status = 'ENABLED'
                     order by rv.version desc
                     limit 1
                ), 'DISABLED'),

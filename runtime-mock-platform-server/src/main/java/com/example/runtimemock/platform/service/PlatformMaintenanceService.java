@@ -112,17 +112,21 @@ public class PlatformMaintenanceService {
                    and lease_expires_at is not null
                    and lease_expires_at <= ?
                 """, current, current);
+        int operationPlansAutoUnloaded = markPlansUnloadedWhenAgentsGone(current);
         return Map.of(
                 "agentsOffline", agentsOffline,
                 "executorsOffline", executorsOffline,
                 "targetsOffline", targetsOffline,
-                "instancesOffline", instancesOffline
+                "instancesOffline", instancesOffline,
+                "operationPlansAutoUnloaded", operationPlansAutoUnloaded
         );
     }
 
     public Map<String, Object> cleanupOfflineRuntime() {
         Instant cutoff = clock.instant().minusMillis(Math.max(0, offlineRuntimeRetentionMs));
         Timestamp cutoffTimestamp = Timestamp.from(cutoff);
+        int operationPlansAbandoned = markPlansAbandonedWhenInstancesGone(cutoffTimestamp);
+        int executionsAbandoned = markExecutionsAbandonedWhenInstancesGone(cutoffTimestamp);
 
         int attachCommandsDeleted = jdbcTemplate.update("""
                 delete from attach_executor_command
@@ -253,13 +257,17 @@ public class PlatformMaintenanceService {
                    )
                 """, cutoffTimestamp);
         int instancesDeleted = jdbcTemplate.update("""
-                delete from instance i
+                update instance i
+                   set status = 'ARCHIVED',
+                       updated_at = current_timestamp
                  where i.status = 'OFFLINE'
                    and coalesce(i.lease_expires_at, i.last_seen_at, i.updated_at, i.created_at) <= ?
                 """, cutoffTimestamp);
 
         return Map.ofEntries(
                 Map.entry("cutoff", cutoff.toString()),
+                Map.entry("operationPlansAbandoned", operationPlansAbandoned),
+                Map.entry("executionsAbandoned", executionsAbandoned),
                 Map.entry("attachCommandsDeleted", attachCommandsDeleted),
                 Map.entry("agentCommandsDeleted", agentCommandsDeleted),
                 Map.entry("agentHeartbeatsDeleted", agentHeartbeatsDeleted),
@@ -276,6 +284,101 @@ public class PlatformMaintenanceService {
                 Map.entry("assetClaimsDeleted", assetClaimsDeleted),
                 Map.entry("instancesDeleted", instancesDeleted)
         );
+    }
+
+    private int markPlansUnloadedWhenAgentsGone(Timestamp now) {
+        int plans = jdbcTemplate.update("""
+                update operation_plan op
+                   set status = 'UNLOADED',
+                       version = version + 1,
+                       terminal_source = 'AGENT_GONE',
+                       terminal_reason = '成功执行实例已没有可达 Agent，规则运行时能力自动失效',
+                       updated_by = 'runtime-maintenance',
+                       updated_at = ?
+                 where op.status in ('SUCCEEDED', 'RUNNING', 'FAILED')
+                   and op.resource_type = 'rule'
+                   and exists (
+                       select 1
+                         from rollout_instance_execution rie
+                        where rie.operation_plan_id = op.id
+                          and rie.status = 'SUCCEEDED'
+                   )
+                   and not exists (
+                       select 1
+                         from rollout_instance_execution rie
+                         join agent_instance a on a.instance_id = rie.instance_id
+                        where rie.operation_plan_id = op.id
+                          and rie.status = 'SUCCEEDED'
+                          and a.status in ('ACTIVE', 'ONLINE')
+                          and (a.lease_expires_at is null or a.lease_expires_at > ?)
+                   )
+                """, now, now);
+        if (plans > 0) {
+            jdbcTemplate.update("""
+                    update rule_runtime_status r
+                       set status = 'REMOVED',
+                           last_error = null,
+                           updated_at = ?
+                     where exists (
+                         select 1
+                           from operation_plan op
+                           join rollout_instance_execution rie on rie.operation_plan_id = op.id
+                          where op.status = 'UNLOADED'
+                            and op.terminal_source = 'AGENT_GONE'
+                            and rie.status = 'SUCCEEDED'
+                            and rie.instance_id = r.instance_id
+                            and op.resource_id = r.rule_id
+                            and op.resource_version = r.rule_version
+                     )
+                    """, now);
+        }
+        return plans;
+    }
+
+    private int markPlansAbandonedWhenInstancesGone(Timestamp cutoffTimestamp) {
+        return jdbcTemplate.update("""
+                update operation_plan op
+                   set status = 'ABANDONED',
+                       version = version + 1,
+                       terminal_source = 'INSTANCE_GONE',
+                       terminal_reason = '目标实例已被运行时清理，计划仅保留历史痕迹',
+                       updated_by = 'runtime-maintenance',
+                       updated_at = current_timestamp
+                 where op.status <> 'ABANDONED'
+                   and exists (
+                       select 1
+                         from rollout_instance_execution rie
+                        where rie.operation_plan_id = op.id
+                   )
+                   and not exists (
+                       select 1
+                         from rollout_instance_execution rie
+                         join instance i on i.id = rie.instance_id
+                        where rie.operation_plan_id = op.id
+                          and not (
+                              i.status in ('OFFLINE', 'ARCHIVED')
+                              and coalesce(i.lease_expires_at, i.last_seen_at, i.updated_at, i.created_at) <= ?
+                          )
+                   )
+                """, cutoffTimestamp);
+    }
+
+    private int markExecutionsAbandonedWhenInstancesGone(Timestamp cutoffTimestamp) {
+        return jdbcTemplate.update("""
+                update rollout_instance_execution rie
+                   set status = 'ABANDONED',
+                       error_message = '目标实例已被运行时清理',
+                       finished_at = coalesce(finished_at, current_timestamp),
+                       updated_at = current_timestamp
+                 where status <> 'ABANDONED'
+                   and exists (
+                       select 1
+                         from instance i
+                        where i.id = rie.instance_id
+                          and i.status in ('OFFLINE', 'ARCHIVED')
+                          and coalesce(i.lease_expires_at, i.last_seen_at, i.updated_at, i.created_at) <= ?
+                   )
+                """, cutoffTimestamp);
     }
 
     public Map<String, Object> cleanupExpiredDisabledRules() {

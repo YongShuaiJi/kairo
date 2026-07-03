@@ -1,6 +1,7 @@
 package com.example.runtimemock.platform.command;
 
 import com.example.runtimemock.platform.service.PlatformException;
+import com.example.runtimemock.platform.service.BusinessIdService;
 import com.example.runtimemock.platform.service.PlatformJdbcService;
 import com.example.runtimemock.platform.service.PlatformJson;
 import com.example.runtimemock.platform.service.RbacService;
@@ -17,7 +18,6 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @Service
 public class AgentCommandService {
@@ -25,19 +25,21 @@ public class AgentCommandService {
     private final JdbcTemplate jdbcTemplate;
     private final RbacService rbacService;
     private final PlatformJdbcService eventWriter;
+    private final BusinessIdService businessIdService;
     private final Clock clock;
 
     @Autowired
     public AgentCommandService(JdbcTemplate jdbcTemplate, RbacService rbacService,
-                               PlatformJdbcService eventWriter) {
-        this(jdbcTemplate, rbacService, eventWriter, Clock.systemUTC());
+                               PlatformJdbcService eventWriter, BusinessIdService businessIdService) {
+        this(jdbcTemplate, rbacService, eventWriter, businessIdService, Clock.systemUTC());
     }
 
     AgentCommandService(JdbcTemplate jdbcTemplate, RbacService rbacService,
-                        PlatformJdbcService eventWriter, Clock clock) {
+                        PlatformJdbcService eventWriter, BusinessIdService businessIdService, Clock clock) {
         this.jdbcTemplate = jdbcTemplate;
         this.rbacService = rbacService;
         this.eventWriter = eventWriter;
+        this.businessIdService = businessIdService;
         this.clock = clock;
     }
 
@@ -55,8 +57,12 @@ public class AgentCommandService {
         rbacService.require(context, "AGENT_MANAGE");
         String commandType = requiredString(request, "commandType", null);
         Map<String, Object> payload = optionalMap(request, "payload");
-        String idempotencyKey = optionalString(request, "idempotencyKey",
-                "manual:" + agentId + ":" + commandType + ":" + UUID.randomUUID());
+        String idempotencyKey = optionalString(request, "idempotencyKey", null);
+        if (idempotencyKey == null) {
+            idempotencyKey = "manual:" + agentId + ":" + commandType + ":"
+                    + businessIdService.nextId("agent_command_idempotency",
+                    commandBusinessName(commandType, payload));
+        }
         return enqueue(context, agentId, commandType, payload, idempotencyKey,
                 optionalLong(request, "maxAttempts", 5), clock.instant());
     }
@@ -67,9 +73,10 @@ public class AgentCommandService {
                                        long maxAttempts, Instant availableAt) {
         requireExistingAgent(agentId);
         Instant now = clock.instant();
-        String id = "agent-command-" + UUID.randomUUID();
         Map<String, Object> fullPayload = new LinkedHashMap<>(payload);
         fullPayload.putIfAbsent("protocolVersion", "v1");
+        String id = businessIdService.nextId("agent_command",
+                commandBusinessName(commandType, fullPayload));
         try {
             jdbcTemplate.update("""
                     insert into agent_command(
@@ -320,14 +327,6 @@ public class AgentCommandService {
         if (allSucceeded && "rule".equals(String.valueOf(operation.get("resource_type")))) {
             String ruleId = String.valueOf(operation.get("resource_id"));
             long ruleVersion = ((Number) operation.get("resource_version")).longValue();
-            jdbcTemplate.update("""
-                    update rule_version set status = 'PUBLISHED'
-                     where rule_id = ? and version = ?
-                    """, ruleId, ruleVersion);
-            jdbcTemplate.update("""
-                    update rule set status = 'ACTIVE', updated_by = ?, updated_at = ?
-                     where id = ?
-                    """, context.actor(), timestamp(now), ruleId);
             List<Map<String, Object>> successfulExecutions = normalizeRows(jdbcTemplate.queryForList("""
                     select instance_id
                       from rollout_instance_execution
@@ -346,7 +345,8 @@ public class AgentCommandService {
                                 id, rule_id, rule_version, instance_id, status,
                                 hit_count, error_count, last_error, updated_at
                             ) values (?, ?, ?, ?, 'ACTIVE', 0, 0, null, ?)
-                            """, "rule-runtime-" + UUID.randomUUID(), ruleId, ruleVersion,
+                            """, businessIdService.nextId("rule_runtime_status",
+                                    eventWriter.rolloutBusinessName("rule", ruleId)), ruleId, ruleVersion,
                             instanceId, timestamp(now));
                 }
             }
@@ -375,14 +375,21 @@ public class AgentCommandService {
         Instant now = clock.instant();
         int transitioned = jdbcTemplate.update("""
                 update operation_plan
-                   set status = 'UNLOADING', version = version + 1, updated_by = ?, updated_at = ?
+                   set status = 'UNLOADING',
+                       version = version + 1,
+                       terminal_source = 'ROLLOUT_FAILURE',
+                       terminal_reason = '实例执行失败后自动卸载',
+                       updated_by = ?,
+                       updated_at = ?
                  where id = ? and status = 'RUNNING' and version = ?
                 """, context.actor(), timestamp(now), operationPlanId,
                 ((Number) operation.get("version")).longValue());
         if (transitioned == 0) {
             return;
         }
-        String rollbackId = "rollback-" + UUID.randomUUID();
+        String rollbackId = businessIdService.nextId("rollback_execution",
+                eventWriter.rolloutBusinessName(String.valueOf(operation.get("resource_type")),
+                        String.valueOf(operation.get("resource_id"))));
         jdbcTemplate.update("""
                 insert into rollback_execution(
                     id, operation_plan_id, rollback_type, status, reason,
@@ -413,8 +420,13 @@ public class AgentCommandService {
                      where id = ?
                     """, timestamp(now), rollbackId);
             jdbcTemplate.update("""
-                    update operation_plan
-                       set status = 'UNLOADED', version = version + 1, updated_by = ?, updated_at = ?
+                update operation_plan
+                       set status = 'UNLOADED',
+                           version = version + 1,
+                           terminal_source = 'ROLLOUT_FAILURE',
+                           terminal_reason = '实例执行失败且没有可达 Agent，直接标记已卸载',
+                           updated_by = ?,
+                           updated_at = ?
                      where id = ? and status = 'UNLOADING'
                     """, context.actor(), timestamp(now), operationPlanId);
         }
@@ -426,6 +438,31 @@ public class AgentCommandService {
                 Map.of("rollbackExecutionId", rollbackId,
                         "executionCount", executions.size(),
                         "commandCount", agents.size()));
+    }
+
+    private String commandBusinessName(String commandType, Map<String, Object> payload) {
+        Object resourceType = payload.getOrDefault("resourceType", "rule");
+        Object resourceId = payload.get("resourceId");
+        if (resourceId == null) {
+            resourceId = payload.get("ruleId");
+        }
+        if (resourceId != null && !String.valueOf(resourceId).isBlank()) {
+            return eventWriter.rolloutBusinessName(String.valueOf(resourceType), String.valueOf(resourceId));
+        }
+        Object operationPlanId = payload.get("operationPlanId");
+        if (operationPlanId != null && !String.valueOf(operationPlanId).isBlank()) {
+            List<Map<String, Object>> operations = normalizeRows(jdbcTemplate.queryForList("""
+                    select resource_type, resource_id
+                      from operation_plan
+                     where id = ?
+                    """, operationPlanId));
+            if (!operations.isEmpty()) {
+                Map<String, Object> operation = operations.get(0);
+                return eventWriter.rolloutBusinessName(String.valueOf(operation.get("resource_type")),
+                        String.valueOf(operation.get("resource_id")));
+            }
+        }
+        return commandType;
     }
 
     private void requireExistingAgent(String agentId) {

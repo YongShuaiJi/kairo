@@ -2,6 +2,7 @@ package com.example.runtimemock.platform;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -37,6 +38,25 @@ class PlatformWebContractIntegrationTest {
 
     @Autowired
     JdbcTemplate jdbcTemplate;
+
+    @BeforeEach
+    void ensureDefaultTopology() {
+        jdbcTemplate.update("""
+                insert into project(id, organization_id, name, created_at)
+                select 'proj-default', 'org-default', 'Default Project', current_timestamp
+                 where not exists (select 1 from project where id = 'proj-default')
+                """);
+        jdbcTemplate.update("""
+                insert into application(id, project_id, name, created_at)
+                select 'app-default', 'proj-default', 'Default Application', current_timestamp
+                 where not exists (select 1 from application where id = 'app-default')
+                """);
+        jdbcTemplate.update("""
+                insert into environment(id, application_id, name, type, created_at)
+                select 'env-dev', 'app-default', 'dev', 'dev', current_timestamp
+                 where not exists (select 1 from environment where id = 'env-dev')
+                """);
+    }
 
     @Test
     void supportsTheWebConsoleContractWithoutLeakingCredentials() throws Exception {
@@ -81,11 +101,10 @@ class PlatformWebContractIntegrationTest {
                 .andExpect(jsonPath("$.allowed_actions").isArray());
 
         postJson("/api/v1/rules", Map.ofEntries(
-                Map.entry("id", "web-contract-rule"),
                 Map.entry("applicationId", "app-default"),
                 Map.entry("environmentId", "env-dev"),
                 Map.entry("name", "Web contract target"),
-                Map.entry("versionStatus", "DRAFT"),
+                Map.entry("versionStatus", "ENABLED"),
                 Map.entry("riskLevel", "LOW"),
                 Map.entry("script", Map.of("phase", "RETURN", "script", "return mock.proceed()")),
                 Map.entry("targets", java.util.List.of(Map.of(
@@ -111,19 +130,53 @@ class PlatformWebContractIntegrationTest {
                 .andExpect(jsonPath("$").isEmpty());
 
         JsonNode issued = postJson("/api/v1/auth/tokens", Map.of(
-                "subjectType", "USER",
-                "subjectId", "reviewer",
-                "displayName", "Web contract reviewer",
-                "ttlSeconds", 3600
+                "username", "reviewer",
+                "expiresAt", java.time.Instant.now().plus(Duration.ofHours(1)).toString()
         ));
         assertThat(issued.path("token").asText()).isNotBlank();
+        assertThat(issued.path("subjectType").asText()).isEqualTo("USER");
+        assertThat(issued.path("subjectId").asText()).isEqualTo("reviewer");
+        assertThat(issued.path("displayName").asText()).isEqualTo("reviewer");
 
         String tokenList = mockMvc.perform(get("/api/v1/query/tokens")
                         .header("X-Actor", "system"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].subject_id").value("reviewer"))
+                .andExpect(jsonPath("$.items[0].status").value("VALID"))
                 .andReturn().getResponse().getContentAsString();
         assertThat(tokenList).doesNotContain("token_hash").doesNotContain(issued.path("token").asText());
+
+        String tokenDetail = mockMvc.perform(get("/api/v1/details/tokens/" + issued.path("id").asText())
+                        .header("X-Actor", "system"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.subject_id").value("reviewer"))
+                .andExpect(jsonPath("$.expires_at").exists())
+                .andExpect(jsonPath("$.status").doesNotExist())
+                .andExpect(jsonPath("$.subject_type").doesNotExist())
+                .andExpect(jsonPath("$.created_at").doesNotExist())
+                .andExpect(jsonPath("$.last_used_at").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(tokenDetail)
+                .doesNotContain("token_hash")
+                .doesNotContain("display_name")
+                .doesNotContain(issued.path("token").asText());
+
+        JsonNode renewed = postJson("/api/v1/auth/tokens/" + issued.path("id").asText() + "/renew", Map.of(
+                "expiresAt", java.time.Instant.now().plus(Duration.ofHours(2)).toString()
+        ));
+        assertThat(renewed.path("status").asText()).isEqualTo("VALID");
+        assertThat(renewed.has("token")).isFalse();
+
+        JsonNode permanentRenewed = postJson("/api/v1/auth/tokens/" + issued.path("id").asText() + "/renew", Map.of());
+        assertThat(permanentRenewed.path("status").asText()).isEqualTo("VALID");
+        assertThat(permanentRenewed.path("expires_at").isNull()).isTrue();
+        assertThat(permanentRenewed.has("token")).isFalse();
+
+        JsonNode permanentIssued = postJson("/api/v1/auth/tokens", Map.of(
+                "username", "system"
+        ));
+        assertThat(permanentIssued.path("expiresAt").isNull()).isTrue();
 
         String agents = mockMvc.perform(get("/api/v1/query/agents").header("X-Actor", "system"))
                 .andExpect(status().isOk())
