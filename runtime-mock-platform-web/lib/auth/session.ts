@@ -37,7 +37,7 @@ export function decryptSession(value: string | undefined): SessionPayload | null
     const decipher = createDecipheriv("aes-256-gcm", sessionKey(), iv);
     decipher.setAuthTag(tag);
     const payload = JSON.parse(Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8")) as SessionPayload;
-    return new Date(payload.expiresAt).getTime() > Date.now() ? payload : null;
+    return payload.expiresAt === null || new Date(payload.expiresAt).getTime() > Date.now() ? payload : null;
   } catch {
     return null;
   }

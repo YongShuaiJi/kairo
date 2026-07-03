@@ -3,8 +3,8 @@ import { demoHealth, demoList, demoTargets, demoTest, demoValidate } from "@/lib
 
 describe("demo platform contract", () => {
   it("provides representative domain data", () => {
-    expect(demoList("agents")).toHaveLength(4);
-    expect(demoList("rules")?.[0]).toMatchObject({ status: "ACTIVE" });
+    expect(demoList("agents")).toHaveLength(2);
+    expect(demoList("rules")?.[0]).toMatchObject({ status: "ENABLED" });
     expect(demoHealth().services.postgresql.status).toBe("UP");
   });
 

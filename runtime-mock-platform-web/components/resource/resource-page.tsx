@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Fragment, type ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronLeft, ChevronRight, Copy, Pencil, Plus, RefreshCw, RotateCcw, Search, X } from "lucide-react";
+import { CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Copy, Pencil, Plus, RefreshCw, RotateCcw, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { platformFetch } from "@/lib/api/client";
 import type { PlatformRecord, SessionUser } from "@/lib/api/types";
@@ -18,6 +18,7 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
+import { DateTimePicker } from "@/components/ui/date-time-picker";
 import { NumberInput } from "@/components/ui/number-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -40,10 +41,10 @@ function valueOf(record: PlatformRecord, key: string) {
 
 function statusVariant(status: string) {
   const value = status.toUpperCase();
-  if (["UP", "ONLINE", "ACTIVE", "READY", "RUNNING", "SUCCESS", "SUCCEEDED", "COMPLETED", "APPROVED", "PUBLISHED", "AVAILABLE", "HEALTHY", "MATCHED", "ACKED"].includes(value)) return "success" as const;
+  if (["UP", "ONLINE", "ACTIVE", "VALID", "ENABLED", "READY", "RUNNING", "SUCCESS", "SUCCEEDED", "COMPLETED", "APPROVED", "PUBLISHED", "AVAILABLE", "HEALTHY", "MATCHED", "ACKED"].includes(value)) return "success" as const;
   if (["PENDING", "BUILDING", "RETRYING", "PARTIAL", "MEDIUM", "QUEUED", "STOPPING", "UNLOADING"].includes(value)) return "warning" as const;
   if (["FAILED", "OFFLINE", "REJECTED", "ERROR", "HIGH", "DIFF", "CANCELLED"].includes(value)) return "danger" as const;
-  if (["DRAFT", "PAUSED", "ARCHIVED", "LOW", "UNLOADED", "DISABLED", "STOPPED"].includes(value)) return "neutral" as const;
+  if (["DRAFT", "PAUSED", "ARCHIVED", "LOW", "UNLOADED", "ABANDONED", "DISABLED", "INVALID", "STOPPED"].includes(value)) return "neutral" as const;
   return "info" as const;
 }
 
@@ -78,6 +79,9 @@ function groupApplicationInstances(rows: PlatformRecord[]) {
 
 function detailTitle(configKey: string, detail: PlatformRecord | null | undefined) {
   if (!detail) return "详情";
+  if (configKey === "settings") {
+    return String(valueOf(detail, "subjectId") ?? valueOf(detail, "username") ?? "访问 Token");
+  }
   if (configKey === "applications") {
     const app = String(valueOf(detail, "applicationName") ?? "");
     const env = environmentName(detail);
@@ -86,13 +90,29 @@ function detailTitle(configKey: string, detail: PlatformRecord | null | undefine
   return String(valueOf(detail, "name") ?? valueOf(detail, "applicationName") ?? valueOf(detail, "id") ?? "详情");
 }
 
-function shouldShowDetailField(key: string, detail: PlatformRecord | null | undefined) {
+function shouldShowDetailField(key: string, detail: PlatformRecord | null | undefined, activeEndpoint?: string) {
   if (key === "allowed_actions") return false;
+  if (activeEndpoint === "tokens") {
+    const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+    return ["subject_id", "expires_at"].includes(snake);
+  }
   if (!detail) return true;
   const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+  if (activeEndpoint === "tokens" && ["display_name", "subject_type", "token_status"].includes(snake)) return false;
   if (snake === "application_name" && valueOf(detail, "applicationId")) return false;
   if (snake === "environment_name" && valueOf(detail, "environmentId")) return false;
   return true;
+}
+
+function detailEntries(detail: PlatformRecord | null | undefined, activeEndpoint?: string) {
+  if (!detail) return [];
+  if (activeEndpoint === "tokens") {
+    return [
+      ["subject_id", valueOf(detail, "subjectId")],
+      ["expires_at", valueOf(detail, "expiresAt")],
+    ] as Array<[string, unknown]>;
+  }
+  return Object.entries(detail).filter(([key]) => shouldShowDetailField(key, detail, activeEndpoint));
 }
 
 function detailValue(key: string, value: unknown, detail: PlatformRecord | null | undefined) {
@@ -101,6 +121,20 @@ function detailValue(key: string, value: unknown, detail: PlatformRecord | null 
   if (detail && snake === "environment_id") return environmentName(detail) || value;
   if (snake === "environment_name") return String(value ?? "").toLowerCase();
   return value;
+}
+
+function detailLabel(activeEndpoint: string, key: string) {
+  const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+  if (activeEndpoint === "tokens" && snake === "subject_id") return "用户名";
+  if (activeEndpoint === "tokens" && snake === "expires_at") return "过期时间";
+  return fieldLabel(key);
+}
+
+function detailText(activeEndpoint: string, key: string, value: unknown) {
+  const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+  if (activeEndpoint === "tokens" && snake === "expires_at" && !value) return "长期";
+  if (key.toLowerCase().endsWith("_at") || key.toLowerCase().endsWith("at")) return formatDate(value);
+  return humanize(value);
 }
 
 function versionBadgeStatus(record: PlatformRecord | undefined, columnKey: string, value: unknown) {
@@ -116,7 +150,20 @@ function cellTitle(value: unknown) {
   return String(value);
 }
 
+const TARGET_METHOD_DISPLAY_LIMIT = 96;
+
+function compactLongTargetMethod(value: unknown) {
+  const text = String(value ?? "");
+  if (text.length <= TARGET_METHOD_DISPLAY_LIMIT) return text;
+  const headLength = 68;
+  const tailLength = TARGET_METHOD_DISPLAY_LIMIT - headLength - 1;
+  return `${text.slice(0, headLength)}…${text.slice(-tailLength)}`;
+}
+
 function Cell({ value, column, record }: { value: unknown; column: ResourceColumn; record?: PlatformRecord }) {
+  if ((value === null || value === undefined || value === "") && column.kind === "date" && ["expiresAt", "expires_at"].includes(column.key)) {
+    return <span className="whitespace-nowrap text-slate-500">长期</span>;
+  }
   if (value === null || value === undefined || value === "") return <span className="text-slate-300">—</span>;
   if (column.key === "onlineVersion" || column.key === "latestVersion") {
     const status = versionBadgeStatus(record, column.key, value);
@@ -139,6 +186,14 @@ function Cell({ value, column, record }: { value: unknown; column: ResourceColum
     const progress = Number(value);
     return <div className="flex min-w-28 items-center gap-2"><div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.min(100, progress)}%` }} /></div><span className="w-8 text-right text-xs text-slate-500">{progress}%</span></div>;
   }
+  if (column.key === "targetMethod" || column.key === "target_method") {
+    const text = String(value);
+    return (
+      <span className="inline-block max-w-full truncate whitespace-nowrap font-mono text-xs text-slate-600" title={text}>
+        {compactLongTargetMethod(text)}
+      </span>
+    );
+  }
   const rendered = Array.isArray(value)
     ? value.map((item) => humanize(item)).join(", ")
     : typeof value === "object"
@@ -160,12 +215,10 @@ const RULE_COLUMN_WIDTHS: Record<string, string> = {
   name: "w-[300px] min-w-[300px] max-w-[300px]",
   applicationName: "w-[240px] min-w-[240px] max-w-[240px]",
   environmentName: "w-[100px] min-w-[100px] max-w-[100px]",
-  targetMethod: "w-[460px] min-w-[460px] max-w-[460px]",
+  targetMethod: "w-[680px] min-w-[680px] max-w-[680px]",
   versionCount: "w-[96px] min-w-[96px] max-w-[96px]",
   enabledVersionCount: "w-[112px] min-w-[112px] max-w-[112px]",
   disabledVersionCount: "w-[112px] min-w-[112px] max-w-[112px]",
-  onlineVersion: "w-[150px] min-w-[150px] max-w-[150px]",
-  latestVersion: "w-[150px] min-w-[150px] max-w-[150px]",
 };
 
 const RESOURCE_COLUMN_WIDTHS: Record<string, string> = {
@@ -190,7 +243,7 @@ const RESOURCE_COLUMN_WIDTHS: Record<string, string> = {
 };
 
 function resourceTableClass(configKey: string) {
-  if (configKey === "rules") return "w-full min-w-[1800px] table-fixed text-left text-sm";
+  if (configKey === "rules") return "w-full min-w-[1720px] table-fixed text-left text-sm";
   if (configKey === "rollouts") return "w-full min-w-[1560px] table-fixed text-left text-sm";
   return "w-full min-w-[1080px] table-fixed text-left text-sm";
 }
@@ -615,25 +668,50 @@ function RolloutExecutionDetail({ detail }: { detail: PlatformRecord }) {
 }
 
 function initialForm(form: ResourceForm | undefined) {
-  return Object.fromEntries((form?.fields ?? []).map((field) => [field.key, field.defaultValue ?? ""]));
+  return Object.fromEntries((form?.fields ?? []).map((field) => [
+    field.key,
+    typeof field.defaultValue === "function" ? field.defaultValue() : field.defaultValue ?? "",
+  ]));
+}
+
+function isoInstant(value: string) {
+  if (!value.trim()) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function splitApplicationEnvironment(value: string | undefined) {
+  const [applicationId = "", environmentId = ""] = String(value ?? "").split("|");
+  return { applicationId, environmentId };
 }
 
 function resourceOptionValue(source: ResourceField["source"], record: PlatformRecord) {
   if (source === "rule-versions") return String(valueOf(record, "version") ?? "");
+  if (source === "rollout-applications") {
+    const applicationId = String(valueOf(record, "id") ?? "");
+    const environmentId = String(valueOf(record, "environmentId") ?? "");
+    return applicationId && environmentId ? `${applicationId}|${environmentId}` : "";
+  }
   return String(valueOf(record, "id") ?? "");
 }
 
 function resourceOptionLabel(source: ResourceField["source"], record: PlatformRecord) {
   const id = String(valueOf(record, "id") ?? "");
   const name = String(valueOf(record, "name") ?? id);
-  if (source === "applications") {
+  if (source === "applications" || source === "rollout-applications") {
     return name;
+  }
+  if (source === "rollout-environments") {
+    return environmentName(record);
   }
   if (source === "environments") {
     return environmentName(record);
   }
   if (source === "rule-versions") {
-    return `版本 ${String(valueOf(record, "version") ?? "—")} · ${humanize(valueOf(record, "status"))}`;
+    return `版本 ${String(valueOf(record, "version") ?? "—")}`;
+  }
+  if (source === "rules") {
+    return name;
   }
   return `${name}（${shortId(id)}）`;
 }
@@ -654,17 +732,26 @@ function ResourceSelectField({
     enabled: Boolean(field.source && dependenciesReady),
   });
   const options = (optionsQuery.data?.items ?? []).filter((record) => {
+    if (field.source === "rollout-applications") {
+      return String(valueOf(record, "environmentKey") ?? "").toLowerCase() === String(form.environmentKey ?? "").toLowerCase();
+    }
     if (field.source === "environments") {
       const applicationField = field.dependsOn?.find((key) => key.toLowerCase().includes("application")) ?? "applicationId";
       return String(valueOf(record, "applicationId") ?? "") === form[applicationField]
         && VISIBLE_ENVIRONMENTS.has(String(valueOf(record, "type") ?? valueOf(record, "name") ?? "").toLowerCase());
     }
     if (field.source === "rules") {
-      return String(valueOf(record, "applicationId") ?? "") === form.applicationId
-        && String(valueOf(record, "environmentId") ?? "") === form.environmentId;
+      const rolloutScope = splitApplicationEnvironment(form.applicationEnvironment);
+      const applicationId = rolloutScope.applicationId || form.applicationId;
+      const environmentId = rolloutScope.environmentId || form.environmentId;
+      return String(valueOf(record, "applicationId") ?? "") === applicationId
+        && String(valueOf(record, "environmentId") ?? "") === environmentId
+        && String(valueOf(record, "status") ?? "").toUpperCase() === "ENABLED"
+        && Number(valueOf(record, "enabledVersionCount") ?? 0) > 0;
     }
     if (field.source === "rule-versions") {
-      return String(valueOf(record, "ruleId") ?? "") === form.resourceId;
+      return String(valueOf(record, "ruleId") ?? "") === form.resourceId
+        && String(valueOf(record, "status") ?? "").toUpperCase() === "ENABLED";
     }
     return true;
   });
@@ -798,6 +885,8 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
   const [selected, setSelected] = useState<PlatformRecord | null>(null);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<PlatformRecord | null>(null);
+  const [renewingToken, setRenewingToken] = useState<PlatformRecord | null>(null);
+  const [renewExpiresAt, setRenewExpiresAt] = useState("");
   const [assignmentEnvironment, setAssignmentEnvironment] = useState("");
   const [confirmingUnload, setConfirmingUnload] = useState(false);
   const [editingNicknameId, setEditingNicknameId] = useState("");
@@ -941,6 +1030,27 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
     onError: (error) => toast.error(error instanceof Error ? error.message : "创建失败"),
   });
 
+  const renewTokenMutation = useMutation({
+    mutationFn: () => {
+      const id = String(valueOf(renewingToken ?? {}, "id") ?? "");
+      if (!id) throw new Error("未找到需要续期的 Token");
+      return platformFetch<PlatformRecord>(`auth/tokens/${encodeURIComponent(id)}/renew`, {
+        method: "POST",
+        body: JSON.stringify({ expiresAt: isoInstant(renewExpiresAt) }),
+        idempotencyKey: crypto.randomUUID(),
+      });
+    },
+    onSuccess: async () => {
+      toast.success("Token 已续期");
+      setRenewingToken(null);
+      setRenewExpiresAt("");
+      await queryClient.invalidateQueries({ queryKey: ["resource", activeEndpoint] });
+      await queryClient.invalidateQueries({ queryKey: ["detail", activeEndpoint] });
+      void detailQuery.refetch();
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "Token 续期失败"),
+  });
+
   async function transition(targetStatus: string) {
     if (!detail?.id || !detail.status || detail.version === undefined) return;
     const reason = `通过 Web 控制台执行：${actionLabel(targetStatus)}`;
@@ -1018,7 +1128,10 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
       return can("RULE_MANAGE") ? <Button asChild><Link href={config.createHref}><Plus />{config.createLabel ?? `创建${config.singular}`}</Link></Button> : null;
     }
     if (!activeForm || !can(activeForm.capability)) return null;
-    return <Button onClick={() => setCreating(true)}><Plus />{activeForm.createLabel ?? config.createLabel ?? `创建${activeTab?.label ?? config.singular}`}</Button>;
+    return <Button onClick={() => {
+      setForm(initialForm(activeForm));
+      setCreating(true);
+    }}><Plus />{activeForm.createLabel ?? config.createLabel ?? `创建${activeTab?.label ?? config.singular}`}</Button>;
   })();
 
   function changeFormField(key: string, value: string) {
@@ -1068,6 +1181,11 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
     const id = String(detail?.id ?? "");
     if (!id) return;
     agentLifecycleMutation.mutate({ id, action });
+  }
+
+  function openTokenRenewal(record: PlatformRecord) {
+    setRenewingToken(record);
+    setRenewExpiresAt("");
   }
 
   return (
@@ -1340,29 +1458,35 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
               <RolloutExecutionDetail detail={detail} />
             ) : (
               <div className="grid gap-3">
-                {detail ? Object.entries(detail).filter(([key]) => shouldShowDetailField(key, detail)).map(([key, value]) => {
+                {detailEntries(detail, activeEndpoint).map(([key, value]) => {
                   const renderedValue = detailValue(key, value, detail);
                   const isRawId = key.toLowerCase() === "id" || String(renderedValue).match(/^[a-z]+-[0-9a-f-]{24,}$/);
+                  const label = detailLabel(activeEndpoint, key);
+                  const renderedText = detailText(activeEndpoint, key, renderedValue);
                   return (
                   <div key={key} className="theme-muted-panel grid grid-cols-[130px_1fr] gap-4 rounded-lg border px-3 py-2.5 text-sm">
-                    <span className="text-[color:var(--muted)]">{fieldLabel(key)}</span>
+                    <span className="text-[color:var(--muted)]">{label}</span>
                     <span className={`break-all whitespace-pre-wrap text-[color:var(--foreground)] ${isRawId ? "font-mono text-xs" : ""}`}>
-                      {key.toLowerCase().endsWith("_at") || key.toLowerCase().endsWith("at")
-                        ? formatDate(renderedValue)
-                        : humanize(renderedValue)}
+                      {renderedText}
                     </span>
                   </div>
-                );}) : null}
+                );})}
               </div>
             )}
           </div>
           <div className="theme-panel flex flex-wrap items-center gap-2 border-t p-4">
-            <span className="mr-auto font-mono text-xs text-slate-400">{detail?.id ? shortId(String(detail.id)) : ""}</span>
+            <span className="mr-auto font-mono text-xs text-slate-400">{activeEndpoint !== "tokens" && detail?.id ? shortId(String(detail.id)) : ""}</span>
             {can(transitionCapability[activeEndpoint] ?? "__UNAVAILABLE__")
               ? allowedActions.map((action) => action === "UNLOAD" || action === "UNLOAD_PLAN"
                 ? <Button key={action} variant="secondary" onClick={() => setConfirmingUnload(true)}><RotateCcw />{actionLabel(action)}</Button>
                 : <Button key={action} variant={action.includes("CANCEL") || action === "FAILED" ? "secondary" : "default"} onClick={() => transition(action)}>{actionLabel(action)}</Button>)
               : null}
+            {activeEndpoint === "tokens" && detail?.id && can("ADMIN") ? (
+              <Button variant="secondary" onClick={() => openTokenRenewal(detail)}>
+                <CalendarClock />
+                续期
+              </Button>
+            ) : null}
             {config.key === "applications" && detail?.id && !detailEnvironmentId ? (
               <Button onClick={() => assignmentMutation.mutate()} disabled={!assignmentEnvironment || assignmentMutation.isPending}>
                 {assignmentMutation.isPending ? "正在分配…" : "确认分配环境"}
@@ -1419,6 +1543,46 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={Boolean(renewingToken)} onOpenChange={(open) => {
+        if (!open) {
+          setRenewingToken(null);
+          setRenewExpiresAt("");
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>续期 Token</DialogTitle>
+            <DialogDescription>只更新该 Token 的过期时间，不会重新展示明文 Token；不选时间即长期有效。</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(event) => { event.preventDefault(); renewTokenMutation.mutate(); }} className="space-y-4">
+            <div className="block">
+              <span className="mb-1.5 block text-sm font-medium text-slate-700">过期时间</span>
+              <DateTimePicker
+                aria-label="过期时间"
+                value={renewExpiresAt}
+                onChange={setRenewExpiresAt}
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setRenewingToken(null);
+                  setRenewExpiresAt("");
+                }}
+                disabled={renewTokenMutation.isPending}
+              >
+                取消
+              </Button>
+              <Button type="submit" disabled={renewTokenMutation.isPending}>
+                {renewTokenMutation.isPending ? "正在续期…" : "确认续期"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={creating} onOpenChange={setCreating}>
         <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -1454,6 +1618,13 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
                     value={form[field.key] ?? ""}
                     onValueChange={(value) => changeFormField(field.key, value)}
                     placeholder={field.placeholder}
+                  />
+                ) : field.type === "date-time" ? (
+                  <DateTimePicker
+                    aria-label={field.label}
+                    required={field.required}
+                    value={form[field.key] ?? ""}
+                    onChange={(value) => changeFormField(field.key, value)}
                   />
                 ) : (
                   <Input aria-label={field.label} type="text" required={field.required} value={form[field.key] ?? ""} onChange={(event) => changeFormField(field.key, event.target.value)} placeholder={field.placeholder} />

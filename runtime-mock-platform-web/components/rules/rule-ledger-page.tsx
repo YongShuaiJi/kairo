@@ -33,7 +33,7 @@ function valueOf(record: PlatformRecord | undefined, key: string) {
 
 function statusVariant(status: string) {
   const value = status.toUpperCase();
-  if (["ACTIVE", "ONLINE", "PUBLISHED", "APPROVED", "SUCCEEDED"].includes(value)) return "success" as const;
+  if (["ACTIVE", "ONLINE", "ENABLED", "SUCCEEDED"].includes(value)) return "success" as const;
   if (["DRAFT", "UNLOADING"].includes(value)) return "warning" as const;
   if (["FAILED", "REJECTED", "CANCELLED"].includes(value)) return "danger" as const;
   return "neutral" as const;
@@ -94,10 +94,6 @@ function displayRaw(value: unknown) {
   return String(value);
 }
 
-function versionLifecycleStatus(versionNumber: number, status: string, onlineVersion: string) {
-  return String(versionNumber) === onlineVersion ? "ONLINE" : status;
-}
-
 export function RuleLedgerPage({ ruleId }: { ruleId: string }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -122,7 +118,7 @@ export function RuleLedgerPage({ ruleId }: { ruleId: string }) {
       idempotencyKey: crypto.randomUUID(),
     }),
     onSuccess: () => {
-      toast.success("规则版本状态已更新，关联发布已自动卸载");
+      toast.success("规则版本状态已更新");
       setConfirmDisableVersion(null);
       void queryClient.invalidateQueries({ queryKey: ["rule-ledger", ruleId] });
       void queryClient.invalidateQueries({ queryKey: ["resource", "rules"] });
@@ -213,7 +209,6 @@ export function RuleLedgerPage({ ruleId }: { ruleId: string }) {
                   {versions.map((version) => {
                     const versionNumber = Number(valueOf(version, "version") ?? 0);
                     const status = String(valueOf(version, "status") ?? "");
-                    const lifecycleStatus = versionLifecycleStatus(versionNumber, status, onlineVersion);
                     const scriptSummary = valueOf(version, "scriptSummary");
                     const phase = executionPhase(version);
                     const disabled = status.toUpperCase() === "DISABLED";
@@ -224,7 +219,7 @@ export function RuleLedgerPage({ ruleId }: { ruleId: string }) {
                             <span className="font-mono font-semibold">v{versionNumber}</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4"><Badge variant={statusVariant(lifecycleStatus)}>{humanize(lifecycleStatus)}</Badge></td>
+                        <td className="px-6 py-4"><Badge variant={statusVariant(status)}>{humanize(status)}</Badge></td>
                         <td className="px-6 py-4">{phase ? <Badge variant="neutral">{phaseLabel(phase)}</Badge> : "—"}</td>
                         <td className="px-6 py-4"><Badge variant={statusVariant(String(valueOf(version, "riskLevel") ?? ""))}>{humanize(valueOf(version, "riskLevel"))}</Badge></td>
                         <td className="px-6 py-4 whitespace-nowrap text-[color:var(--muted)]">{autoDeleteCountdown(version)}</td>

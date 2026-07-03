@@ -13,7 +13,14 @@ describe("resource form relationships", () => {
   it("never invents default application or environment identifiers", () => {
     const relationshipFields = allForms()
       .flatMap((form) => form.fields)
-      .filter((field) => ["applicationId", "environmentId", "targetApplication", "targetEnvironment"].includes(field.key));
+      .filter((field) => [
+        "applicationId",
+        "environmentId",
+        "environmentKey",
+        "applicationEnvironment",
+        "targetApplication",
+        "targetEnvironment",
+      ].includes(field.key));
 
     expect(relationshipFields.length).toBeGreaterThan(0);
     for (const field of relationshipFields) {
@@ -26,22 +33,40 @@ describe("resource form relationships", () => {
     const fields = resourceConfigs.rollouts.form?.fields ?? [];
     const byKey = Object.fromEntries(fields.map((field) => [field.key, field]));
 
-    expect(byKey.applicationId).toMatchObject({ type: "resource", source: "applications" });
-    expect(byKey.environmentId).toMatchObject({
+    expect(byKey.environmentKey).toMatchObject({
       type: "resource",
-      source: "environments",
-      dependsOn: ["applicationId"],
+      source: "rollout-environments",
+    });
+    expect(byKey.applicationEnvironment).toMatchObject({
+      type: "resource",
+      source: "rollout-applications",
+      dependsOn: ["environmentKey"],
     });
     expect(byKey.resourceId).toMatchObject({
       type: "resource",
       source: "rules",
-      dependsOn: ["applicationId", "environmentId"],
+      dependsOn: ["environmentKey", "applicationEnvironment"],
     });
     expect(byKey.resourceVersion).toMatchObject({
       type: "resource",
       source: "rule-versions",
       dependsOn: ["resourceId"],
     });
+    expect(resourceConfigs.rollouts.form?.buildPayload?.({
+      environmentKey: "dev",
+      applicationEnvironment: "app-default|env-dev",
+      resourceType: "rule",
+      resourceId: "AA-20260702-001",
+      resourceVersion: "1",
+      targetMode: "ALL_ACTIVE_INSTANCES",
+      automaticUnload: "true",
+    })).toMatchObject({
+      applicationId: "app-default",
+      environmentId: "env-dev",
+    });
+    expect(resourceConfigs.rollouts.columns.some((column) => column.key === "resourceVersion")).toBe(false);
+    expect(resourceConfigs.rules.columns.some((column) => column.key === "onlineVersion")).toBe(false);
+    expect(resourceConfigs.rules.columns.some((column) => column.key === "latestVersion")).toBe(false);
   });
 
   it("exposes plan-level unload history with Chinese operation labels", () => {
@@ -51,5 +76,37 @@ describe("resource form relationships", () => {
     expect(actionLabel("UNLOAD")).toBe("卸载规则");
     expect(actionLabel("UNLOAD_PLAN")).toBe("卸载所属计划");
     expect(humanize("RESET_CLASS")).toBe("恢复目标类原始字节码");
+  });
+
+  it("keeps token issuing focused on username and explicit expiry time", () => {
+    const form = resourceConfigs.settings.form;
+    const fields = form?.fields ?? [];
+
+    expect(resourceConfigs.settings.columns.map((column) => [column.key, column.label])).toEqual([
+      ["subjectId", "用户名"],
+      ["status", "状态"],
+      ["expiresAt", "过期时间"],
+      ["lastUsedAt", "最后使用"],
+    ]);
+    expect(fields.map((field) => field.key)).toEqual(["username", "expiresAt"]);
+    expect(fields.find((field) => field.key === "username")?.defaultValue ?? "").toBe("");
+    expect(fields.find((field) => field.key === "expiresAt")).toMatchObject({ type: "date-time", required: false });
+    expect(humanize("VALID")).toBe("有效");
+    expect(humanize("INVALID")).toBe("失效");
+
+    const payload = form?.buildPayload?.({
+      username: "system",
+      expiresAt: "2026-07-04T12:34:56",
+    }) ?? {};
+
+    expect(payload).toMatchObject({
+      username: "system",
+      displayName: "system",
+    });
+    expect(payload).not.toHaveProperty("subjectType");
+    expect(payload).not.toHaveProperty("subjectId");
+    expect(payload).not.toHaveProperty("ttlSeconds");
+    expect(typeof payload.expiresAt).toBe("string");
+    expect(form?.buildPayload?.({ username: "system", expiresAt: "" })?.expiresAt).toBeNull();
   });
 });

@@ -14,7 +14,7 @@ export type SessionUser = {
   roles: string[];
   capabilities: string[];
   scopes: Array<{ resource_type?: string; resource_id?: string; resourceType?: string; resourceId?: string }>;
-  expiresAt: string;
+  expiresAt: string | null;
   demo: boolean;
 };
 

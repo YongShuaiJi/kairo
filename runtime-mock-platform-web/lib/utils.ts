@@ -29,6 +29,9 @@ export function formatBytes(value: unknown) {
 const DISPLAY_TEXT: Record<string, string> = {
   ACTIVE: "在线",
   ONLINE: "在线",
+  VALID: "有效",
+  INVALID: "失效",
+  ENABLED: "已启用",
   OFFLINE: "离线",
   DISABLED: "已停用",
   PENDING_ASSIGNMENT: "待分配环境",
@@ -55,6 +58,7 @@ const DISPLAY_TEXT: Record<string, string> = {
   ARCHIVED: "已归档",
   UNLOADING: "卸载中",
   UNLOADED: "已卸载",
+  ABANDONED: "已废弃",
   PUBLISHED: "已发布",
   AVAILABLE: "可用",
   HEALTHY: "健康",
@@ -88,6 +92,11 @@ const DISPLAY_TEXT: Record<string, string> = {
   POSTGRESQL: "PostgreSQL",
   MYSQL: "MySQL",
   TEST_FIXTURE: "测试数据",
+  MANUAL: "手动卸载",
+  AGENT_GONE: "Agent 自动卸载",
+  INSTANCE_GONE: "实例已消亡",
+  ROLLOUT_FAILURE: "执行失败自动卸载",
+  RULE_DELETION: "规则删除自动卸载",
 };
 
 const ACTION_TEXT: Record<string, string> = {
@@ -100,6 +109,7 @@ const ACTION_TEXT: Record<string, string> = {
   PAUSED: "暂停执行",
   UNLOADING: "开始卸载",
   UNLOADED: "标记已卸载",
+  ABANDONED: "标记已废弃",
   UNLOAD: "卸载规则",
   UNLOAD_PLAN: "卸载所属计划",
 };
@@ -107,7 +117,9 @@ const ACTION_TEXT: Record<string, string> = {
 const FIELD_TEXT: Record<string, string> = {
   id: "ID",
   application_id: "应用",
+  application_environment: "应用",
   environment_id: "环境",
+  environment_key: "环境",
   instance_id: "实例",
   agent_id: "Agent",
   operation_plan_id: "发布计划",
@@ -120,6 +132,7 @@ const FIELD_TEXT: Record<string, string> = {
   plan_type: "计划类型",
   rule_id: "规则",
   rule_version_id: "规则版本",
+  display_name: "用户名",
   approval_id: "审批",
   subject_id: "审批事项",
   subject_type: "审批事项类型",
@@ -144,6 +157,8 @@ const FIELD_TEXT: Record<string, string> = {
   capabilities_json: "能力",
   labels_json: "标签",
   strategy_json: "发布策略",
+  terminal_source: "终止来源",
+  terminal_reason: "终止原因",
   automatic_rollback: "失败时自动卸载",
   automatic_unload: "失败时自动卸载",
   target_selector_json: "目标选择器",

@@ -11,12 +11,12 @@ const datasets: Record<string, PlatformRecord[]> = {
     { id: "ins-01", nickname: "runtime-mock-demo", application: "runtime-mock-demo", environment: "sit", host: "demo", status: "ACTIVE", agentStatus: "ONLINE", loadMode: "attach", javaVersion: "21.0.11", lastSeenAt: stamp },
   ],
   rules: [
-    { id: "rule-01", name: "sit 下单接口故障注入试用规则", applicationName: "runtime-mock-demo", environmentName: "sit", targetMethod: "com.example.demo.OrderService#createOrder", versionCount: 3, enabledVersionCount: 2, disabledVersionCount: 1, onlineVersion: 1, latestVersion: 3, latestVersionStatus: "DRAFT", updatedAt: stamp },
+    { id: "rule-01", name: "sit 下单接口故障注入试用规则", applicationName: "runtime-mock-demo", environmentName: "sit", targetMethod: "com.example.demo.OrderService#createOrder", versionCount: 3, enabledVersionCount: 2, disabledVersionCount: 1, onlineVersion: 1, latestVersion: 3, latestVersionStatus: "ENABLED", status: "ENABLED", updatedAt: stamp },
   ],
   "rule-versions": [
-    { id: "rv-03", ruleId: "rule-01", version: 3, status: "DRAFT", riskLevel: "LOW", executionPhase: "BEFORE", scriptSummary: "return mock.throwException(...)" },
+    { id: "rv-03", ruleId: "rule-01", version: 3, status: "ENABLED", riskLevel: "LOW", executionPhase: "BEFORE", scriptSummary: "return mock.throwException(...)" },
     { id: "rv-02", ruleId: "rule-01", version: 2, status: "DISABLED", riskLevel: "LOW", executionPhase: "BEFORE", autoDeleteAt: "2026-07-18T09:30:00+08:00", scriptSummary: "return mock.returnValue(...)" },
-    { id: "rv-01", ruleId: "rule-01", version: 1, status: "PUBLISHED", riskLevel: "LOW", executionPhase: "BEFORE", scriptSummary: "return mock.proceed()" },
+    { id: "rv-01", ruleId: "rule-01", version: 1, status: "ENABLED", riskLevel: "LOW", executionPhase: "BEFORE", scriptSummary: "return mock.proceed()" },
   ],
   "operation-plans": [
     { id: "op-01", resourceId: "rule-01", resourceVersion: 1, planType: "RULE_ROLLOUT", status: "SUCCEEDED", updatedAt: stamp },
@@ -29,14 +29,14 @@ const datasets: Record<string, PlatformRecord[]> = {
     { id: "unload-01", operationPlanId: "op-02", rollbackType: "RESET_CLASS", status: "SUCCEEDED", reason: "规则版本停用自动卸载", finishedAt: "2026-06-18T08:33:00+08:00" },
   ],
   audits: [
-    { id: "audit-01", actor: "平台管理员", action: "RULE_VERSION_PUBLISHED", resource: "sit 下单接口故障注入试用规则 v1", result: "SUCCESS", correlationId: "req-8cf2d1", createdAt: stamp },
+    { id: "audit-01", actor: "平台管理员", action: "RULE_VERSION_ENABLED", resource: "sit 下单接口故障注入试用规则 v1", result: "SUCCESS", correlationId: "req-8cf2d1", createdAt: stamp },
     { id: "audit-02", actor: "系统", action: "RULE_VERSION_DISABLED", resource: "sit 下单接口故障注入试用规则 v2", result: "SUCCESS", correlationId: "req-1fd920", createdAt: "2026-06-18T08:32:00+08:00" },
   ],
   "auth/tokens": [
-    { id: "token-01", name: "CI Smoke Token", subject: "runtime-mock-ci", roles: ["ADMIN"], status: "ACTIVE", expiresAt: "2026-09-18T00:00:00+08:00" },
+    { id: "token-01", subjectId: "runtime-mock-ci", roles: ["ADMIN"], status: "VALID", expiresAt: "2026-09-18T00:00:00+08:00" },
   ],
   tokens: [
-    { id: "token-01", displayName: "CI Smoke Token", subjectType: "USER", subjectId: "system", status: "ACTIVE", expiresAt: "2026-09-18T00:00:00+08:00" },
+    { id: "token-01", subjectId: "system", subjectType: "USER", status: "VALID", expiresAt: "2026-09-18T00:00:00+08:00" },
   ],
 };
 function normalize(path: string) {
@@ -101,7 +101,7 @@ export function demoRuleDetail(id: string) {
         }),
         matcher_json: JSON.stringify({ sampleRate: 1 }),
         governance_json: JSON.stringify({ maxHits: 1000 }),
-        status: String(rule.latestVersionStatus ?? "DRAFT"),
+        status: String(rule.latestVersionStatus ?? "ENABLED"),
         risk_level: "LOW",
         script_hash: "demo-script-hash",
         created_by: "平台管理员",
@@ -114,7 +114,7 @@ export function demoRuleDetail(id: string) {
         script_json: JSON.stringify({ phase: "BEFORE", script: "return mock.proceed()" }),
         matcher_json: JSON.stringify({ sampleRate: 1 }),
         governance_json: JSON.stringify({ maxHits: 500 }),
-        status: "PUBLISHED",
+        status: "ENABLED",
         risk_level: "LOW",
         script_hash: "demo-previous-script-hash",
         created_by: "研发工程师",
@@ -146,7 +146,7 @@ export function demoDashboard() {
       instancesTotal: datasets.instances?.length ?? 0,
       injectableInstancesOnline: datasets.instances?.filter((item) => ["ACTIVE", "ONLINE"].includes(String(item.status))).length ?? 0,
       rulesTotal: datasets.rules?.length ?? 0,
-      rulesActive: datasets.rules?.filter((item) => item.status === "ACTIVE").length ?? 0,
+      rulesActive: datasets.rules?.filter((item) => item.status === "ENABLED").length ?? 0,
       rolloutsRunning: datasets["operation-plans"]?.filter((item) => item.status === "RUNNING").length ?? 0,
     },
     auditTrends: [
@@ -211,10 +211,11 @@ export function demoTest(body: PlatformRecord): ScriptTestResult {
 
 export function demoMutation(path: string, body: PlatformRecord) {
   const resource = normalize(path).split("/")[0] || "resource";
+  const defaultStatus = resource === "operation-plans" ? "DRAFT" : "ENABLED";
   return {
     id: `${resource.slice(0, 4)}-${crypto.randomUUID().slice(0, 8)}`,
     ...body,
-    status: body.status ?? "DRAFT",
+    status: body.status ?? defaultStatus,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     demo: true,

@@ -26,7 +26,14 @@ export async function POST(request: Request) {
   const token = payload.token?.trim();
   if (!token) return NextResponse.json({ message: "请输入 Platform Token" }, { status: 400 });
 
-  let identity = {
+  let identity: {
+    subject: string;
+    displayName: string;
+    roles: string[];
+    capabilities: string[];
+    scopes: Array<{ resource_type?: string; resource_id?: string; resourceType?: string; resourceId?: string }>;
+    expiresAt: string | null;
+  } = {
     subject: "demo-admin",
     displayName: "演示管理员",
     roles: ["PlatformAdmin"],
@@ -59,7 +66,9 @@ export async function POST(request: Request) {
     ...identity,
     demo: demoMode(),
   });
-  const maxAge = Math.max(60, Math.min(8 * 60 * 60, Math.floor((new Date(identity.expiresAt).getTime() - Date.now()) / 1000)));
+  const maxAge = identity.expiresAt === null
+    ? 8 * 60 * 60
+    : Math.max(60, Math.min(8 * 60 * 60, Math.floor((new Date(identity.expiresAt).getTime() - Date.now()) / 1000)));
   response.cookies.set(SESSION_COOKIE, encrypted, {
     httpOnly: true,
     sameSite: "lax",

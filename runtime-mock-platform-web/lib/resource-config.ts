@@ -19,11 +19,13 @@ export type ResourceField = {
   label: string;
   placeholder?: string;
   required?: boolean;
-  defaultValue?: string;
-  type?: "text" | "number" | "textarea" | "json" | "select" | "resource" | "target" | "hidden";
+  defaultValue?: string | (() => string);
+  type?: "text" | "number" | "date-time" | "textarea" | "json" | "select" | "resource" | "target" | "hidden";
   options?: string[];
   source?:
     | "applications"
+    | "rollout-applications"
+    | "rollout-environments"
     | "environments"
     | "rules"
     | "rule-versions";
@@ -64,8 +66,13 @@ export type ResourceConfig = {
 const text = (key: string, label: string, defaultValue = "", required = true): ResourceField => ({
   key, label, defaultValue, required,
 });
-const number = (key: string, label: string, defaultValue: string): ResourceField => ({
-  key, label, defaultValue, required: true, type: "number",
+const dateTime = (
+  key: string,
+  label: string,
+  defaultValue: string | (() => string) = "",
+  required = true,
+): ResourceField => ({
+  key, label, defaultValue, required, type: "date-time",
 });
 const select = (key: string, label: string, options: string[], defaultValue = options[0]): ResourceField => ({
   key, label, options, defaultValue, required: true, type: "select",
@@ -78,10 +85,15 @@ const resource = (
 ): ResourceField => ({
   key, label, source, dependsOn, required: true, type: "resource",
 });
-const base = (form: Record<string, string>) => ({
-  applicationId: form.applicationId,
-  environmentId: form.environmentId,
-});
+const rolloutScope = (form: Record<string, string>) => {
+  const [applicationId = "", environmentId = ""] = (form.applicationEnvironment ?? "").split("|");
+  return { applicationId, environmentId };
+};
+const isoInstant = (value: string) => {
+  if (!value.trim()) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
 
 export const resourceConfigs: Record<string, ResourceConfig> = {
   applications: {
@@ -136,8 +148,6 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
       { key: "versionCount", label: "版本数" },
       { key: "enabledVersionCount", label: "启用版本" },
       { key: "disabledVersionCount", label: "停用版本" },
-      { key: "onlineVersion", label: "在线版本" },
-      { key: "latestVersion", label: "最新版本" },
     ],
     createLabel: "创建规则",
     createHref: "/rules/new",
@@ -153,24 +163,24 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
     columns: [
       { key: "id", label: "计划 ID", kind: "mono" },
       { key: "resourceId", label: "规则", kind: "mono" },
-      { key: "resourceVersion", label: "版本", kind: "mono" },
       { key: "planType", label: "类型" },
       { key: "status", label: "状态", kind: "status" },
+      { key: "terminalSource", label: "终止来源" },
       { key: "updatedAt", label: "更新时间", kind: "date" },
     ],
     form: {
       capability: "ROLLOUT_MANAGE",
       fields: [
-        resource("applicationId", "应用", "applications"),
-        resource("environmentId", "环境", "environments", ["applicationId"]),
+        resource("environmentKey", "环境", "rollout-environments"),
+        resource("applicationEnvironment", "应用", "rollout-applications", ["environmentKey"]),
         { key: "resourceType", label: "资源类型", defaultValue: "rule", type: "hidden" },
-        resource("resourceId", "规则", "rules", ["applicationId", "environmentId"]),
+        resource("resourceId", "规则", "rules", ["environmentKey", "applicationEnvironment"]),
         resource("resourceVersion", "规则版本", "rule-versions", ["resourceId"]),
         { key: "targetMode", label: "目标范围", defaultValue: "ALL_ACTIVE_INSTANCES", type: "hidden" },
         select("automaticUnload", "失败时自动卸载", ["true", "false"], "true"),
       ],
       buildPayload: (form) => ({
-        ...base(form),
+        ...rolloutScope(form),
         planType: "RULE_ROLLOUT",
         resourceType: form.resourceType,
         resourceId: form.resourceId,
@@ -222,9 +232,7 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
     icon: Settings,
     endpoint: "tokens",
     columns: [
-      { key: "displayName", label: "Token 名称" },
-      { key: "subjectType", label: "主体类型" },
-      { key: "subjectId", label: "主体" },
+      { key: "subjectId", label: "用户名" },
       { key: "status", label: "状态", kind: "status" },
       { key: "expiresAt", label: "过期时间", kind: "date" },
       { key: "lastUsedAt", label: "最后使用", kind: "date" },
@@ -232,9 +240,13 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
     form: {
       capability: "ADMIN",
       createLabel: "签发 Token",
-      fields: [text("displayName", "Token 名称"), select("subjectType", "主体类型", ["USER", "AGENT"], "USER"), text("subjectId", "主体 ID", "system"), number("ttlSeconds", "有效期（秒）", "86400")],
+      fields: [text("username", "用户名"), dateTime("expiresAt", "过期时间", "", false)],
       buildEndpoint: () => "auth/tokens",
-      buildPayload: (form) => ({ displayName: form.displayName, subjectType: form.subjectType, subjectId: form.subjectId, ttlSeconds: Number(form.ttlSeconds) }),
+      buildPayload: (form) => ({
+        username: form.username,
+        displayName: form.username,
+        expiresAt: isoInstant(form.expiresAt),
+      }),
     },
     createLabel: "签发 Token",
   },
