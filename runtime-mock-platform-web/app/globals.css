@@ -34,6 +34,9 @@
   --field-bg: #ffffff;
   --field-border: #cfd9e7;
   --field-disabled-bg: #eef2f7;
+  --button-secondary-bg: #ffffff;
+  --button-secondary-hover: #e8eef6;
+  --button-ghost-hover: #e8eef6;
   --row-hover: #eef2ff;
   --shadow-elevated: 0 1px 2px rgb(15 23 42 / 0.05), 0 18px 48px rgb(15 23 42 / 0.08);
   --radius: 0.75rem;
@@ -75,6 +78,9 @@ html.theme-night {
   --field-bg: #111b2d;
   --field-border: #33425b;
   --field-disabled-bg: #1a263a;
+  --button-secondary-bg: #121c2f;
+  --button-secondary-hover: #263a59;
+  --button-ghost-hover: #223049;
   --row-hover: rgb(99 102 241 / 0.13);
   --shadow-elevated: 0 1px 2px rgb(0 0 0 / 0.40), 0 24px 64px rgb(0 0 0 / 0.36);
 }

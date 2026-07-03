@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { loader } from "@monaco-editor/react";
 import type { editor, IDisposable, languages } from "monaco-editor";
 import {
@@ -323,6 +323,7 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
   const [name, setName] = useState(ruleId ? `规则 ${ruleId}` : "");
   const [applicationId, setApplicationId] = useState("");
   const [environmentId, setEnvironmentId] = useState("");
+  const [environmentKey, setEnvironmentKey] = useState("");
   const [classId, setClassId] = useState("");
   const [className, setClassName] = useState("");
   const [classLoaderId, setClassLoaderId] = useState("");
@@ -366,28 +367,33 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
     setTestResult(null);
   }, []);
 
+  const environments = Array.from(new Map(instances
+    .map((item) => {
+      const label = environmentLabel(item);
+      return VISIBLE_ENVIRONMENTS.has(label) ? [label, { id: label, label }] as const : null;
+    })
+    .filter((item): item is readonly [string, { id: string; label: string }] => Boolean(item))).entries())
+    .map(([, environment]) => environment)
+    .sort((left, right) => ["dev", "sit", "uat"].indexOf(left.label) - ["dev", "sit", "uat"].indexOf(right.label));
+  const environmentKeys = environments.map((item) => item.id);
   const applications = Array.from(new Map(instances
+    .filter((item) => environmentLabel(item) === environmentKey)
     .map((item) => {
       const id = stringValue(item, "applicationId", "application_id", "application");
-      return id ? [id, applicationLabel(item)] as const : null;
+      const targetEnvironmentId = stringValue(item, "environmentId", "environment_id", "environment");
+      return id && targetEnvironmentId ? [id, { id, label: applicationLabel(item), environmentId: targetEnvironmentId }] as const : null;
     })
-    .filter((item): item is readonly [string, string] => Boolean(item))).entries())
-    .map(([id, label]) => ({ id, label }))
+    .filter((item): item is readonly [string, { id: string; label: string; environmentId: string }] => Boolean(item))).values())
     .sort((left, right) => left.label.localeCompare(right.label));
   const applicationIds = applications.map((item) => item.id);
-  const environments = Array.from(new Map(instances
-    .filter((item) => stringValue(item, "applicationId", "application_id", "application") === applicationId)
-    .map((item) => {
-      const id = stringValue(item, "environmentId", "environment_id", "environment");
-      const label = environmentLabel(item);
-      return id && VISIBLE_ENVIRONMENTS.has(label) ? [id, label] as const : null;
-    })
-    .filter((item): item is readonly [string, string] => Boolean(item))).entries())
-    .map(([id, label]) => ({ id, label }))
-    .sort((left, right) => ["dev", "sit", "uat"].indexOf(left.label) - ["dev", "sit", "uat"].indexOf(right.label));
-  const environmentIds = environments.map((item) => item.id);
   const selectedApplicationLabel = applications.find((item) => item.id === applicationId)?.label ?? applicationId;
-  const selectedEnvironmentLabel = environments.find((item) => item.id === environmentId)?.label ?? environmentId;
+  const selectedEnvironmentRecord = instances.find((item) =>
+    stringValue(item, "environmentId", "environment_id", "environment") === environmentId,
+  );
+  const selectedEnvironmentLabel = environmentKey
+    || (selectedEnvironmentRecord ? environmentLabel(selectedEnvironmentRecord) : "")
+    || environmentId;
+  const resolvedEnvironmentId = applications.find((item) => item.id === applicationId)?.environmentId ?? environmentId;
   const targetSelected = Boolean(
     classId.trim()
     && className.trim()
@@ -399,7 +405,7 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
   const formComplete = Boolean(
     name.trim()
     && applicationId
-    && environmentId
+    && resolvedEnvironmentId
     && targetSelected
     && executionPhase
     && script.trim(),
@@ -503,7 +509,7 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
   }, []);
 
   useEffect(() => {
-    if (!applicationId || !environmentId || manualTarget || targetSelected) {
+    if (!applicationId || !resolvedEnvironmentId || manualTarget || targetSelected) {
       setTargetOptions([]);
       setTargetsLoading(false);
       return;
@@ -514,7 +520,7 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
       const search = new URLSearchParams({
         q: targetQuery.trim(),
         applicationId,
-        environmentId,
+        environmentId: resolvedEnvironmentId,
       });
       void platformFetch<PlatformRecord[]>(`targets/search?${search.toString()}`)
         .then((result) => {
@@ -548,7 +554,7 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
       active = false;
       window.clearTimeout(timer);
     };
-  }, [applicationId, environmentId, manualTarget, targetQuery, targetSelected]);
+  }, [applicationId, resolvedEnvironmentId, manualTarget, targetQuery, targetSelected]);
 
   useEffect(() => {
     if (!ruleId) return;
@@ -601,6 +607,7 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
       setName(String(detail.rule.name ?? ruleId));
       setApplicationId(stringValue(detail.rule as PlatformRecord, "application_id", "applicationId", "application"));
       setEnvironmentId(stringValue(detail.rule as PlatformRecord, "environment_id", "environmentId", "environment"));
+      setEnvironmentKey(stringValue(detail.rule as PlatformRecord, "environment_name", "environmentName", "environment", "type").toLowerCase());
       setScript(currentScript.source);
       setExecutionPhase(currentScript.phase);
       setTestInput(JSON.stringify({ phase: currentScript.phase, args: [] }, null, 2));
@@ -679,8 +686,9 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
 
   function changeApplication(value: string) {
     if (immutableRuleIdentity) return;
+    const selected = applications.find((item) => item.id === value);
     setApplicationId(value);
-    setEnvironmentId("");
+    setEnvironmentId(selected?.environmentId ?? "");
     setClassId("");
     setClassName("");
     setClassLoaderId("");
@@ -696,7 +704,9 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
 
   function changeEnvironment(value: string) {
     if (immutableRuleIdentity) return;
-    setEnvironmentId(value);
+    setEnvironmentKey(value);
+    setApplicationId("");
+    setEnvironmentId("");
     setClassId("");
     setClassName("");
     setClassLoaderId("");
@@ -747,9 +757,9 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
     return {
       name,
       applicationId,
-      environmentId,
-      status: "DRAFT",
-      versionStatus: "DRAFT",
+      environmentId: resolvedEnvironmentId,
+      status: "ENABLED",
+      versionStatus: "ENABLED",
       riskLevel: "LOW",
       script: { phase: executionPhase, script },
       matcher: { phase: executionPhase },
@@ -766,7 +776,7 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
 
   async function validate() {
     if (!formComplete) {
-      toast.error("请先完成规则名称、应用、环境、目标方法和执行阶段");
+      toast.error("请先完成规则名称、环境、应用、目标方法和执行阶段");
       return false;
     }
     setBusy("validate");
@@ -808,7 +818,7 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
 
   async function save() {
     if (!formComplete) {
-      toast.error("请先完成规则名称、应用、环境、目标方法和执行阶段");
+      toast.error("请先完成规则名称、环境、应用、目标方法和执行阶段");
       return;
     }
     setBusy("save");
@@ -929,6 +939,30 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
                   />
                 </label>
                 <div className="mt-3 block">
+                  <span className="mb-1.5 block text-xs font-medium text-slate-600">环境</span>
+                  {immutableRuleIdentity ? (
+                    <div id="rule-environment" className="rounded-lg border bg-[var(--field-disabled-bg)] px-3 py-2 text-sm text-[color:var(--foreground)]">
+                      {selectedEnvironmentLabel || "—"}
+                    </div>
+                  ) : (
+                    <Select
+                      value={environmentKey}
+                      onValueChange={changeEnvironment}
+                      disabled={metadataLoading || Boolean(metadataError)}
+                    >
+                      <SelectTrigger id="rule-environment" aria-label="环境">
+                        <SelectValue placeholder={metadataLoading ? "正在加载环境…" : "请选择环境"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {environmentKey && !environmentKeys.includes(environmentKey) ? <SelectItem value={environmentKey}>{environmentKey}</SelectItem> : null}
+                        {environments.length ? environments.map((environment) => (
+                          <SelectItem key={environment.id} value={environment.id}>{environment.label}</SelectItem>
+                        )) : <SelectItem value="__empty-environment" disabled>暂无环境</SelectItem>}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+                <div className="mt-3 block">
                   <span className="mb-1.5 block text-xs font-medium text-slate-600">应用</span>
                   {immutableRuleIdentity ? (
                     <div id="rule-application" className="rounded-lg border bg-[var(--field-disabled-bg)] px-3 py-2 text-sm text-[color:var(--foreground)]">
@@ -938,36 +972,16 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
                     <Select
                       value={applicationId}
                       onValueChange={changeApplication}
-                      disabled={metadataLoading || Boolean(metadataError)}
+                      disabled={!environmentKey}
                     >
                       <SelectTrigger id="rule-application" aria-label="应用">
-                        <SelectValue placeholder={metadataLoading ? "正在加载应用…" : "请选择应用"} />
+                        <SelectValue placeholder={environmentKey ? "请选择应用" : "请先选择环境"} />
                       </SelectTrigger>
                       <SelectContent>
                         {applicationId && !applicationIds.includes(applicationId) ? <SelectItem value={applicationId}>{applicationId}</SelectItem> : null}
-                        {applications.map((application) => <SelectItem key={application.id} value={application.id}>{application.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  )}
-                </div>
-                <div className="mt-3 block">
-                  <span className="mb-1.5 block text-xs font-medium text-slate-600">环境</span>
-                  {immutableRuleIdentity ? (
-                    <div id="rule-environment" className="rounded-lg border bg-[var(--field-disabled-bg)] px-3 py-2 text-sm text-[color:var(--foreground)]">
-                      {selectedEnvironmentLabel || "—"}
-                    </div>
-                  ) : (
-                    <Select
-                      value={environmentId}
-                      onValueChange={changeEnvironment}
-                      disabled={!applicationId}
-                    >
-                      <SelectTrigger id="rule-environment" aria-label="环境">
-                        <SelectValue placeholder={applicationId ? "请选择环境" : "请先选择应用"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {environmentId && !environmentIds.includes(environmentId) ? <SelectItem value={environmentId}>{environmentId}</SelectItem> : null}
-                        {environments.map((environment) => <SelectItem key={environment.id} value={environment.id}>{environment.label}</SelectItem>)}
+                        {applications.length ? applications.map((application) => (
+                          <SelectItem key={application.id} value={application.id}>{application.label}</SelectItem>
+                        )) : <SelectItem value="__empty-application" disabled>暂无应用</SelectItem>}
                       </SelectContent>
                     </Select>
                   )}
@@ -976,9 +990,13 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
                   <div className="mt-3 rounded-lg border border-red-100 bg-red-50 p-3 text-xs leading-5 text-red-700">
                     {metadataError}。请先确认 Platform API 可用。
                   </div>
-                ) : !metadataLoading && !applications.length ? (
+                ) : !metadataLoading && !environments.length ? (
                   <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
                     尚未发现应用实例。请先在“应用实例”中完成接入。
+                  </div>
+                ) : environmentKey && !applications.length ? (
+                  <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
+                    当前环境下暂无应用实例。请先在“应用实例”中完成接入。
                   </div>
                 ) : null}
                 {immutableRuleIdentity ? (
@@ -990,11 +1008,11 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
 
               <div className="border-t pt-4">
                 <div className="mb-3 flex items-center gap-2">
-                  <span className={cn("flex size-5 items-center justify-center rounded-full text-[10px] font-bold", environmentId ? "bg-indigo-600 text-white" : "bg-slate-200 text-slate-500")}>2</span>
+                  <span className={cn("flex size-5 items-center justify-center rounded-full text-[10px] font-bold", resolvedEnvironmentId ? "bg-indigo-600 text-white" : "bg-slate-200 text-slate-500")}>2</span>
                   <p className="text-xs font-semibold text-slate-700">目标方法</p>
                 </div>
-                {!environmentId ? (
-                  <p className="rounded-lg border border-dashed p-3 text-xs leading-5 text-slate-400">选择应用和环境后，再搜索目标方法。</p>
+                {!resolvedEnvironmentId ? (
+                  <p className="rounded-lg border border-dashed p-3 text-xs leading-5 text-slate-400">选择环境和应用后，再搜索目标方法。</p>
                 ) : manualTarget ? (
                   <>
                     <label className="block">
@@ -1222,16 +1240,20 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
               ) : editorEnabled ? (
                 <div className={cn("flex h-full items-center justify-center text-sm", darkEditorSurface ? "bg-slate-900 text-slate-500" : "bg-slate-50 text-slate-400")}><Loader2 className="mr-2 size-4 animate-spin" />正在初始化本地代码编辑器…</div>
               ) : (
-                <div className={cn("flex h-full items-center justify-center p-8 text-center", darkEditorSurface ? "bg-slate-900" : "bg-[radial-gradient(circle_at_top,_#f2f3ff_0,_#fbfcfe_45%,_#f8fafc_100%)]")}>
-                  <div className="theme-panel-elevated max-w-md rounded-2xl border px-8 py-7 backdrop-blur">
-                    <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-2xl border border-indigo-100 bg-indigo-50 text-indigo-600 shadow-sm"><Code2 className="size-5" /></div>
-                    <p className="font-semibold text-slate-900">{targetSelected ? "请选择执行阶段" : "请先选择目标方法"}</p>
-                    <p className="mt-2 text-xs leading-5 text-slate-500">完成左侧配置后再加载代码编辑器，让注意力保持在当前步骤。编辑器将以安全的 <code className="rounded bg-slate-100 px-1.5 py-0.5 text-indigo-700">mock.proceed()</code> 骨架开始。</p>
-                    <div className="mt-5 flex flex-wrap justify-center gap-2 text-[10px] font-medium text-[color:var(--muted)]">
-                      <span className="theme-muted-panel rounded-full border px-2.5 py-1">安全默认脚本</span>
-                      <span className="theme-muted-panel rounded-full border px-2.5 py-1">服务端校验</span>
-                      <span className="theme-muted-panel rounded-full border px-2.5 py-1">受控试运行</span>
-                    </div>
+                <div className={cn("h-full overflow-hidden font-mono text-xs", darkEditorSurface ? "bg-slate-900 text-slate-500" : "bg-[#f8fafd] text-slate-400")}>
+                  <div className={cn("grid grid-cols-[3.5rem_1fr] border-b", darkEditorSurface ? "border-white/10" : "border-slate-200")}>
+                    <div className={cn("px-3 py-2 text-right", darkEditorSurface ? "bg-slate-950/40" : "bg-slate-100/70")}>1</div>
+                    <div className="px-4 py-2">{targetSelected ? "// 等待选择执行阶段" : "// 等待选择目标方法"}</div>
+                  </div>
+                  <div className="grid grid-cols-[3.5rem_1fr]">
+                    {[2, 3, 4, 5, 6, 7, 8].map((line) => (
+                      <Fragment key={line}>
+                        <div className={cn("select-none px-3 py-1.5 text-right", darkEditorSurface ? "bg-slate-950/40 text-slate-600" : "bg-slate-100/70 text-slate-300")}>{line}</div>
+                        <div className={cn("px-4 py-1.5", line === 3 && (darkEditorSurface ? "bg-slate-800/45" : "bg-indigo-50/70"))}>
+                          {line === 3 ? "return mock.proceed()" : "\u00A0"}
+                        </div>
+                      </Fragment>
+                    ))}
                   </div>
                 </div>
               )}
