@@ -687,6 +687,7 @@ function splitApplicationEnvironment(value: string | undefined) {
 
 function resourceOptionValue(source: ResourceField["source"], record: PlatformRecord) {
   if (source === "rule-versions") return String(valueOf(record, "version") ?? "");
+  if (source === "users") return String(valueOf(record, "username") ?? "");
   if (source === "rollout-applications") {
     const applicationId = String(valueOf(record, "id") ?? "");
     const environmentId = String(valueOf(record, "environmentId") ?? "");
@@ -712,6 +713,11 @@ function resourceOptionLabel(source: ResourceField["source"], record: PlatformRe
   }
   if (source === "rules") {
     return name;
+  }
+  if (source === "users") {
+    const username = String(valueOf(record, "username") ?? id);
+    const displayName = String(valueOf(record, "displayName") ?? "");
+    return displayName && displayName !== username ? `${displayName}（${username}）` : username;
   }
   return `${name}（${shortId(id)}）`;
 }

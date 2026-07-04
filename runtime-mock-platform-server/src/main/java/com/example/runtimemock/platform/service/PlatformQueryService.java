@@ -20,7 +20,7 @@ public final class PlatformQueryService {
             "instances", "sidecars", "attach-executors", "attach-targets",
             "attach-executor-commands", "agents", "agent-commands", "rules",
             "rule-versions", "operation-plans", "rollout-executions", "rollout-targets",
-            "rollback-executions", "tokens");
+            "rollback-executions", "tokens", "users");
 
     private final PlatformQueryMapper queryMapper;
     private final RuleLedgerQueryMapper ruleLedgerQueryMapper;
