@@ -214,14 +214,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     <Settings className="size-4" />
                     账户与设置
                   </DropdownMenu.Item>
-                  {user?.capabilities?.includes("ADMIN") ? (
-                    <DropdownMenu.Item asChild>
-                      <Link href="/settings" className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none hover:bg-[var(--surface-muted)]">
-                        <Settings className="size-4" />
-                        用户管理
-                      </Link>
-                    </DropdownMenu.Item>
-                  ) : null}
                   <DropdownMenu.Separator className="my-1 h-px bg-[var(--border)]" />
                   <DropdownMenu.Item onSelect={logout} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-red-600 outline-none hover:bg-red-50">退出登录</DropdownMenu.Item>
                 </DropdownMenu.Content>
