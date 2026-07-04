@@ -77,7 +77,7 @@ export function DateTimePicker({
             <span>{value ? displayDate(value) : required ? "选择日期" : "长期"}</span>
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="start">
+        <PopoverContent className="w-auto p-0" align="start" data-runtime-mock-date-picker>
           <Calendar
             mode="single"
             selected={selected}

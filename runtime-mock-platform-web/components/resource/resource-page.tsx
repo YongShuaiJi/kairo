@@ -1591,8 +1591,14 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
 
       <Dialog open={creating} onOpenChange={setCreating}>
         <DialogContent
-          className="max-h-[90vh] overflow-y-auto"
-          onInteractOutside={(event) => event.preventDefault()}
+          className="max-h-[90vh] overflow-visible"
+          onInteractOutside={(event) => {
+            const target = event.target;
+            if (target instanceof HTMLElement && target.closest("[data-runtime-mock-date-picker]")) {
+              return;
+            }
+            event.preventDefault();
+          }}
         >
           <DialogHeader>
             <DialogTitle>{activeForm?.createLabel ?? config.createLabel ?? `创建${activeTab?.label ?? config.singular}`}</DialogTitle>
