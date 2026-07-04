@@ -195,6 +195,17 @@ html.theme-night .surface {
   background: transparent;
 }
 
+.runtime-calendar-selected > button {
+  border: 0 !important;
+  background: var(--primary) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+}
+
+.runtime-calendar-selected > button:hover {
+  background: var(--primary) !important;
+}
+
 html.theme-night :where(.bg-white) {
   background-color: var(--surface) !important;
 }

@@ -40,8 +40,7 @@ export function Calendar({
         day: "h-10 w-10 p-0 text-center align-middle text-sm",
         day_button:
           "mx-auto flex size-9 items-center justify-center rounded-lg text-sm transition-colors hover:bg-[var(--surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-border)]",
-        selected:
-          "[&>button]:border-0 [&>button]:!bg-[var(--primary)] [&>button]:font-semibold [&>button]:!text-white [&>button]:hover:!bg-[var(--primary)]",
+        selected: "runtime-calendar-selected",
         today:
           "[&>button]:border [&>button]:border-[color:var(--primary)] [&>button]:font-semibold [&>button]:text-[color:var(--primary-strong)]",
         outside: "text-[color:var(--muted)] opacity-45",

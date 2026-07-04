@@ -1549,7 +1549,10 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
           setRenewExpiresAt("");
         }
       }}>
-        <DialogContent>
+        <DialogContent
+          className="max-w-md overflow-visible"
+          onInteractOutside={(event) => event.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle>续期 Token</DialogTitle>
             <DialogDescription>只更新该 Token 的过期时间，不会重新展示明文 Token；不选时间即长期有效。</DialogDescription>
@@ -1561,6 +1564,7 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
                 aria-label="过期时间"
                 value={renewExpiresAt}
                 onChange={setRenewExpiresAt}
+                inline
               />
             </div>
             <DialogFooter>
