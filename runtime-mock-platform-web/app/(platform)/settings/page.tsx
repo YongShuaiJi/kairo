@@ -1,5 +1,5 @@
-import { ResourcePage } from "@/components/resource/resource-page";
+import { AccountSettingsPage } from "@/components/settings/account-settings-page";
 
 export default function SettingsPage() {
-  return <ResourcePage resourceKey="settings" />;
+  return <AccountSettingsPage />;
 }

@@ -35,6 +35,10 @@ const datasets: Record<string, PlatformRecord[]> = {
   "auth/tokens": [
     { id: "token-01", subjectId: "runtime-mock-ci", roles: ["ADMIN"], status: "VALID", expiresAt: "2026-09-18T00:00:00+08:00" },
   ],
+  "auth/users": [
+    { id: "user-system", username: "demo-admin", displayName: "演示管理员", status: "ACTIVE", superAdmin: true, activeTokenCount: 1, createdAt: stamp },
+    { id: "user-operator", username: "demo-operator", displayName: "演示业务用户", status: "ACTIVE", superAdmin: false, activeTokenCount: 1, createdAt: stamp },
+  ],
   tokens: [
     { id: "token-01", subjectId: "system", subjectType: "USER", status: "VALID", expiresAt: "2026-09-18T00:00:00+08:00" },
   ],
@@ -210,6 +214,20 @@ export function demoTest(body: PlatformRecord): ScriptTestResult {
 }
 
 export function demoMutation(path: string, body: PlatformRecord) {
+  const normalized = normalize(path);
+  if (normalized === "auth/tokens" || normalized.endsWith("/token/replace")) {
+    const username = String(body.username ?? normalized.split("/")[2] ?? "demo-user");
+    return {
+      id: `token-${crypto.randomUUID().slice(0, 8)}`,
+      token: `demo-token-${crypto.randomUUID()}`,
+      subjectType: "USER",
+      subjectId: username,
+      displayName: String(body.displayName ?? username),
+      status: "VALID",
+      expiresAt: body.expiresAt ?? null,
+      demo: true,
+    };
+  }
   const resource = normalize(path).split("/")[0] || "resource";
   const defaultStatus = resource === "operation-plans" ? "DRAFT" : "ENABLED";
   return {

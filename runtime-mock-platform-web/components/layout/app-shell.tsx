@@ -46,7 +46,7 @@ const navigation = [
   {
     label: "系统",
     items: [
-      { href: "/settings", label: "平台设置", icon: Settings, capability: "ADMIN" },
+      { href: "/settings", label: "账户与设置", icon: Settings },
     ],
   },
 ];
@@ -205,7 +205,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     <ThemeSwitcher />
                   </div>
                   <DropdownMenu.Separator className="my-1 h-px bg-[var(--border)] md:hidden" />
-                  {user?.capabilities?.includes("ADMIN") ? <DropdownMenu.Item asChild><Link href="/settings" className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none hover:bg-[var(--surface-muted)]"><Settings className="size-4" />账户与设置</Link></DropdownMenu.Item> : null}
+                  <DropdownMenu.Item asChild><Link href="/settings" className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none hover:bg-[var(--surface-muted)]"><Settings className="size-4" />账户与设置</Link></DropdownMenu.Item>
                   <DropdownMenu.Separator className="my-1 h-px bg-[var(--border)]" />
                   <DropdownMenu.Item onSelect={logout} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-red-600 outline-none hover:bg-red-50">退出登录</DropdownMenu.Item>
                 </DropdownMenu.Content>
