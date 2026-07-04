@@ -1,10 +1,10 @@
 services:
-  demo-attach-executor:
+  attach-executor:
     image: runtime-mock-attach-executor:0.1.0-SNAPSHOT
     build:
       context: .
       dockerfile: runtime-mock-sidecar/Dockerfile
-    container_name: runtime-mock-demo-attach-executor
+    container_name: runtime-mock-attach-executor
     pid: "service:demo-app"
     depends_on:
       platform:
@@ -12,11 +12,11 @@ services:
       demo-app:
         condition: service_healthy
     environment:
-      RUNTIME_MOCK_EXECUTOR_ID: runtime-mock-demo-attach-executor
+      RUNTIME_MOCK_EXECUTOR_ID: runtime-mock-attach-executor
       RUNTIME_MOCK_EXECUTOR_TYPE: SIDECAR_CONTAINER
       RUNTIME_MOCK_PLATFORM_URL: http://platform:18280
       RUNTIME_MOCK_PLATFORM_TOKEN: runtime-mock-dev-admin-token-change-me
-      RUNTIME_MOCK_SIDECAR_ENDPOINT: http://demo-attach-executor:18480
+      RUNTIME_MOCK_SIDECAR_ENDPOINT: http://attach-executor:18480
       RUNTIME_MOCK_AGENT_JAR: /app/runtime-mock-agent-bootstrap.jar
       RUNTIME_MOCK_TARGETS_JSON: >-
         [{"projectName":"runtime-mock","applicationName":"runtime-mock-demo","environmentName":"sit","nickname":"runtime-mock-demo","hostname":"demo-app","processId":"1","processStartId":"runtime-mock-demo:demo-app:1","runtime":"java","javaVersion":"21.0.11","agentJar":"/app/runtime-mock-agent-bootstrap.jar"}]
