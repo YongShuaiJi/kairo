@@ -333,7 +333,6 @@ export function AccountSettingsPage() {
                 value={renewUserExpiresAt}
                 onChange={setRenewUserExpiresAt}
                 required={false}
-                inline
               />
             </div>
             <DialogFooter>
