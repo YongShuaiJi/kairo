@@ -63,33 +63,29 @@ def main():
     expect(get("/control/health")["status"], "UP", "platform health")
 
     suffix = RUN_ID[-6:]
-    instance_id = f"smoke-instance-{suffix}"
-    agent_id = f"smoke-agent-{suffix}"
-    rule_id = f"smoke-rule-{suffix}"
-    operation_id = f"smoke-operation-{suffix}"
-
-    print("[2/7] register instance and agent")
-    post("/instances", {
-        "id": instance_id,
-        "applicationId": "app-default",
-        "environmentId": "env-dev",
+    print("[2/7] register runtime agent")
+    registration = post("/agent-registrations/self", {
+        "projectName": "runtime-mock",
+        "applicationName": f"smoke-demo-{suffix}",
+        "environmentName": "sit",
         "hostname": "smoke-host",
         "processId": suffix,
+        "processStartId": f"smoke-host:{suffix}:{RUN_ID}",
+        "jvmStartedAtEpochMillis": int(RUN_ID) * 1000,
         "runtime": "java-21",
-        "labels": {"smoke": suffix},
-        "reason": "smoke register instance",
-    })
-    post("/agents", {
-        "id": agent_id,
-        "instanceId": instance_id,
+        "javaVersion": "21.0.11",
+        "loadMode": "smoke",
         "agentVersion": "0.1.0",
-        "bootstrapVersion": "0.1.0",
+        "bootstrapVersion": "embedded",
         "listenHost": "127.0.0.1",
         "listenPort": 18080,
-        "tokenHash": f"smoke-token-{suffix}",
-        "capabilities": ["JAVA_METHOD", "RESET_CLASS"],
-        "reason": "smoke register agent",
+        "capabilities": ["DISCOVER_TARGETS", "APPLY_RULE", "RESET_CLASS"],
+        "labels": {"smoke": suffix},
+        "reason": "smoke register runtime agent",
     })
+    application_id = registration["applicationId"]
+    environment_id = registration["environmentId"]
+    agent_id = registration["agentId"]
     post(f"/agents/{agent_id}/heartbeat", {
         "status": "ACTIVE",
         "metrics": {"smoke": True},
@@ -97,10 +93,9 @@ def main():
     })
 
     print("[3/7] create rule and operation plan")
-    post("/rules", {
-        "id": rule_id,
-        "applicationId": "app-default",
-        "environmentId": "env-dev",
+    rule = post("/rules", {
+        "applicationId": application_id,
+        "environmentId": environment_id,
         "name": f"smoke rule {suffix}",
         "riskLevel": "LOW",
         "matcher": {},
@@ -115,10 +110,10 @@ def main():
         "capabilities": ["EARLY_RETURN"],
         "reason": "smoke create rule",
     })
-    post("/operation-plans", {
-        "id": operation_id,
-        "applicationId": "app-default",
-        "environmentId": "env-dev",
+    rule_id = rule["id"]
+    operation = post("/operation-plans", {
+        "applicationId": application_id,
+        "environmentId": environment_id,
         "planType": "RULE_ROLLOUT",
         "resourceType": "rule",
         "resourceId": rule_id,
@@ -126,6 +121,7 @@ def main():
         "strategy": {"targetMode": "ALL_ACTIVE_INSTANCES", "automaticUnload": True},
         "reason": "smoke create rollout",
     })
+    operation_id = operation["id"]
 
     print("[4/7] transition operation to running")
     token = post("/fencing-tokens", {

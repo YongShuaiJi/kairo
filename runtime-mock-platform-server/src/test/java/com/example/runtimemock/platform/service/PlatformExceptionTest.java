@@ -25,10 +25,10 @@ class PlatformExceptionTest {
     @Test
     void preservesSpecificChineseBusinessMessages() {
         PlatformException exception = PlatformException.conflict(
-                "APPROVAL_REQUIRED",
-                "当前资源版本尚未获得有效审批，请先完成审批",
+                "OPERATION_PLAN_INVALID_TRANSITION",
+                "发布计划当前状态不允许启动",
                 java.util.Map.of());
 
-        assertThat(exception.getMessage()).isEqualTo("当前资源版本尚未获得有效审批，请先完成审批");
+        assertThat(exception.getMessage()).isEqualTo("发布计划当前状态不允许启动");
     }
 }

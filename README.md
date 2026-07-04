@@ -198,8 +198,8 @@ http://127.0.0.1:18380/
 Use the Compose development token `runtime-mock-dev-admin-token-change-me`. The Web process is an
 independent Next.js deployment and connects to Platform API through its same-origin BFF.
 
-The default architecture deliberately does not require Kubernetes, Keycloak, Vault, or a cloud KMS.
-Compose runs a Platform API process and a separate Worker process from the same image. Authentication
+The default architecture deliberately does not require Kubernetes, Keycloak, Vault, Kafka, MinIO, or a cloud KMS.
+Compose runs a Platform API process with the V1 scheduler enabled. Authentication
 uses revocable opaque Bearer Tokens whose hashes are stored in PostgreSQL.
 
 Design and requirements:
@@ -207,7 +207,6 @@ Design and requirements:
 ```text
 docs/architecture/simplified-platform-architecture.md
 docs/architecture/runtime-mock-platform-web-design.md
-docs/architecture/refactor-migration-plan.md
 docs/architecture/module-boundary-governance.md
 docs/requirements/runtime-mock-product-requirements.md
 ```

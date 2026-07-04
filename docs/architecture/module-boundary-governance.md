@@ -18,14 +18,12 @@ Maven module、JAR、运行进程和微服务不是同一个概念。
 
 | 运行单元 | 类型 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| Platform API | 平台进程 | 已实现 | HTTP API、认证、RBAC、审计和状态管理 |
-| Platform Worker | 平台进程 | 已实现 | 异步任务、Outbox、Rollout、Extraction、Replay |
+| Platform API | 平台进程 | 已实现 | HTTP API、认证、RBAC、审计、状态管理和 V1 调度器 |
 | Platform Web | 前端进程 | 已实现 | Next.js 中央管理界面、同源 BFF、Demo 验收模式和 Monaco 工作台 |
 | Runtime Agent | 嵌入式运行时 | 已实现 | 位于目标 JVM，不是中心微服务 |
-| PostgreSQL/Redis/Kafka/MinIO | 基础设施 | 已接入 | 分别承担权威状态、协调、事件和大对象 |
+| PostgreSQL/Redis | 基础设施 | 已接入 | 分别承担权威状态和协调 |
 
-Platform API 与 Worker 使用同一个模块和镜像，但以不同运行角色启动。这是有意义的
-故障和扩缩容边界，不要求拆成两个代码仓库。
+Platform API 与 V1 调度器使用同一个模块和镜像。Kafka、MinIO、独立 Worker 扩缩容属于后续阶段。
 
 ## 3. 保留的模块边界
 
@@ -42,17 +40,16 @@ Platform API 与 Worker 使用同一个模块和镜像，但以不同运行角�
 | `runtime-mock-agent-bootstrap` | Java 8 thin agent 和隔离加载入口 |
 | `runtime-mock-attach-cli` | 需要 JDK Attach 权限的安装工具 |
 | `runtime-mock-ops` | 低权限网络应急工具，与 Attach 权限模型不同 |
-| `runtime-mock-sidecar` | 录制脱敏、tokenization、加密 WAL 的领域库，不是运行服务 |
-| `runtime-mock-storage-spi` | 云无关对象存储契约 |
-| `runtime-mock-storage-minio` | MinIO/S3 兼容实现，可被云适配器替换 |
-| `runtime-mock-platform-server` | 模块化控制面和 Worker 代码 |
+| `runtime-mock-sidecar` | attach executor 与运行时辅助边界，用于本地 demo attach 流程 |
+| `runtime-mock-storage-spi` | 后续对象存储扩展契约，V1 不作为运行依赖 |
+| `runtime-mock-storage-minio` | 后续 MinIO/S3 兼容实现，V1 不作为运行依赖 |
+| `runtime-mock-platform-server` | 模块化控制面和 V1 调度器代码 |
 | `runtime-mock-platform-web` | 独立前端技术栈、产品入口、构建、测试和发布边界 |
 | `runtime-mock-demo` | 可运行验收目标，不进入生产部署 |
 | `runtime-mock-integration-tests` | 跨模块 JVM/Agent 验收边界 |
 
-`runtime-mock-sidecar` 保留是因为录制安全是独立领域能力，但它不是必须部署的微服务。
-当前生产路径由 Agent 有界批量上传器、Platform 录制接入服务、脱敏/信封加密和 MinIO
-共同完成；Sidecar 模块提供可复用的 WAL 与数据安全能力，不制造额外运行单元。
+`runtime-mock-sidecar` 保留是因为当前 attach demo 需要一个与被测 JVM 共享 PID 命名空间的
+executor，用于对目标 JVM 执行 attach 操作。它不是 V1 的独立生产存储、录制或回放服务。
 
 ## 4. 本次淘汰的边界
 

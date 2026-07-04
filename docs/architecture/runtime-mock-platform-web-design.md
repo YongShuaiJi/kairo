@@ -45,8 +45,8 @@ Platform API 决定。
 | --- | --- | --- |
 | 使用对象 | 多角色平台用户 | 单机诊断人员 |
 | 管理范围 | 多应用、多实例、多 Agent | 当前 JVM |
-| 规则版本/审批/发布 | 完整支持 | 仅本地应急 |
-| 录制/提取/回放 | 支持 | 不支持 |
+| 规则版本/发布 | 完整支持 | 仅本地应急 |
+| 审批/录制/提取/回放 | 后续阶段 | 不支持 |
 | 审计 | 中央权威审计 | 本地事件 |
 | 发布方式 | 独立 Next.js 镜像 | 嵌入 Agent JAR |
 | 可用性要求 | 正式产品入口 | loopback 应急入口 |
@@ -63,10 +63,6 @@ flowchart LR
     Web --> API["Platform API"]
     API --> PG["PostgreSQL"]
     API --> Redis["Redis"]
-    API --> Outbox["Outbox"]
-    Worker["Platform Worker"] --> PG
-    Worker --> Kafka["Kafka"]
-    Worker --> Storage["ObjectStorage SPI / MinIO"]
     Agent["Runtime Agent"] --> API
 ```
 
@@ -123,11 +119,6 @@ runtime-mock-platform-web/
 │   │   ├── agents/
 │   │   ├── rules/
 │   │   ├── rollouts/
-│   │   ├── recordings/
-│   │   ├── datasets/
-│   │   ├── extractions/
-│   │   ├── replays/
-│   │   ├── approvals/
 │   │   ├── audits/
 │   │   └── settings/
 │   └── api/
@@ -143,11 +134,6 @@ runtime-mock-platform-web/
 │   ├── agents/
 │   ├── rules/
 │   ├── rollouts/
-│   ├── recordings/
-│   ├── datasets/
-│   ├── extractions/
-│   ├── replays/
-│   ├── approvals/
 │   └── audits/
 ├── lib/
 │   ├── api/
@@ -237,15 +223,14 @@ shadcn/ui 是源码组件方案，不作为不可修改的黑盒依赖。首批�
 
 | 组件 | 作用 |
 | --- | --- |
-| `StatusBadge` | Agent、任务、发布和审批状态 |
+| `StatusBadge` | Agent、任务和发布状态 |
 | `ResourceScopePicker` | 应用/环境/实例/Agent 范围选择 |
 | `MethodSignature` | 类名、方法、参数和返回值展示 |
 | `RuleTypeBadge` | BEFORE/RETURN/THROWS |
 | `RiskBanner` | 风险级别、影响范围和恢复说明 |
-| `OperationTimeline` | 发布、审批和任务状态时间线 |
+| `OperationTimeline` | 发布和任务状态时间线 |
 | `AgentHealthCard` | 心跳、版本、JVM 和规则概况 |
 | `JsonDiffViewer` | JSON 树和字段级差异 |
-| `ObjectReference` | MinIO/云对象引用与校验信息 |
 | `AuditChainStatus` | 审计哈希链状态 |
 | `RequestErrorPanel` | request ID、错误码、重试和诊断信息 |
 | `ConfirmOperationDialog` | 目标、影响、原因和确认词 |
@@ -255,7 +240,7 @@ shadcn/ui 是源码组件方案，不作为不可修改的黑盒依赖。首批�
 ### 8.1 应用框架
 
 - 左侧导航：领域入口，可折叠。
-- 顶部栏：环境、搜索、命令面板、任务/审批提醒、用户菜单。
+- 顶部栏：环境、搜索、命令面板、失败任务提醒、用户菜单。
 - 页面标题区：标题、说明、状态和主操作。
 - 主内容区：列表、工作台或详情。
 - 右侧详情抽屉：适合快速查看，不替代可链接的正式详情页。
@@ -292,7 +277,7 @@ shadcn/ui 是源码组件方案，不作为不可修改的黑盒依赖。首批�
 ### 8.5 长期平台诊断清单
 
 - 将“基础服务健康度”从首页总览移出，后续作为平台诊断能力统一设计。
-- 平台诊断页应覆盖 Platform API、Web BFF、PostgreSQL、Redis、Kafka/Outbox、Object Storage、Worker 和 Agent 心跳聚合。
+- 平台诊断页应覆盖 Platform API、Web BFF、PostgreSQL、Redis、调度器和 Agent 心跳聚合。
 - 诊断能力必须基于真实探测结果展示状态、延迟、最近检查时间和故障上下文，不在前端硬编码健康项。
 - 首页仅保留与故障注入操作闭环直接相关的状态，避免把平台基础设施监控作为主要内容。
 
@@ -473,7 +458,7 @@ requirePermission(...)
 
 ### 12.3 状态机
 
-发布、审批、提取和回放均使用后端返回的：
+发布流程使用后端返回的：
 
 - current status；
 - allowed actions；
@@ -546,10 +531,8 @@ requirePermission(...)
 2. 无权限访问；
 3. Agent 查询；
 4. 规则编辑、校验、测试和保存版本；
-5. 创建发布、审批和查看结果；
-6. 录制到数据集；
-7. 提取和回放；
-8. Token 过期、接口失败和网络恢复。
+5. 创建发布和查看结果；
+6. Token 过期、接口失败和网络恢复。
 
 ### 16.3 视觉回归
 
@@ -585,7 +568,7 @@ RUNTIME_MOCK_WEB_ENVIRONMENT=local
 - 依赖 Platform API 健康；
 - 默认暴露 `18380`；
 - 通过内部网络访问 API；
-- 不直接访问 PostgreSQL、Redis、Kafka 或 MinIO；
+- 不直接访问 PostgreSQL 或 Redis；
 - 会话密钥通过环境或 secrets 注入。
 
 ## 18. CI 质量门
@@ -624,10 +607,11 @@ npm run test:e2e
 - Agent；
 - 规则中心和 Monaco 工作台；
 - 版本 Diff；
-- 发布、审批和审计。
+- 发布和审计。
 
-### 阶段 3：数据工作流
+### 阶段 3：治理与数据工作流
 
+- 审批工作流；
 - 录制与数据集；
 - 数据提取；
 - 回放与比较；
