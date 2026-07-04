@@ -253,6 +253,8 @@ GET  /api/v1/rollout-executions
 Supporting documents:
 
 ```text
+docs/developer/platform-technical-guide.md
+docs/user-guide/platform-complete-user-guide.md
 docs/api/platform-openapi.yaml
 docs/api/permission-matrix.md
 docs/api/error-codes.md
