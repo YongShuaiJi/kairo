@@ -15,17 +15,15 @@ export function PopoverContent({
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content>) {
   return (
-    <PopoverPrimitive.Portal>
-      <PopoverPrimitive.Content
-        align={align}
-        sideOffset={sideOffset}
-        className={cn(
-          "theme-panel-elevated z-[80] rounded-xl border p-0 shadow-xl outline-none",
-          "data-[state=open]:animate-in data-[state=closed]:animate-out",
-          className,
-        )}
-        {...props}
-      />
-    </PopoverPrimitive.Portal>
+    <PopoverPrimitive.Content
+      align={align}
+      sideOffset={sideOffset}
+      className={cn(
+        "theme-panel-elevated z-[80] rounded-xl border p-0 shadow-xl outline-none",
+        "data-[state=open]:animate-in data-[state=closed]:animate-out",
+        className,
+      )}
+      {...props}
+    />
   );
 }

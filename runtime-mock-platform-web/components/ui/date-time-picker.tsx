@@ -81,8 +81,7 @@ export function DateTimePicker({
           <Calendar
             mode="single"
             selected={selected}
-            onSelect={(date) => {
-              if (!date) return;
+            onDayClick={(date) => {
               onChange(toDateOnly(date));
               setOpen(false);
             }}

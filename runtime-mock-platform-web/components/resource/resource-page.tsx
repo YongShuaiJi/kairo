@@ -1590,7 +1590,10 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
       </Dialog>
 
       <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogContent
+          className="max-h-[90vh] overflow-y-auto"
+          onInteractOutside={(event) => event.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle>{activeForm?.createLabel ?? config.createLabel ?? `创建${activeTab?.label ?? config.singular}`}</DialogTitle>
             <DialogDescription>字段与 Platform API DTO 完全一致；JSON 字段会在提交前解析。</DialogDescription>
