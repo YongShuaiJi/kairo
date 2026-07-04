@@ -92,6 +92,10 @@ public final class AgentLaunchConfig {
         return stringValue("platformInstanceId", null);
     }
 
+    public String platformProcessStartId() {
+        return stringValue("platformProcessStartId", null);
+    }
+
     public String platformApplicationId() {
         return stringValue("platformApplicationId", null);
     }
@@ -106,6 +110,10 @@ public final class AgentLaunchConfig {
 
     public String platformEnvironmentId() {
         return stringValue("platformEnvironmentId", null);
+    }
+
+    public String platformEnvironmentName() {
+        return stringValue("platformEnvironmentName", null);
     }
 
     public String platformNickname() {

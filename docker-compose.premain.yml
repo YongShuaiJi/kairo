@@ -2,4 +2,4 @@ services:
   demo-app:
     environment:
       JAVA_TOOL_OPTIONS: >-
-        -javaagent:/app/runtime-mock-agent-bootstrap.jar=coreJar=/app/runtime-mock-agent-core-modern.jar,bootstrapJar=/app/runtime-mock-bootstrap-api.jar,platformUrl=http://platform:18280,platformToken=runtime-mock-dev-admin-token-change-me,platformProjectName=runtime-mock,platformApplicationName=runtime-mock-demo,platformNickname=runtime-mock-demo,platformPollIntervalMillis=1000
+        -javaagent:/app/runtime-mock-agent-bootstrap.jar=coreJar=/app/runtime-mock-agent-core-modern.jar,bootstrapJar=/app/runtime-mock-bootstrap-api.jar,platformUrl=http://platform:18280,platformToken=runtime-mock-dev-admin-token-change-me,platformProjectName=runtime-mock,platformApplicationName=runtime-mock-demo,platformEnvironmentName=sit,platformProcessStartId=runtime-mock-demo:demo-app:1,platformNickname=runtime-mock-demo,platformPollIntervalMillis=1000

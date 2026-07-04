@@ -38,6 +38,9 @@ final class PlatformAgentRegistrationClient {
             if (config.platformEnvironmentId() != null) {
                 body.put("environmentId", config.platformEnvironmentId());
             }
+            if (config.platformEnvironmentName() != null) {
+                body.put("environmentName", config.platformEnvironmentName());
+            }
             if (config.platformInstanceId() != null) {
                 body.put("instanceId", config.platformInstanceId());
             }
@@ -46,7 +49,10 @@ final class PlatformAgentRegistrationClient {
             }
             body.put("hostname", jvmInfo.host());
             body.put("processId", String.valueOf(jvmInfo.pid()));
-            body.put("processStartId", jvmInfo.host() + ":" + jvmInfo.pid() + ":" + jvmInfo.startTimeMillis());
+            String processStartId = config.platformProcessStartId() == null
+                    ? jvmInfo.host() + ":" + jvmInfo.pid() + ":" + jvmInfo.startTimeMillis()
+                    : config.platformProcessStartId();
+            body.put("processStartId", processStartId);
             body.put("jvmStartedAtEpochMillis", jvmInfo.startTimeMillis());
             body.put("runtime", "java-" + jvmInfo.javaVersion());
             body.put("javaVersion", jvmInfo.javaVersion());

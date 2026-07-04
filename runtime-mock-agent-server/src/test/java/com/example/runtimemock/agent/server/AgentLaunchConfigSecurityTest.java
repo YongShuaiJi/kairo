@@ -30,12 +30,16 @@ class AgentLaunchConfigSecurityTest {
         AgentLaunchConfig config = AgentLaunchConfig.parse("""
                 platformUrl=http://127.0.0.1:18280,\
                 platformProjectName=runtime-mock,\
-                platformApplicationName=runtime-mock-demo
+                platformApplicationName=runtime-mock-demo,\
+                platformEnvironmentName=sit,\
+                platformProcessStartId=runtime-mock-demo:demo-app:1
                 """);
 
         assertThat(config.platformRegistrationEnabled()).isTrue();
         assertThat(config.platformProjectName()).isEqualTo("runtime-mock");
         assertThat(config.platformApplicationName()).isEqualTo("runtime-mock-demo");
+        assertThat(config.platformEnvironmentName()).isEqualTo("sit");
+        assertThat(config.platformProcessStartId()).isEqualTo("runtime-mock-demo:demo-app:1");
         assertThat(config.platformApplicationId()).isNull();
     }
 }
