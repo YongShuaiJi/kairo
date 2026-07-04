@@ -353,6 +353,59 @@ function DetailSection({ title, children }: { title: string; children: ReactNode
   );
 }
 
+function TokenMetric({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: ReactNode;
+  mono?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-[color:var(--border)] bg-[var(--surface-subtle)] px-3 py-3">
+      <p className="text-xs font-medium text-[color:var(--muted)]">{label}</p>
+      <div className={`mt-1 break-all text-sm font-semibold text-[color:var(--foreground)] ${mono ? "font-mono text-xs" : ""}`}>{value}</div>
+    </div>
+  );
+}
+
+function TokenDetail({ detail }: { detail: PlatformRecord }) {
+  const username = String(valueOf(detail, "subjectId") ?? "—");
+  const status = String(valueOf(detail, "status") ?? "");
+  const subjectType = String(valueOf(detail, "subjectType") ?? "USER");
+  const tokenId = String(valueOf(detail, "id") ?? "—");
+  const expiresAt = valueOf(detail, "expiresAt");
+  const createdBy = valueOf(detail, "createdBy");
+  const revokedAt = valueOf(detail, "revokedAt");
+
+  return (
+    <div className="space-y-5">
+      <section className="theme-panel rounded-xl border p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-[color:var(--muted)]">Token 持有人</p>
+            <p className="mt-1 truncate text-2xl font-semibold text-[color:var(--foreground)]">{username}</p>
+          </div>
+          {status ? <Badge variant={statusVariant(status)}>{humanize(status)}</Badge> : null}
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <TokenMetric label="过期时间" value={expiresAt ? formatDate(expiresAt) : "长期有效"} />
+          <TokenMetric label="最后使用" value={formatDate(valueOf(detail, "lastUsedAt"))} />
+          <TokenMetric label="签发时间" value={formatDate(valueOf(detail, "createdAt"))} />
+          <TokenMetric label="签发人" value={humanize(createdBy)} />
+        </div>
+      </section>
+
+      <DetailSection title="审计信息">
+        <DetailRow label="Token ID" mono>{tokenId}</DetailRow>
+        <DetailRow label="主体类型">{humanize(subjectType)}</DetailRow>
+        {revokedAt ? <DetailRow label="撤销时间">{formatDate(revokedAt)}</DetailRow> : null}
+      </DetailSection>
+    </div>
+  );
+}
+
 function EditableNickname({
   record,
   nicknamePending,
@@ -1420,7 +1473,7 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
       </Card>
 
       <Dialog open={Boolean(selected)} onOpenChange={(open) => !open && setSelected(null)}>
-        <DialogContent className="right-0 left-auto top-0 h-screen max-h-screen w-full max-w-xl translate-x-0 translate-y-0 rounded-none p-0 sm:rounded-l-2xl">
+        <DialogContent className="right-0 left-auto top-0 flex h-screen max-h-screen w-full max-w-xl translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none p-0 sm:rounded-l-2xl">
           <div className="border-b p-6 pr-14">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-600">{activeTab?.label ?? config.singular}详情</p>
             <DialogTitle className="mt-2 text-xl">{detailTitle(config.key, detail)}</DialogTitle>
@@ -1456,6 +1509,8 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
               <RuleDetail detail={detail} ruleDetail={ruleDetailQuery.data} />
             ) : activeEndpoint === "rollout-executions" && detail ? (
               <RolloutExecutionDetail detail={detail} />
+            ) : activeEndpoint === "tokens" && detail ? (
+              <TokenDetail detail={detail} />
             ) : (
               <div className="grid gap-3">
                 {detailEntries(detail, activeEndpoint).map(([key, value]) => {
