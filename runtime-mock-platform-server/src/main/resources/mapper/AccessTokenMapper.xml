@@ -189,6 +189,16 @@
            and status = 'ACTIVE'
     </update>
 
+    <update id="renewActiveUserTokens">
+        update platform_access_token
+           set status = 'ACTIVE',
+               expires_at = #{expiresAt},
+               revoked_at = null
+         where subject_type = 'USER'
+           and subject_id = #{username}
+           and status = 'ACTIVE'
+    </update>
+
     <delete id="deleteUserRoleBindings">
         delete from user_role_binding
          where user_id = #{userId}

@@ -165,6 +165,22 @@ public class AccessTokenService {
     }
 
     @Transactional
+    public Map<String, Object> renewUserTokens(String username, Map<String, Object> request) {
+        String normalizedUsername = username == null ? "" : username.trim();
+        normalizeUser(normalizedUsername);
+        Instant expiresAt = validatedExpiresAt(request, clock.instant());
+        int updated = accessTokenMapper.renewActiveUserTokens(normalizedUsername, timestamp(expiresAt));
+        if (updated == 0) {
+            throw PlatformException.notFound("platform_access_token", normalizedUsername);
+        }
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("username", normalizedUsername);
+        response.put("updatedTokenCount", updated);
+        response.put("expiresAt", expiresAt);
+        return response;
+    }
+
+    @Transactional
     public void deleteUser(String username) {
         String normalizedUsername = username == null ? "" : username.trim();
         Map<String, Object> user = normalizeUser(normalizedUsername);
@@ -190,6 +206,9 @@ public class AccessTokenService {
 
         String subjectType = String.valueOf(existing.get("subject_type"));
         String subjectId = String.valueOf(existing.get("subject_id"));
+        if ("USER".equals(subjectType) && subjectId.equals(context.actor())) {
+            throw PlatformException.badRequest("CANNOT_RENEW_SELF_TOKEN", "不能给自己续期，请更换自己的 Token");
+        }
         validateSubject(subjectType, subjectId);
         Instant expiresAt = validatedExpiresAt(request, clock.instant());
         int updated = accessTokenMapper.renewToken(id, timestamp(expiresAt));

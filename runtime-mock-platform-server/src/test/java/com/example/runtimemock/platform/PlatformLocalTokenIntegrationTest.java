@@ -224,9 +224,42 @@ class PlatformLocalTokenIntegrationTest {
                         .header("Authorization", "Bearer " + userToken))
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(get("/api/v1/auth/me")
+                .header("Authorization", "Bearer " + selfReplacementToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.subject").value("business-user-renamed"));
+
+        mockMvc.perform(post("/api/v1/auth/me/token/renew")
+                        .header("Authorization", "Bearer " + selfReplacementToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of("ttlSeconds", 7200))))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/auth/me")
                         .header("Authorization", "Bearer " + selfReplacementToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.subject").value("business-user-renamed"));
+
+        mockMvc.perform(post("/api/v1/auth/users/system/tokens/renew")
+                        .header("Authorization", "Bearer bootstrap-test-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of("ttlSeconds", 7200))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("CANNOT_RENEW_SELF_TOKEN"));
+
+        JsonNode adminIdentity = getJson("/api/v1/auth/me", "bootstrap-test-token");
+        mockMvc.perform(post("/api/v1/auth/tokens/{id}/renew", adminIdentity.path("tokenId").asText())
+                        .header("Authorization", "Bearer bootstrap-test-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of("ttlSeconds", 7200))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("CANNOT_RENEW_SELF_TOKEN"));
+
+        JsonNode adminRenewed = postJson("/api/v1/auth/users/business-user-renamed/tokens/renew", Map.of(
+                "ttlSeconds", 7200
+        ), "bootstrap-test-token");
+        assertThat(adminRenewed.path("updatedTokenCount").asInt()).isEqualTo(1);
+        mockMvc.perform(get("/api/v1/auth/me")
+                        .header("Authorization", "Bearer " + selfReplacementToken))
+                .andExpect(status().isOk());
 
         String adminReplacementResponse = mockMvc.perform(post("/api/v1/auth/users/{username}/token/replace", "business-user-renamed")
                         .header("Authorization", "Bearer bootstrap-test-token")
@@ -286,6 +319,14 @@ class PlatformLocalTokenIntegrationTest {
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(body)))
+                .andExpect(status().is2xxSuccessful())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        return objectMapper.readTree(response);
+    }
+
+    private JsonNode getJson(String path, String token) throws Exception {
+        String response = mockMvc.perform(get(path)
+                        .header("Authorization", "Bearer " + token))
                 .andExpect(status().is2xxSuccessful())
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         return objectMapper.readTree(response);

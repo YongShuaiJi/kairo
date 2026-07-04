@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, KeyRound, RefreshCw, Save, Trash2, UserPlus } from "lucide-react";
+import { CalendarClock, Copy, KeyRound, RefreshCw, Save, Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { platformFetch } from "@/lib/api/client";
 import type { PlatformRecord, SessionUser } from "@/lib/api/types";
@@ -75,6 +75,8 @@ export function AccountSettingsPage() {
   const [newUsername, setNewUsername] = useState("");
   const [newUserExpiresAt, setNewUserExpiresAt] = useState("");
   const [issuedToken, setIssuedToken] = useState<{ title: string; token: string } | null>(null);
+  const [renewTarget, setRenewTarget] = useState<UserRecord | null>(null);
+  const [renewUserExpiresAt, setRenewUserExpiresAt] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<UserRecord | null>(null);
 
   const sessionQuery = useQuery({
@@ -165,6 +167,21 @@ export function AccountSettingsPage() {
     onError: (error) => toast.error(error instanceof Error ? error.message : "更换用户 Token 失败"),
   });
 
+  const renewUserTokenMutation = useMutation({
+    mutationFn: (target: string) => platformFetch<PlatformRecord>(`auth/users/${encodeURIComponent(target)}/tokens/renew`, {
+      method: "POST",
+      body: JSON.stringify({ expiresAt: isoInstant(renewUserExpiresAt) }),
+      idempotencyKey: crypto.randomUUID(),
+    }),
+    onSuccess: async (_result, target) => {
+      toast.success(`用户 ${target} 的 Token 已续期`);
+      setRenewTarget(null);
+      setRenewUserExpiresAt("");
+      await usersQuery.refetch();
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "续期用户 Token 失败"),
+  });
+
   const deleteUserMutation = useMutation({
     mutationFn: (target: string) => platformFetch<void>(`auth/users/${encodeURIComponent(target)}`, {
       method: "DELETE",
@@ -194,7 +211,7 @@ export function AccountSettingsPage() {
         ) : null}
       />
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,420px)_1fr]">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,360px)_1fr]">
         <Card className="p-5">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -281,14 +298,14 @@ export function AccountSettingsPage() {
               </div>
             ) : (
               <div className="scrollbar-thin overflow-x-auto">
-                <table className="w-full min-w-[860px] table-fixed text-left text-sm">
+                <table className="w-full min-w-[910px] table-fixed text-left text-sm">
                   <thead className="theme-muted-panel text-xs font-medium uppercase tracking-wide text-[color:var(--muted)]">
                     <tr>
-                      <th className="w-[220px] px-4 py-3">用户名</th>
-                      <th className="w-[150px] px-4 py-3">权限</th>
-                      <th className="w-[120px] px-4 py-3">有效 Token</th>
-                      <th className="w-[180px] px-4 py-3">创建时间</th>
-                      <th className="w-[220px] px-4 py-3 text-right">操作</th>
+                      <th className="w-[190px] px-4 py-3">用户名</th>
+                      <th className="w-[130px] px-4 py-3">权限</th>
+                      <th className="w-[100px] px-4 py-3">有效 Token</th>
+                      <th className="w-[150px] px-4 py-3">创建时间</th>
+                      <th className="w-[340px] px-4 py-3 text-right">操作</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -311,6 +328,20 @@ export function AccountSettingsPage() {
                           <td className="px-4 py-3.5 text-[color:var(--muted)]">{formatDate(valueOf(user, "createdAt"))}</td>
                           <td className="px-4 py-3.5">
                             <div className="flex justify-end gap-2">
+                              {!isSelf && activeTokenCount(user) > 0 ? (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => {
+                                    setRenewTarget(user);
+                                    setRenewUserExpiresAt("");
+                                  }}
+                                  disabled={renewUserTokenMutation.isPending}
+                                >
+                                  <CalendarClock />
+                                  续期
+                                </Button>
+                              ) : null}
                               {!isSelf ? (
                                 <Button
                                   variant="secondary"
@@ -364,6 +395,58 @@ export function AccountSettingsPage() {
               复制 Token
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(renewTarget)} onOpenChange={(open) => {
+        if (!open) {
+          setRenewTarget(null);
+          setRenewUserExpiresAt("");
+        }
+      }}>
+        <DialogContent
+          className="max-w-md overflow-visible"
+          onInteractOutside={(event) => event.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle>续期用户 Token</DialogTitle>
+            <DialogDescription>只更新该用户当前有效 Token 的过期时间，不会生成新的明文 Token。</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(event) => {
+            event.preventDefault();
+            const target = String(valueOf(renewTarget ?? {}, "username") ?? "");
+            if (target) renewUserTokenMutation.mutate(target);
+          }} className="space-y-4">
+            <div className="rounded-lg border bg-[var(--surface-subtle)] p-3 text-sm">
+              用户 <span className="font-semibold text-[color:var(--foreground)]">{String(valueOf(renewTarget ?? {}, "username") ?? "")}</span>
+            </div>
+            <div className="space-y-2">
+              <span className="text-sm font-medium text-[color:var(--foreground)]">过期时间</span>
+              <DateTimePicker
+                value={renewUserExpiresAt}
+                onChange={setRenewUserExpiresAt}
+                required={false}
+                inline
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setRenewTarget(null);
+                  setRenewUserExpiresAt("");
+                }}
+                disabled={renewUserTokenMutation.isPending}
+              >
+                取消
+              </Button>
+              <Button type="submit" disabled={renewUserTokenMutation.isPending}>
+                <CalendarClock />
+                {renewUserTokenMutation.isPending ? "正在续期…" : "确认续期"}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 

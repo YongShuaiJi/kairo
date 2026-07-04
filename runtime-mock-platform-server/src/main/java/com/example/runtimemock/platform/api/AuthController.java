@@ -1,6 +1,7 @@
 package com.example.runtimemock.platform.api;
 
 import com.example.runtimemock.platform.auth.AccessTokenService;
+import com.example.runtimemock.platform.service.PlatformException;
 import com.example.runtimemock.platform.service.RbacService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -15,8 +16,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -89,6 +90,19 @@ public final class AuthController {
         return withTokenMetadata(rbacService.describe(String.valueOf(token.get("subjectId"))), token);
     }
 
+    @PostMapping("/users/{username}/tokens/renew")
+    public Map<String, Object> renewUserTokens(@PathVariable String username,
+                                               HttpServletRequest httpRequest,
+                                               @RequestBody Map<String, Object> request) {
+        var context = requestContextFactory.from(httpRequest);
+        rbacService.require(context, "USER_MANAGE");
+        String normalizedUsername = username == null ? "" : username.trim();
+        if (normalizedUsername.equals(context.actor())) {
+            throw PlatformException.badRequest("CANNOT_RENEW_SELF_TOKEN", "不能给自己续期，请更换自己的 Token");
+        }
+        return accessTokenService.renewUserTokens(normalizedUsername, request);
+    }
+
     @DeleteMapping("/users/{username}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteUser(@PathVariable String username, HttpServletRequest request) {
@@ -141,4 +155,5 @@ public final class AuthController {
         }
         return response;
     }
+
 }
