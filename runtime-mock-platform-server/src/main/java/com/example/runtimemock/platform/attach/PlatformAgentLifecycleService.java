@@ -1,12 +1,12 @@
 package com.example.runtimemock.platform.attach;
 
 import com.example.runtimemock.platform.command.AgentCommandService;
+import com.example.runtimemock.platform.persistence.mapper.AgentLifecycleMapper;
 import com.example.runtimemock.platform.service.PlatformException;
-import com.example.runtimemock.platform.service.PlatformJdbcService;
+import com.example.runtimemock.platform.service.PlatformCoreService;
 import com.example.runtimemock.platform.service.RbacService;
 import com.example.runtimemock.platform.service.RequestContext;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,33 +26,33 @@ public class PlatformAgentLifecycleService {
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
-    private final JdbcTemplate jdbcTemplate;
+    private final AgentLifecycleMapper lifecycleMapper;
     private final RbacService rbacService;
     private final AgentCommandService commandService;
     private final AttachExecutorCommandService attachExecutorCommandService;
-    private final PlatformJdbcService eventWriter;
+    private final PlatformCoreService eventWriter;
     private final PlatformAttachProperties properties;
     private final Clock clock;
 
     @Autowired
-    public PlatformAgentLifecycleService(JdbcTemplate jdbcTemplate,
+    public PlatformAgentLifecycleService(AgentLifecycleMapper lifecycleMapper,
                                          RbacService rbacService,
                                          AgentCommandService commandService,
                                          AttachExecutorCommandService attachExecutorCommandService,
-                                         PlatformJdbcService eventWriter,
+                                         PlatformCoreService eventWriter,
                                          PlatformAttachProperties properties) {
-        this(jdbcTemplate, rbacService, commandService, attachExecutorCommandService,
+        this(lifecycleMapper, rbacService, commandService, attachExecutorCommandService,
                 eventWriter, properties, Clock.systemUTC());
     }
 
-    PlatformAgentLifecycleService(JdbcTemplate jdbcTemplate,
+    PlatformAgentLifecycleService(AgentLifecycleMapper lifecycleMapper,
                                   RbacService rbacService,
                                   AgentCommandService commandService,
                                   AttachExecutorCommandService attachExecutorCommandService,
-                                  PlatformJdbcService eventWriter,
+                                  PlatformCoreService eventWriter,
                                   PlatformAttachProperties properties,
                                   Clock clock) {
-        this.jdbcTemplate = jdbcTemplate;
+        this.lifecycleMapper = lifecycleMapper;
         this.rbacService = rbacService;
         this.commandService = commandService;
         this.attachExecutorCommandService = attachExecutorCommandService;
@@ -87,11 +87,7 @@ public class PlatformAgentLifecycleService {
         Map<String, Object> command = commandService.enqueue(context, agentId, "STOP_AGENT", payload,
                 "agent-lifecycle:deactivate:" + agentId + ":" + UUID.randomUUID(),
                 Math.max(1, properties.getCommandMaxAttempts()), clock.instant());
-        jdbcTemplate.update("""
-                update agent_instance
-                   set status = 'STOPPING', updated_at = ?
-                 where id = ?
-                """, timestamp(clock.instant()), agentId);
+        lifecycleMapper.markAgentStopping(agentId, timestamp(clock.instant()));
         Map<String, Object> result = Map.of(
                 "operation", "DEACTIVATE_AGENT",
                 "status", "COMMAND_ENQUEUED",
@@ -188,67 +184,23 @@ public class PlatformAgentLifecycleService {
     }
 
     private Map<String, Object> instance(String instanceId) {
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList("select * from instance where id = ?", instanceId);
-        if (rows.isEmpty()) {
+        Map<String, Object> instance = lifecycleMapper.findInstance(instanceId);
+        if (instance == null) {
             throw PlatformException.notFound("instance", instanceId);
         }
-        return rows.get(0);
+        return instance;
     }
 
     private Map<String, Object> latestAgent(String instanceId) {
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList("""
-                select *
-                  from agent_instance
-                 where instance_id = ?
-                 order by last_heartbeat_at desc nulls last, updated_at desc, id
-                 limit 1
-                """, instanceId);
-        return rows.isEmpty() ? null : rows.get(0);
+        return lifecycleMapper.latestAgent(instanceId);
     }
 
     private Map<String, Object> latestSidecar(String instanceId) {
-        List<Map<String, Object>> executorRows = jdbcTemplate.queryForList("""
-                select ae.id as executor_id,
-                       ae.executor_type,
-                       ae.endpoint,
-                       ae.status as executor_status,
-                       aet.process_id,
-                       aet.agent_jar,
-                       aet.status as target_status,
-                       si.id as sidecar_id,
-                       si.sidecar_version,
-                       si.capabilities_json
-                  from attach_executor_target aet
-                  join attach_executor ae on ae.id = aet.executor_id
-                  left join sidecar_instance si
-                    on si.executor_id = ae.id
-                   and si.instance_id = aet.instance_id
-                 where aet.instance_id = ?
-                   and ae.status in ('ACTIVE', 'ONLINE')
-                   and aet.status in ('ACTIVE', 'ONLINE')
-                 order by ae.last_heartbeat_at desc nulls last, ae.updated_at desc, ae.id
-                 limit 1
-                """, instanceId);
-        if (!executorRows.isEmpty()) {
-            return executorRows.get(0);
+        Map<String, Object> executorSidecar = lifecycleMapper.latestExecutorSidecar(instanceId);
+        if (executorSidecar != null) {
+            return executorSidecar;
         }
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList("""
-                select id as sidecar_id,
-                       id,
-                       endpoint,
-                       status,
-                       sidecar_version,
-                       capabilities_json,
-                       null as executor_id,
-                       null as process_id,
-                       null as agent_jar
-                  from sidecar_instance
-                 where instance_id = ?
-                   and status in ('ACTIVE', 'ONLINE')
-                 order by last_heartbeat_at desc nulls last, updated_at desc, id
-                 limit 1
-                """, instanceId);
-        return rows.isEmpty() ? null : rows.get(0);
+        return lifecycleMapper.latestStandaloneSidecar(instanceId);
     }
 
     private String attachFailureHint(Throwable failure) {

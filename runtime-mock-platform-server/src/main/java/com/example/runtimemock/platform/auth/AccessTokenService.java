@@ -1,10 +1,9 @@
 package com.example.runtimemock.platform.auth;
 
+import com.example.runtimemock.platform.persistence.mapper.AccessTokenMapper;
 import com.example.runtimemock.platform.service.PlatformException;
 import com.example.runtimemock.platform.service.RequestContext;
-import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,25 +28,16 @@ import java.util.UUID;
 public class AccessTokenService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
-    private static final String TOKEN_VISIBLE_COLUMNS = """
-            id, subject_type, subject_id,
-            case
-                when status = 'ACTIVE' and (expires_at is null or expires_at > current_timestamp) then 'VALID'
-                else 'INVALID'
-            end as status,
-            created_by, created_at, expires_at, last_used_at, revoked_at
-            """;
-
-    private final JdbcTemplate jdbcTemplate;
+    private final AccessTokenMapper accessTokenMapper;
     private final Clock clock;
 
     @Autowired
-    public AccessTokenService(JdbcTemplate jdbcTemplate) {
-        this(jdbcTemplate, Clock.systemUTC());
+    public AccessTokenService(AccessTokenMapper accessTokenMapper) {
+        this(accessTokenMapper, Clock.systemUTC());
     }
 
-    AccessTokenService(JdbcTemplate jdbcTemplate, Clock clock) {
-        this.jdbcTemplate = jdbcTemplate;
+    AccessTokenService(AccessTokenMapper accessTokenMapper, Clock clock) {
+        this.accessTokenMapper = accessTokenMapper;
         this.clock = clock;
     }
 
@@ -55,50 +45,32 @@ public class AccessTokenService {
         if (rawToken == null || rawToken.isBlank()) {
             throw PlatformException.unauthorized("Bearer token is required");
         }
-        try {
-            Map<String, Object> token = normalize(jdbcTemplate.queryForMap("""
-                    select *
-                      from platform_access_token
-                     where token_hash = ?
-                       and status = 'ACTIVE'
-                       and (expires_at is null or expires_at > current_timestamp)
-                    """, hash(rawToken)));
-            String subjectType = String.valueOf(token.get("subject_type"));
-            String subjectId = String.valueOf(token.get("subject_id"));
-            validateSubject(subjectType, subjectId);
-            jdbcTemplate.update("""
-                    update platform_access_token
-                       set last_used_at = ?
-                     where id = ?
-                    """, Timestamp.from(clock.instant()), token.get("id"));
-            return new TokenPrincipal(
-                    String.valueOf(token.get("id")),
-                    subjectType,
-                    subjectId,
-                    "AGENT".equals(subjectType) ? "agent" : "local-token"
-            );
-        } catch (EmptyResultDataAccessException e) {
+        Map<String, Object> raw = accessTokenMapper.activeTokenByHash(hash(rawToken));
+        if (raw == null) {
             throw PlatformException.unauthorized("Bearer token is invalid, expired, or revoked");
         }
+        Map<String, Object> token = normalize(raw);
+        String subjectType = String.valueOf(token.get("subject_type"));
+        String subjectId = String.valueOf(token.get("subject_id"));
+        validateSubject(subjectType, subjectId);
+        accessTokenMapper.updateLastUsed(token.get("id"), Timestamp.from(clock.instant()));
+        return new TokenPrincipal(
+                String.valueOf(token.get("id")),
+                subjectType,
+                subjectId,
+                "AGENT".equals(subjectType) ? "agent" : "local-token"
+        );
     }
 
     public Map<String, Object> describe(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) {
             throw PlatformException.unauthorized("Bearer token is required");
         }
-        try {
-            return normalize(jdbcTemplate.queryForMap("""
-                    select id, subject_type, subject_id,
-                           'VALID' as status,
-                           created_at, expires_at, last_used_at
-                      from platform_access_token
-                     where token_hash = ?
-                       and status = 'ACTIVE'
-                       and (expires_at is null or expires_at > current_timestamp)
-                    """, hash(rawToken)));
-        } catch (EmptyResultDataAccessException e) {
+        Map<String, Object> token = accessTokenMapper.describeActiveTokenByHash(hash(rawToken));
+        if (token == null) {
             throw PlatformException.unauthorized("Bearer token is invalid, expired, or revoked");
         }
+        return normalize(token);
     }
 
     @Transactional
@@ -117,12 +89,7 @@ public class AccessTokenService {
         String rawToken = generateToken();
         String id = "token-" + UUID.randomUUID();
         String displayName = optional(request, "displayName", subjectId);
-        jdbcTemplate.update("""
-                insert into platform_access_token(
-                    id, token_hash, subject_type, subject_id, display_name, status,
-                    created_by, created_at, expires_at, last_used_at, revoked_at
-                ) values (?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, null, null)
-                """, id, hash(rawToken), subjectType, subjectId, displayName,
+        accessTokenMapper.insertToken(id, hash(rawToken), subjectType, subjectId, displayName,
                 context.actor(), Timestamp.from(now), timestamp(expiresAt));
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("id", id);
@@ -136,54 +103,31 @@ public class AccessTokenService {
     }
 
     public List<Map<String, Object>> list() {
-        return jdbcTemplate.queryForList("""
-                select %s
-                  from platform_access_token
-                 order by created_at desc, id
-                """.formatted(TOKEN_VISIBLE_COLUMNS)).stream().map(this::normalize).toList();
+        return accessTokenMapper.listVisibleTokens().stream().map(this::normalize).toList();
     }
 
     @Transactional
     public Map<String, Object> renew(RequestContext context, String id, Map<String, Object> request) {
-        Map<String, Object> existing;
-        try {
-            existing = normalize(jdbcTemplate.queryForMap("""
-                    select id, subject_type, subject_id
-                      from platform_access_token
-                     where id = ?
-                    """, id));
-        } catch (EmptyResultDataAccessException e) {
+        Map<String, Object> rawExisting = accessTokenMapper.tokenSubject(id);
+        if (rawExisting == null) {
             throw PlatformException.notFound("platform_access_token", id);
         }
+        Map<String, Object> existing = normalize(rawExisting);
 
         String subjectType = String.valueOf(existing.get("subject_type"));
         String subjectId = String.valueOf(existing.get("subject_id"));
         validateSubject(subjectType, subjectId);
         Instant expiresAt = validatedExpiresAt(request, clock.instant());
-        int updated = jdbcTemplate.update("""
-                update platform_access_token
-                   set status = 'ACTIVE',
-                       expires_at = ?,
-                       revoked_at = null
-                 where id = ?
-                """, timestamp(expiresAt), id);
+        int updated = accessTokenMapper.renewToken(id, timestamp(expiresAt));
         if (updated == 0) {
             throw PlatformException.notFound("platform_access_token", id);
         }
 
-        return normalize(jdbcTemplate.queryForMap("""
-                select %s
-                  from platform_access_token
-                 where id = ?
-                """.formatted(TOKEN_VISIBLE_COLUMNS), id));
+        return normalize(accessTokenMapper.visibleToken(id));
     }
 
     public void revoke(String id) {
-        int updated = jdbcTemplate.update("""
-                update platform_access_token
-                   set status = 'REVOKED', revoked_at = ?
-                 where id = ? and status = 'ACTIVE'
-                """, Timestamp.from(clock.instant()), id);
+        int updated = accessTokenMapper.revokeToken(id, Timestamp.from(clock.instant()));
         if (updated == 0) {
             throw PlatformException.notFound("platform_access_token", id);
         }
@@ -195,32 +139,19 @@ public class AccessTokenService {
         }
         validateSubject("USER", actor);
         Instant now = clock.instant();
-        jdbcTemplate.update("""
-                delete from platform_access_token
-                 where id = 'token-bootstrap' and token_hash <> ?
-                """, hash(rawToken));
-        Integer count = jdbcTemplate.queryForObject(
-                "select count(*) from platform_access_token where id = 'token-bootstrap'",
-                Integer.class);
-        if (count != null && count > 0) {
+        accessTokenMapper.deleteDifferentBootstrapToken(hash(rawToken));
+        if (accessTokenMapper.countBootstrapToken() > 0) {
             return;
         }
-        jdbcTemplate.update("""
-                insert into platform_access_token(
-                    id, token_hash, subject_type, subject_id, display_name, status,
-                    created_by, created_at, expires_at, last_used_at, revoked_at
-                ) values ('token-bootstrap', ?, 'USER', ?, ?,
-                          'ACTIVE', 'system', ?, ?, null, null)
-                """, hash(rawToken), actor, actor, Timestamp.from(now),
+        accessTokenMapper.insertBootstrapToken(hash(rawToken), actor, Timestamp.from(now),
                 Timestamp.from(now.plus(ttlDays, ChronoUnit.DAYS)));
     }
 
     private void validateSubject(String subjectType, String subjectId) {
-        String sql = "AGENT".equals(subjectType)
-                ? "select count(*) from agent_instance where id = ? and status <> 'REMOVED'"
-                : "select count(*) from user_account where username = ? and status = 'ACTIVE'";
-        Integer count = jdbcTemplate.queryForObject(sql, Integer.class, subjectId);
-        if (count == null || count == 0) {
+        int count = "AGENT".equals(subjectType)
+                ? accessTokenMapper.countActiveAgent(subjectId)
+                : accessTokenMapper.countActiveUser(subjectId);
+        if (count == 0) {
             throw PlatformException.notFound(subjectType.toLowerCase(), subjectId);
         }
     }

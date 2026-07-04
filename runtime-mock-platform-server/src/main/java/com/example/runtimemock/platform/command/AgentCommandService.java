@@ -1,14 +1,14 @@
 package com.example.runtimemock.platform.command;
 
+import com.example.runtimemock.platform.persistence.mapper.AgentCommandMapper;
 import com.example.runtimemock.platform.service.PlatformException;
 import com.example.runtimemock.platform.service.BusinessIdService;
-import com.example.runtimemock.platform.service.PlatformJdbcService;
+import com.example.runtimemock.platform.service.PlatformCoreService;
 import com.example.runtimemock.platform.service.PlatformJson;
 import com.example.runtimemock.platform.service.RbacService;
 import com.example.runtimemock.platform.service.RequestContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,21 +22,21 @@ import java.util.Map;
 @Service
 public class AgentCommandService {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final AgentCommandMapper commandMapper;
     private final RbacService rbacService;
-    private final PlatformJdbcService eventWriter;
+    private final PlatformCoreService eventWriter;
     private final BusinessIdService businessIdService;
     private final Clock clock;
 
     @Autowired
-    public AgentCommandService(JdbcTemplate jdbcTemplate, RbacService rbacService,
-                               PlatformJdbcService eventWriter, BusinessIdService businessIdService) {
-        this(jdbcTemplate, rbacService, eventWriter, businessIdService, Clock.systemUTC());
+    public AgentCommandService(AgentCommandMapper commandMapper, RbacService rbacService,
+                               PlatformCoreService eventWriter, BusinessIdService businessIdService) {
+        this(commandMapper, rbacService, eventWriter, businessIdService, Clock.systemUTC());
     }
 
-    AgentCommandService(JdbcTemplate jdbcTemplate, RbacService rbacService,
-                        PlatformJdbcService eventWriter, BusinessIdService businessIdService, Clock clock) {
-        this.jdbcTemplate = jdbcTemplate;
+    AgentCommandService(AgentCommandMapper commandMapper, RbacService rbacService,
+                        PlatformCoreService eventWriter, BusinessIdService businessIdService, Clock clock) {
+        this.commandMapper = commandMapper;
         this.rbacService = rbacService;
         this.eventWriter = eventWriter;
         this.businessIdService = businessIdService;
@@ -44,7 +44,7 @@ public class AgentCommandService {
     }
 
     public List<Map<String, Object>> listCommands() {
-        return normalizeRows(jdbcTemplate.queryForList("select * from agent_command order by created_at, id"));
+        return normalizeRows(commandMapper.listCommands());
     }
 
     public Map<String, Object> command(String id) {
@@ -78,13 +78,7 @@ public class AgentCommandService {
         String id = businessIdService.nextId("agent_command",
                 commandBusinessName(commandType, fullPayload));
         try {
-            jdbcTemplate.update("""
-                    insert into agent_command(
-                        id, agent_id, command_type, status, idempotency_key, payload_json, result_json,
-                        attempts, max_attempts, available_at, created_by, created_at, updated_at, correlation_id
-                        , rollback_execution_id
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, id, agentId, commandType, "PENDING", idempotencyKey,
+            commandMapper.insertCommand(id, agentId, commandType, "PENDING", idempotencyKey,
                     PlatformJson.write(fullPayload), PlatformJson.write(Map.of()), 0,
                     Math.max(maxAttempts, 1), timestamp(availableAt), context.actor(),
                     timestamp(now), timestamp(now), context.correlationId(),
@@ -105,31 +99,13 @@ public class AgentCommandService {
         requireExistingAgent(agentId);
         Instant now = clock.instant();
         Instant leaseExpiresAt = now.plusSeconds(optionalLong(request, "leaseSeconds", 60));
-        List<Map<String, Object>> candidates = jdbcTemplate.queryForList("""
-                select *
-                  from agent_command
-                 where agent_id = ?
-                   and (
-                        (status = 'PENDING' and available_at <= ?)
-                     or (status = 'DISPATCHED' and lease_expires_at <= ? and attempts < max_attempts)
-                   )
-                 order by available_at, created_at, id
-                 limit 1
-                """, agentId, timestamp(now), timestamp(now));
+        List<Map<String, Object>> candidates = commandMapper.pollCandidates(agentId, timestamp(now));
         if (candidates.isEmpty()) {
             return Map.of("status", "NO_COMMAND", "agentId", agentId);
         }
         Map<String, Object> candidate = normalizeRow(candidates.get(0));
-        int updated = jdbcTemplate.update("""
-                update agent_command
-                   set status = 'DISPATCHED',
-                       attempts = attempts + 1,
-                       dispatched_at = ?,
-                       lease_expires_at = ?,
-                       updated_at = ?
-                 where id = ?
-                   and status in ('PENDING', 'DISPATCHED')
-                """, timestamp(now), timestamp(leaseExpiresAt), timestamp(now), candidate.get("id"));
+        int updated = commandMapper.dispatchCommand(candidate.get("id"), timestamp(now),
+                timestamp(leaseExpiresAt), timestamp(now));
         if (updated == 0) {
             return Map.of("status", "NO_COMMAND", "agentId", agentId);
         }
@@ -154,16 +130,8 @@ public class AgentCommandService {
         Instant now = clock.instant();
         Map<String, Object> result = optionalMap(request, "result");
         String errorMessage = optionalString(request, "errorMessage", null);
-        int updatedCount = jdbcTemplate.update("""
-                update agent_command
-                   set status = ?,
-                       result_json = ?,
-                       error_message = ?,
-                       completed_at = ?,
-                       updated_at = ?
-                 where id = ? and status = 'DISPATCHED'
-                """, resultStatus, PlatformJson.write(result), errorMessage,
-                timestamp(now), timestamp(now), commandId);
+        int updatedCount = commandMapper.ackCommand(commandId, resultStatus,
+                PlatformJson.write(result), errorMessage, timestamp(now), timestamp(now));
         if (updatedCount == 0) {
             throw PlatformException.conflict("AGENT_COMMAND_STATE_CONFLICT",
                     "Agent command is not currently dispatched",
@@ -175,13 +143,8 @@ public class AgentCommandService {
                 optionalString(request, "reason", "ack agent command"),
                 Map.of("agentId", updated.get("agent_id"), "commandType", updated.get("command_type")));
         if ("STOP_AGENT".equals(String.valueOf(updated.get("command_type")))) {
-            jdbcTemplate.update("""
-                    update agent_instance
-                       set status = ?,
-                           updated_at = ?
-                     where id = ?
-                    """, "ACKED".equals(resultStatus) ? "DISABLED" : "ACTIVE",
-                    timestamp(now), updated.get("agent_id"));
+            commandMapper.updateAgentStatus(updated.get("agent_id"),
+                    "ACKED".equals(resultStatus) ? "DISABLED" : "ACTIVE", timestamp(now));
         }
         advanceRolloutFromCommand(context, commandId, "ACKED".equals(resultStatus), errorMessage, result);
         advanceRollbackFromCommand(context, updated);
@@ -194,9 +157,7 @@ public class AgentCommandService {
             return;
         }
         String rollbackId = String.valueOf(rollbackValue);
-        List<Map<String, Object>> commands = normalizeRows(jdbcTemplate.queryForList("""
-                select * from agent_command where rollback_execution_id = ?
-                """, rollbackId));
+        List<Map<String, Object>> commands = normalizeRows(commandMapper.commandsByRollbackExecution(rollbackId));
         if (commands.isEmpty() || commands.stream().anyMatch(row ->
                 !"ACKED".equals(String.valueOf(row.get("status")))
                         && !"FAILED".equals(String.valueOf(row.get("status"))))) {
@@ -204,42 +165,23 @@ public class AgentCommandService {
         }
         boolean succeeded = commands.stream()
                 .allMatch(row -> "ACKED".equals(String.valueOf(row.get("status"))));
-        Map<String, Object> rollback = normalizeRow(jdbcTemplate.queryForMap(
-                "select * from rollback_execution where id = ?", rollbackId));
+        Map<String, Object> rollback = normalizeRow(commandMapper.rollbackExecution(rollbackId));
         if (!"DISPATCHED".equals(String.valueOf(rollback.get("status")))) {
             return;
         }
         Instant now = clock.instant();
         String rollbackStatus = succeeded ? "SUCCEEDED" : "FAILED";
-        int rollbackUpdated = jdbcTemplate.update("""
-                update rollback_execution
-                   set status = ?, finished_at = ?
-                 where id = ? and status = 'DISPATCHED'
-                """, rollbackStatus, timestamp(now), rollbackId);
+        int rollbackUpdated = commandMapper.completeRollbackExecution(rollbackId, rollbackStatus, timestamp(now));
         if (rollbackUpdated == 0) {
             return;
         }
         String operationPlanId = String.valueOf(rollback.get("operation_plan_id"));
         String operationStatus = succeeded ? "UNLOADED" : "FAILED";
-        jdbcTemplate.update("""
-                update operation_plan
-                   set status = ?, version = version + 1, updated_by = ?, updated_at = ?
-                 where id = ? and status = 'UNLOADING'
-                """, operationStatus, context.actor(), timestamp(now), operationPlanId);
+        commandMapper.updateUnloadingOperationStatus(operationPlanId, operationStatus, context.actor(), timestamp(now));
         if (succeeded) {
-            jdbcTemplate.update("""
-                    update rule_runtime_status
-                       set status = 'REMOVED', last_error = null, updated_at = ?
-                     where (rule_id, rule_version, instance_id) in (
-                         select op.resource_id, op.resource_version, rie.instance_id
-                           from operation_plan op
-                           join rollout_instance_execution rie on rie.operation_plan_id = op.id
-                          where op.id = ? and rie.status = 'SUCCEEDED'
-                     )
-                    """, timestamp(now), operationPlanId);
+            commandMapper.markRuntimeStatusesRemovedForOperation(operationPlanId, timestamp(now));
         }
-        Map<String, Object> updatedOperation = normalizeRow(jdbcTemplate.queryForMap(
-                "select * from operation_plan where id = ?", operationPlanId));
+        Map<String, Object> updatedOperation = normalizeRow(commandMapper.operationPlan(operationPlanId));
         eventWriter.recordEvent(context, "operation_plan.unload_complete", "operation_plan",
                 operationPlanId, ((Number) updatedOperation.get("version")).longValue(),
                 rollback, updatedOperation, operationStatus,
@@ -249,11 +191,7 @@ public class AgentCommandService {
 
     private void advanceRolloutFromCommand(RequestContext context, String commandId, boolean success,
                                            String errorMessage, Map<String, Object> result) {
-        List<Map<String, Object>> executions = jdbcTemplate.queryForList("""
-                select *
-                  from rollout_instance_execution
-                 where command_id = ?
-                """, commandId);
+        List<Map<String, Object>> executions = commandMapper.executionsByCommand(commandId);
         if (executions.isEmpty()) {
             return;
         }
@@ -263,22 +201,12 @@ public class AgentCommandService {
             String executionId = String.valueOf(execution.get("id"));
             String newStatus = success ? "SUCCEEDED" : "FAILED";
             long executionVersion = ((Number) execution.get("version")).longValue();
-            int executionUpdated = jdbcTemplate.update("""
-                    update rollout_instance_execution
-                       set status = ?,
-                           error_message = ?,
-                           finished_at = ?,
-                           version = version + 1,
-                           updated_by = ?,
-                           updated_at = ?
-                     where id = ? and status = 'WAITING_AGENT' and version = ?
-                    """, newStatus, success ? null : errorMessage, timestamp(now),
-                    context.actor(), timestamp(now), executionId, executionVersion);
+            int executionUpdated = commandMapper.completeExecution(executionId, newStatus,
+                    success ? null : errorMessage, timestamp(now), context.actor(), timestamp(now), executionVersion);
             if (executionUpdated == 0) {
                 continue;
             }
-            Map<String, Object> updatedExecution = normalizeRow(jdbcTemplate.queryForMap(
-                    "select * from rollout_instance_execution where id = ?", executionId));
+            Map<String, Object> updatedExecution = normalizeRow(commandMapper.rolloutExecution(executionId));
             eventWriter.recordEvent(context, "rollout_instance_execution.agent_ack",
                     "rollout_instance_execution", executionId, 1, execution, updatedExecution,
                     success ? "SUCCESS" : "FAILED", "agent command completed",
@@ -288,14 +216,11 @@ public class AgentCommandService {
     }
 
     private void advanceOperation(RequestContext context, String operationPlanId) {
-        Map<String, Object> operation = normalizeRow(jdbcTemplate.queryForMap(
-                "select * from operation_plan where id = ?", operationPlanId));
+        Map<String, Object> operation = normalizeRow(commandMapper.operationPlan(operationPlanId));
         if (!"RUNNING".equals(String.valueOf(operation.get("status")))) {
             return;
         }
-        List<Map<String, Object>> executions = normalizeRows(jdbcTemplate.queryForList("""
-                select * from rollout_instance_execution where operation_plan_id = ?
-                """, operationPlanId));
+        List<Map<String, Object>> executions = normalizeRows(commandMapper.executionsByOperation(operationPlanId));
         if (executions.isEmpty()) {
             return;
         }
@@ -314,38 +239,22 @@ public class AgentCommandService {
         Instant now = clock.instant();
         long version = ((Number) operation.get("version")).longValue() + 1;
         long currentVersion = ((Number) operation.get("version")).longValue();
-        int operationUpdated = jdbcTemplate.update("""
-                update operation_plan
-                   set status = ?, version = ?, updated_by = ?, updated_at = ?
-                 where id = ? and status = 'RUNNING' and version = ?
-                """, newStatus, version, context.actor(), timestamp(now), operationPlanId, currentVersion);
+        int operationUpdated = commandMapper.completeRunningOperation(operationPlanId, newStatus, version,
+                context.actor(), timestamp(now), currentVersion);
         if (operationUpdated == 0) {
             return;
         }
-        Map<String, Object> updatedOperation = normalizeRow(jdbcTemplate.queryForMap(
-                "select * from operation_plan where id = ?", operationPlanId));
+        Map<String, Object> updatedOperation = normalizeRow(commandMapper.operationPlan(operationPlanId));
         if (allSucceeded && "rule".equals(String.valueOf(operation.get("resource_type")))) {
             String ruleId = String.valueOf(operation.get("resource_id"));
             long ruleVersion = ((Number) operation.get("resource_version")).longValue();
-            List<Map<String, Object>> successfulExecutions = normalizeRows(jdbcTemplate.queryForList("""
-                    select instance_id
-                      from rollout_instance_execution
-                     where operation_plan_id = ? and status = 'SUCCEEDED'
-                    """, operationPlanId));
+            List<Map<String, Object>> successfulExecutions = normalizeRows(commandMapper.successfulExecutions(operationPlanId));
             for (Map<String, Object> execution : successfulExecutions) {
                 String instanceId = String.valueOf(execution.get("instance_id"));
-                int runtimeStatusUpdated = jdbcTemplate.update("""
-                        update rule_runtime_status
-                           set status = 'ACTIVE', last_error = null, updated_at = ?
-                         where rule_id = ? and rule_version = ? and instance_id = ?
-                        """, timestamp(now), ruleId, ruleVersion, instanceId);
+                int runtimeStatusUpdated = commandMapper.updateRuleRuntimeStatusActive(ruleId, ruleVersion,
+                        instanceId, timestamp(now));
                 if (runtimeStatusUpdated == 0) {
-                    jdbcTemplate.update("""
-                            insert into rule_runtime_status(
-                                id, rule_id, rule_version, instance_id, status,
-                                hit_count, error_count, last_error, updated_at
-                            ) values (?, ?, ?, ?, 'ACTIVE', 0, 0, null, ?)
-                            """, businessIdService.nextId("rule_runtime_status",
+                    commandMapper.insertRuleRuntimeStatus(businessIdService.nextId("rule_runtime_status",
                                     eventWriter.rolloutBusinessName("rule", ruleId)), ruleId, ruleVersion,
                             instanceId, timestamp(now));
                 }
@@ -373,39 +282,17 @@ public class AgentCommandService {
                                       List<Map<String, Object>> executions) {
         String operationPlanId = String.valueOf(operation.get("id"));
         Instant now = clock.instant();
-        int transitioned = jdbcTemplate.update("""
-                update operation_plan
-                   set status = 'UNLOADING',
-                       version = version + 1,
-                       terminal_source = 'ROLLOUT_FAILURE',
-                       terminal_reason = '实例执行失败后自动卸载',
-                       updated_by = ?,
-                       updated_at = ?
-                 where id = ? and status = 'RUNNING' and version = ?
-                """, context.actor(), timestamp(now), operationPlanId,
-                ((Number) operation.get("version")).longValue());
+        int transitioned = commandMapper.transitionOperationToUnloading(operationPlanId, context.actor(),
+                timestamp(now), ((Number) operation.get("version")).longValue());
         if (transitioned == 0) {
             return;
         }
         String rollbackId = businessIdService.nextId("rollback_execution",
                 eventWriter.rolloutBusinessName(String.valueOf(operation.get("resource_type")),
                         String.valueOf(operation.get("resource_id"))));
-        jdbcTemplate.update("""
-                insert into rollback_execution(
-                    id, operation_plan_id, rollback_type, status, reason,
-                    created_by, created_at, finished_at
-                ) values (?, ?, 'RESET_ALL', 'DISPATCHED', ?, ?, ?, null)
-                """, rollbackId, operationPlanId, "实例执行失败后自动卸载",
+        commandMapper.insertRollbackExecution(rollbackId, operationPlanId, "实例执行失败后自动卸载",
                 context.actor(), timestamp(now));
-        List<Map<String, Object>> agents = normalizeRows(jdbcTemplate.queryForList("""
-                select distinct a.*
-                  from rollout_instance_execution execution
-                  join agent_instance a on a.instance_id = execution.instance_id
-                 where execution.operation_plan_id = ?
-                   and a.status = 'ACTIVE'
-                   and (a.lease_expires_at is null or a.lease_expires_at > current_timestamp)
-                 order by a.id
-                """, operationPlanId));
+        List<Map<String, Object>> agents = normalizeRows(commandMapper.activeAgentsForOperation(operationPlanId));
         for (Map<String, Object> agent : agents) {
             enqueue(context, String.valueOf(agent.get("id")), "RESET_ALL",
                     Map.of("commandType", "RESET_ALL",
@@ -414,24 +301,10 @@ public class AgentCommandService {
                     "unload:" + operationPlanId + ":" + agent.get("id"), 10, now);
         }
         if (agents.isEmpty()) {
-            jdbcTemplate.update("""
-                    update rollback_execution
-                       set status = 'SUCCEEDED', finished_at = ?
-                     where id = ?
-                    """, timestamp(now), rollbackId);
-            jdbcTemplate.update("""
-                update operation_plan
-                       set status = 'UNLOADED',
-                           version = version + 1,
-                           terminal_source = 'ROLLOUT_FAILURE',
-                           terminal_reason = '实例执行失败且没有可达 Agent，直接标记已卸载',
-                           updated_by = ?,
-                           updated_at = ?
-                     where id = ? and status = 'UNLOADING'
-                    """, context.actor(), timestamp(now), operationPlanId);
+            commandMapper.markRollbackSucceeded(rollbackId, timestamp(now));
+            commandMapper.markUnloadingOperationUnloadedWithoutAgents(operationPlanId, context.actor(), timestamp(now));
         }
-        Map<String, Object> current = normalizeRow(jdbcTemplate.queryForMap(
-                "select * from operation_plan where id = ?", operationPlanId));
+        Map<String, Object> current = normalizeRow(commandMapper.operationPlan(operationPlanId));
         eventWriter.recordEvent(context, "operation_plan.auto_unload", "operation_plan",
                 operationPlanId, ((Number) current.get("version")).longValue(),
                 operation, current, "UNLOADING", "实例执行失败，已启动自动卸载",
@@ -451,13 +324,9 @@ public class AgentCommandService {
         }
         Object operationPlanId = payload.get("operationPlanId");
         if (operationPlanId != null && !String.valueOf(operationPlanId).isBlank()) {
-            List<Map<String, Object>> operations = normalizeRows(jdbcTemplate.queryForList("""
-                    select resource_type, resource_id
-                      from operation_plan
-                     where id = ?
-                    """, operationPlanId));
-            if (!operations.isEmpty()) {
-                Map<String, Object> operation = operations.get(0);
+            Map<String, Object> rawOperation = commandMapper.operationResource(operationPlanId);
+            if (rawOperation != null) {
+                Map<String, Object> operation = normalizeRow(rawOperation);
                 return eventWriter.rolloutBusinessName(String.valueOf(operation.get("resource_type")),
                         String.valueOf(operation.get("resource_id")));
             }
@@ -466,9 +335,7 @@ public class AgentCommandService {
     }
 
     private void requireExistingAgent(String agentId) {
-        Integer count = jdbcTemplate.queryForObject(
-                "select count(*) from agent_instance where id = ?", Integer.class, agentId);
-        if (count == null || count == 0) {
+        if (commandMapper.countAgent(agentId) == 0) {
             throw PlatformException.notFound("agent_instance", agentId);
         }
     }
@@ -481,16 +348,15 @@ public class AgentCommandService {
     }
 
     private Map<String, Object> getById(String id) {
-        try {
-            return normalizeRow(jdbcTemplate.queryForMap("select * from agent_command where id = ?", id));
-        } catch (Exception e) {
+        Map<String, Object> command = commandMapper.commandById(id);
+        if (command == null) {
             throw PlatformException.notFound("agent_command", id);
         }
+        return normalizeRow(command);
     }
 
     private Map<String, Object> getByIdempotencyKey(String idempotencyKey) {
-        return normalizeRow(jdbcTemplate.queryForMap(
-                "select * from agent_command where idempotency_key = ?", idempotencyKey));
+        return normalizeRow(commandMapper.commandByIdempotencyKey(idempotencyKey));
     }
 
     private List<Map<String, Object>> normalizeRows(List<Map<String, Object>> rows) {

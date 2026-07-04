@@ -1,7 +1,7 @@
 package com.example.runtimemock.platform.service;
 
 import com.example.runtimemock.platform.command.AgentCommandService;
-import org.springframework.jdbc.core.JdbcTemplate;
+import com.example.runtimemock.platform.persistence.mapper.TargetDiscoveryMapper;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -13,11 +13,11 @@ import java.util.Map;
 @Service
 public final class TargetDiscoveryService {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final TargetDiscoveryMapper targetDiscoveryMapper;
     private final AgentCommandService commandService;
 
-    public TargetDiscoveryService(JdbcTemplate jdbcTemplate, AgentCommandService commandService) {
-        this.jdbcTemplate = jdbcTemplate;
+    public TargetDiscoveryService(TargetDiscoveryMapper targetDiscoveryMapper, AgentCommandService commandService) {
+        this.targetDiscoveryMapper = targetDiscoveryMapper;
         this.commandService = commandService;
     }
 
@@ -26,18 +26,7 @@ public final class TargetDiscoveryService {
         String application = required(applicationId, "applicationId");
         String environment = required(environmentId, "environmentId");
         String search = query == null ? "" : query.trim();
-        List<Map<String, Object>> agents = normalize(jdbcTemplate.queryForList("""
-                select a.id as agent_id, a.instance_id, i.application_id, i.environment_id
-                  from agent_instance a
-                  join instance i on i.id = a.instance_id
-                 where i.application_id = ?
-                   and i.environment_id = ?
-                   and i.status = 'ACTIVE'
-                   and i.registration_status = 'ASSIGNED'
-                   and a.status = 'ACTIVE'
-                   and (a.lease_expires_at is null or a.lease_expires_at > current_timestamp)
-                 order by a.last_heartbeat_at desc nulls last, a.id
-                """, application, environment));
+        List<Map<String, Object>> agents = normalize(targetDiscoveryMapper.activeAgents(application, environment));
         if (agents.isEmpty()) {
             return List.of();
         }

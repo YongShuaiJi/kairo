@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.runtimemock.platform.persistence.mapper.RuleUnloadMapper">
+
+    <select id="operation" resultType="map">
+        select *
+          from operation_plan
+         where id = #{id}
+    </select>
+
+    <update id="transitionManualUnloading">
+        update operation_plan
+           set status = 'UNLOADING',
+               version = version + 1,
+               terminal_source = 'MANUAL',
+               terminal_reason = #{reason},
+               updated_by = #{updatedBy},
+               updated_at = #{updatedAt}
+         where id = #{id}
+           and status = #{status}
+           and version = #{version}
+    </update>
+
+    <insert id="insertRollbackExecution">
+        insert into rollback_execution(
+            id, operation_plan_id, rollback_type, status, reason,
+            created_by, created_at, finished_at
+        ) values (
+            #{id}, #{operationPlanId}, #{rollbackType}, 'DISPATCHED', #{reason},
+            #{createdBy}, #{createdAt}, null
+        )
+    </insert>
+
+    <select id="operationsForRule" resultType="map">
+        select *
+          from operation_plan
+         where resource_type = 'rule'
+           and resource_id = #{ruleId}
+           <if test="ruleVersion != null">
+           and resource_version = #{ruleVersion}
+           </if>
+           and status &lt;&gt; 'UNLOADED'
+         order by updated_at desc, id
+    </select>
+
+    <update id="markDeletionUnloading">
+        update operation_plan
+           set status = 'UNLOADING',
+               version = version + 1,
+               terminal_source = 'RULE_DELETION',
+               terminal_reason = '规则删除自动卸载',
+               updated_by = #{updatedBy},
+               updated_at = #{updatedAt}
+         where id = #{id}
+    </update>
+
+    <update id="markDeletionUnloadedWithoutAgents">
+        update operation_plan
+           set status = 'UNLOADED',
+               version = version + 1,
+               terminal_source = 'RULE_DELETION',
+               terminal_reason = '规则删除时没有可达 Agent，直接标记已卸载',
+               updated_by = #{updatedBy},
+               updated_at = #{updatedAt}
+         where id = #{id}
+    </update>
+
+    <update id="markExecutionsUnloaded">
+        update rollout_instance_execution
+           set status = 'UNLOADED',
+               finished_at = coalesce(finished_at, #{finishedAt}),
+               updated_at = #{updatedAt}
+         where operation_plan_id = #{operationPlanId}
+           and status &lt;&gt; 'UNLOADED'
+    </update>
+
+    <select id="ruleTarget" resultType="map">
+        select rt.*
+          from rule_target rt
+          join rule_version rv on rv.id = rt.rule_version_id
+         where rv.rule_id = #{ruleId}
+           and rv.version = #{ruleVersion}
+         order by rt.created_at, rt.id
+         limit 1
+    </select>
+
+    <select id="activeAgentsForSuccessfulExecutions" resultType="map">
+        select distinct a.*
+          from rollout_instance_execution rie
+          join agent_instance a on a.instance_id = rie.instance_id
+         where rie.operation_plan_id = #{operationPlanId}
+           and rie.status = 'SUCCEEDED'
+           and a.status = 'ACTIVE'
+           and (a.lease_expires_at is null or a.lease_expires_at &gt; current_timestamp)
+         order by a.id
+    </select>
+
+    <select id="rollbackExecution" resultType="map">
+        select *
+          from rollback_execution
+         where id = #{id}
+    </select>
+</mapper>

@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.runtimemock.platform.persistence.mapper.AgentCommandMapper">
+
+    <select id="listCommands" resultType="map">
+        select *
+          from agent_command
+         order by created_at, id
+    </select>
+
+    <insert id="insertCommand">
+        insert into agent_command(
+            id, agent_id, command_type, status, idempotency_key, payload_json, result_json,
+            attempts, max_attempts, available_at, created_by, created_at, updated_at, correlation_id,
+            rollback_execution_id
+        ) values (
+            #{id}, #{agentId}, #{commandType}, #{status}, #{idempotencyKey}, #{payloadJson}, #{resultJson},
+            #{attempts}, #{maxAttempts}, #{availableAt}, #{createdBy}, #{createdAt}, #{updatedAt}, #{correlationId},
+            #{rollbackExecutionId}
+        )
+    </insert>
+
+    <select id="pollCandidates" resultType="map">
+        select *
+          from agent_command
+         where agent_id = #{agentId}
+           and (
+                (status = 'PENDING' and available_at &lt;= #{now})
+             or (status = 'DISPATCHED' and lease_expires_at &lt;= #{now} and attempts &lt; max_attempts)
+           )
+         order by available_at, created_at, id
+         limit 1
+    </select>
+
+    <update id="dispatchCommand">
+        update agent_command
+           set status = 'DISPATCHED',
+               attempts = attempts + 1,
+               dispatched_at = #{dispatchedAt},
+               lease_expires_at = #{leaseExpiresAt},
+               updated_at = #{updatedAt}
+         where id = #{id}
+           and status in ('PENDING', 'DISPATCHED')
+    </update>
+
+    <update id="ackCommand">
+        update agent_command
+           set status = #{status},
+               result_json = #{resultJson},
+               error_message = #{errorMessage},
+               completed_at = #{completedAt},
+               updated_at = #{updatedAt}
+         where id = #{id}
+           and status = 'DISPATCHED'
+    </update>
+
+    <update id="updateAgentStatus">
+        update agent_instance
+           set status = #{status},
+               updated_at = #{updatedAt}
+         where id = #{id}
+    </update>
+
+    <select id="commandsByRollbackExecution" resultType="map">
+        select *
+          from agent_command
+         where rollback_execution_id = #{rollbackExecutionId}
+    </select>
+
+    <select id="rollbackExecution" resultType="map">
+        select *
+          from rollback_execution
+         where id = #{id}
+    </select>
+
+    <update id="completeRollbackExecution">
+        update rollback_execution
+           set status = #{status},
+               finished_at = #{finishedAt}
+         where id = #{id}
+           and status = 'DISPATCHED'
+    </update>
+
+    <update id="updateUnloadingOperationStatus">
+        update operation_plan
+           set status = #{status},
+               version = version + 1,
+               updated_by = #{updatedBy},
+               updated_at = #{updatedAt}
+         where id = #{id}
+           and status = 'UNLOADING'
+    </update>
+
+    <update id="markRuntimeStatusesRemovedForOperation">
+        update rule_runtime_status
+           set status = 'REMOVED',
+               last_error = null,
+               updated_at = #{updatedAt}
+         where (rule_id, rule_version, instance_id) in (
+             select op.resource_id, op.resource_version, rie.instance_id
+               from operation_plan op
+               join rollout_instance_execution rie on rie.operation_plan_id = op.id
+              where op.id = #{operationPlanId}
+                and rie.status = 'SUCCEEDED'
+         )
+    </update>
+
+    <select id="operationPlan" resultType="map">
+        select *
+          from operation_plan
+         where id = #{id}
+    </select>
+
+    <select id="executionsByCommand" resultType="map">
+        select *
+          from rollout_instance_execution
+         where command_id = #{commandId}
+    </select>
+
+    <update id="completeExecution">
+        update rollout_instance_execution
+           set status = #{status},
+               error_message = #{errorMessage},
+               finished_at = #{finishedAt},
+               version = version + 1,
+               updated_by = #{updatedBy},
+               updated_at = #{updatedAt}
+         where id = #{id}
+           and status = 'WAITING_AGENT'
+           and version = #{version}
+    </update>
+
+    <select id="rolloutExecution" resultType="map">
+        select *
+          from rollout_instance_execution
+         where id = #{id}
+    </select>
+
+    <select id="executionsByOperation" resultType="map">
+        select *
+          from rollout_instance_execution
+         where operation_plan_id = #{operationPlanId}
+    </select>
+
+    <update id="completeRunningOperation">
+        update operation_plan
+           set status = #{status},
+               version = #{version},
+               updated_by = #{updatedBy},
+               updated_at = #{updatedAt}
+         where id = #{id}
+           and status = 'RUNNING'
+           and version = #{currentVersion}
+    </update>
+
+    <select id="successfulExecutions" resultType="map">
+        select instance_id
+          from rollout_instance_execution
+         where operation_plan_id = #{operationPlanId}
+           and status = 'SUCCEEDED'
+    </select>
+
+    <update id="updateRuleRuntimeStatusActive">
+        update rule_runtime_status
+           set status = 'ACTIVE',
+               last_error = null,
+               updated_at = #{updatedAt}
+         where rule_id = #{ruleId}
+           and rule_version = #{ruleVersion}
+           and instance_id = #{instanceId}
+    </update>
+
+    <insert id="insertRuleRuntimeStatus">
+        insert into rule_runtime_status(
+            id, rule_id, rule_version, instance_id, status,
+            hit_count, error_count, last_error, updated_at
+        ) values (
+            #{id}, #{ruleId}, #{ruleVersion}, #{instanceId}, 'ACTIVE',
+            0, 0, null, #{updatedAt}
+        )
+    </insert>
+
+    <update id="transitionOperationToUnloading">
+        update operation_plan
+           set status = 'UNLOADING',
+               version = version + 1,
+               terminal_source = 'ROLLOUT_FAILURE',
+               terminal_reason = '实例执行失败后自动卸载',
+               updated_by = #{updatedBy},
+               updated_at = #{updatedAt}
+         where id = #{id}
+           and status = 'RUNNING'
+           and version = #{version}
+    </update>
+
+    <insert id="insertRollbackExecution">
+        insert into rollback_execution(
+            id, operation_plan_id, rollback_type, status, reason,
+            created_by, created_at, finished_at
+        ) values (
+            #{id}, #{operationPlanId}, 'RESET_ALL', 'DISPATCHED', #{reason},
+            #{createdBy}, #{createdAt}, null
+        )
+    </insert>
+
+    <select id="activeAgentsForOperation" resultType="map">
+        select distinct a.*
+          from rollout_instance_execution execution
+          join agent_instance a on a.instance_id = execution.instance_id
+         where execution.operation_plan_id = #{operationPlanId}
+           and a.status = 'ACTIVE'
+           and (a.lease_expires_at is null or a.lease_expires_at &gt; current_timestamp)
+         order by a.id
+    </select>
+
+    <update id="markRollbackSucceeded">
+        update rollback_execution
+           set status = 'SUCCEEDED',
+               finished_at = #{finishedAt}
+         where id = #{id}
+    </update>
+
+    <update id="markUnloadingOperationUnloadedWithoutAgents">
+        update operation_plan
+           set status = 'UNLOADED',
+               version = version + 1,
+               terminal_source = 'ROLLOUT_FAILURE',
+               terminal_reason = '实例执行失败且没有可达 Agent，直接标记已卸载',
+               updated_by = #{updatedBy},
+               updated_at = #{updatedAt}
+         where id = #{id}
+           and status = 'UNLOADING'
+    </update>
+
+    <select id="operationResource" resultType="map">
+        select resource_type, resource_id
+          from operation_plan
+         where id = #{id}
+    </select>
+
+    <select id="countAgent" resultType="int">
+        select count(*)
+          from agent_instance
+         where id = #{id}
+    </select>
+
+    <select id="commandById" resultType="map">
+        select *
+          from agent_command
+         where id = #{id}
+    </select>
+
+    <select id="commandByIdempotencyKey" resultType="map">
+        select *
+          from agent_command
+         where idempotency_key = #{idempotencyKey}
+    </select>
+</mapper>

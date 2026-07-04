@@ -2,13 +2,13 @@ package com.example.runtimemock.platform;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.runtimemock.platform.persistence.mapper.TestPlatformMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -37,25 +37,13 @@ class PlatformWebContractIntegrationTest {
     ObjectMapper objectMapper;
 
     @Autowired
-    JdbcTemplate jdbcTemplate;
+    TestPlatformMapper testPlatformMapper;
 
     @BeforeEach
     void ensureDefaultTopology() {
-        jdbcTemplate.update("""
-                insert into project(id, organization_id, name, created_at)
-                select 'proj-default', 'org-default', 'Default Project', current_timestamp
-                 where not exists (select 1 from project where id = 'proj-default')
-                """);
-        jdbcTemplate.update("""
-                insert into application(id, project_id, name, created_at)
-                select 'app-default', 'proj-default', 'Default Application', current_timestamp
-                 where not exists (select 1 from application where id = 'app-default')
-                """);
-        jdbcTemplate.update("""
-                insert into environment(id, application_id, name, type, created_at)
-                select 'env-dev', 'app-default', 'dev', 'dev', current_timestamp
-                 where not exists (select 1 from environment where id = 'env-dev')
-                """);
+        testPlatformMapper.ensureDefaultProject();
+        testPlatformMapper.ensureDefaultApplication();
+        testPlatformMapper.ensureDefaultEnvironment();
     }
 
     @Test
@@ -220,10 +208,7 @@ class PlatformWebContractIntegrationTest {
         assertThat(registration.path("status").asText()).isEqualTo("PENDING_ASSIGNMENT");
         assertThat(registration.path("environmentId").isNull()).isTrue();
 
-        String environmentId = jdbcTemplate.queryForObject("""
-                select id from environment
-                 where application_id = ? and type = 'dev'
-                """, String.class, applicationId);
+        String environmentId = testPlatformMapper.devEnvironmentIdByApplication(applicationId);
         JsonNode assigned = postJson("/api/v1/instances/" + instanceId + "/environment", Map.of(
                 "environmentId", environmentId
         ));
@@ -237,7 +222,7 @@ class PlatformWebContractIntegrationTest {
                 .andExpect(jsonPath("$.items[0].application_name").value("runtime-mock-demo"))
                 .andExpect(jsonPath("$.items[0].environment_name").value("dev"));
 
-        jdbcTemplate.update("update agent_instance set status = 'OFFLINE' where id <> ?", agentId);
+        testPlatformMapper.markOtherAgentsOffline(agentId);
         CompletableFuture<String> discovery = CompletableFuture.supplyAsync(() -> {
             try {
                 return mockMvc.perform(get("/api/v1/targets/search")
@@ -279,6 +264,33 @@ class PlatformWebContractIntegrationTest {
     }
 
     @Test
+    void registersRuntimeWithEnvironmentNameAsAssignedInstance() throws Exception {
+        JsonNode registration = postJson("/api/v1/agent-registrations/self", Map.ofEntries(
+                Map.entry("projectName", "runtime-mock"),
+                Map.entry("applicationName", "runtime-mock-demo-env-name"),
+                Map.entry("environmentName", "sit"),
+                Map.entry("hostname", "runtime-env-name-host"),
+                Map.entry("processId", "4343"),
+                Map.entry("processStartId", "runtime-env-name-host:4343:123456789"),
+                Map.entry("jvmStartedAtEpochMillis", 123456789L),
+                Map.entry("runtime", "java-21"),
+                Map.entry("javaVersion", "21.0.9"),
+                Map.entry("loadMode", "premain"),
+                Map.entry("agentVersion", "0.1.0"),
+                Map.entry("listenHost", "127.0.0.1"),
+                Map.entry("listenPort", 18080),
+                Map.entry("capabilities", java.util.List.of("DISCOVER_TARGETS", "APPLY_RULE"))
+        ));
+
+        assertThat(registration.path("status").asText()).isEqualTo("ACTIVE");
+        assertThat(registration.path("environmentId").asText()).isNotBlank();
+        assertThat(testPlatformMapper.instanceRegistrationStatus(registration.path("instanceId").asText()))
+                .isEqualTo("ASSIGNED");
+        assertThat(testPlatformMapper.lowerEnvironmentType(registration.path("environmentId").asText()))
+                .isEqualTo("sit");
+    }
+
+    @Test
     void rejectsMissingOrCrossScopedApplicationEnvironmentInsteadOfInventingDefaults() throws Exception {
         mockMvc.perform(post("/api/v1/rules")
                         .header("X-Actor", "system")
@@ -305,11 +317,7 @@ class PlatformWebContractIntegrationTest {
                 .andExpect(jsonPath("$.code").value("INVALID_ENVIRONMENT"))
                 .andExpect(jsonPath("$.message").value("所选环境不存在，或不属于当前应用"));
 
-        Integer count = jdbcTemplate.queryForObject(
-                "select count(*) from rule where name = ?",
-                Integer.class,
-                "Must not receive a default environment");
-        assertThat(count).isZero();
+        assertThat(testPlatformMapper.countRulesByName("Must not receive a default environment")).isZero();
     }
 
     @Test

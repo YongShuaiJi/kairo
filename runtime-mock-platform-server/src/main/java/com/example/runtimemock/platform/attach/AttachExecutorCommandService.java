@@ -1,12 +1,12 @@
 package com.example.runtimemock.platform.attach;
 
+import com.example.runtimemock.platform.persistence.mapper.AttachExecutorCommandMapper;
 import com.example.runtimemock.platform.service.PlatformException;
 import com.example.runtimemock.platform.service.RbacService;
 import com.example.runtimemock.platform.service.RequestContext;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.sql.Timestamp;
@@ -19,18 +19,18 @@ import java.util.Map;
 @Service
 public final class AttachExecutorCommandService {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final AttachExecutorCommandMapper commandMapper;
     private final RbacService rbacService;
     private final Clock clock;
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
     @Autowired
-    public AttachExecutorCommandService(JdbcTemplate jdbcTemplate, RbacService rbacService) {
-        this(jdbcTemplate, rbacService, Clock.systemUTC());
+    public AttachExecutorCommandService(AttachExecutorCommandMapper commandMapper, RbacService rbacService) {
+        this(commandMapper, rbacService, Clock.systemUTC());
     }
 
-    AttachExecutorCommandService(JdbcTemplate jdbcTemplate, RbacService rbacService, Clock clock) {
-        this.jdbcTemplate = jdbcTemplate;
+    AttachExecutorCommandService(AttachExecutorCommandMapper commandMapper, RbacService rbacService, Clock clock) {
+        this.commandMapper = commandMapper;
         this.rbacService = rbacService;
         this.clock = clock;
     }
@@ -42,21 +42,14 @@ public final class AttachExecutorCommandService {
         rbacService.require(context, "AGENT_MANAGE");
         Instant now = clock.instant();
         String commandId = "attach-command-" + java.util.UUID.randomUUID();
-        List<Map<String, Object>> existing = jdbcTemplate.queryForList(
-                "select * from attach_executor_command where idempotency_key = ?", idempotencyKey);
-        if (!existing.isEmpty()) {
-            return commandResult(existing.get(0));
+        Map<String, Object> existing = commandMapper.findByIdempotencyKey(idempotencyKey);
+        if (existing != null) {
+            return commandResult(existing);
         }
-        jdbcTemplate.update("""
-                insert into attach_executor_command(
-                    id, executor_id, instance_id, command_type, status, process_id,
-                    agent_jar, agent_args, payload_json, idempotency_key, max_attempts,
-                    created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, commandId, executorId, instanceId, commandType, "PENDING", processId,
+        commandMapper.insertCommand(commandId, executorId, instanceId, commandType, "PENDING", processId,
                 agentJar, agentArgs, json(payload), idempotencyKey, Math.max(1, maxAttempts),
                 timestamp(now), timestamp(now));
-        return commandResult(jdbcTemplate.queryForMap("select * from attach_executor_command where id = ?", commandId));
+        return commandResult(commandMapper.findById(commandId));
     }
 
     public Map<String, Object> pollNext(String executorId, RequestContext context, Map<String, Object> request) {
@@ -102,100 +95,38 @@ public final class AttachExecutorCommandService {
                     "Attach executor command status must be SUCCEEDED or FAILED");
         }
         Instant now = clock.instant();
-        jdbcTemplate.update("""
-                update attach_executor_command
-                   set status = ?,
-                       result_json = ?,
-                       error_message = ?,
-                       finished_at = ?,
-                       updated_at = ?
-                 where id = ?
-                """, status, json(request.getOrDefault("result", Map.of())),
-                string(request, "message", ""), timestamp(now), timestamp(now), commandId);
+        commandMapper.completeCommand(commandId, status, json(request.getOrDefault("result", Map.of())),
+                string(request, "message", ""), timestamp(now), timestamp(now));
         if ("SUCCEEDED".equals(status)) {
-            jdbcTemplate.update("""
-                    update instance
-                       set load_mode = 'attach',
-                           updated_at = ?
-                     where id = ?
-                    """, timestamp(now), command.get("instance_id"));
+            commandMapper.markInstanceAttached(command.get("instance_id"), timestamp(now));
         }
-        return commandResult(jdbcTemplate.queryForMap("select * from attach_executor_command where id = ?", commandId));
+        return commandResult(commandMapper.findById(commandId));
     }
 
     private Map<String, Object> claimNext(String executorId, String actor, long leaseSeconds) {
         Instant now = clock.instant();
         Instant leaseExpiresAt = now.plusSeconds(leaseSeconds);
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList("""
-                update attach_executor_command
-                   set status = 'LEASED',
-                       attempt = attempt + 1,
-                       lease_owner = ?,
-                       lease_expires_at = ?,
-                       started_at = coalesce(started_at, ?),
-                       updated_at = ?
-                 where id = (
-                       select id
-                         from attach_executor_command
-                        where executor_id = ?
-                          and (
-                              status = 'PENDING'
-                              or (status = 'LEASED' and lease_expires_at < ?)
-                          )
-                          and attempt < max_attempts
-                        order by created_at, id
-                        for update skip locked
-                        limit 1
-                 )
-                returning *
-                """, actor, timestamp(leaseExpiresAt), timestamp(now), timestamp(now),
-                executorId, timestamp(now));
-        return rows.isEmpty() ? null : rows.get(0);
+        return commandMapper.claimNext(executorId, actor, timestamp(leaseExpiresAt), timestamp(now));
     }
 
     private void heartbeatExecutor(String executorId, long leaseSeconds) {
         Instant now = clock.instant();
-        int updated = jdbcTemplate.update("""
-                update attach_executor
-                   set status = 'ACTIVE',
-                       last_heartbeat_at = ?,
-                       lease_expires_at = ?,
-                       updated_at = ?
-                 where id = ?
-                """, timestamp(now), timestamp(now.plusSeconds(leaseSeconds)), timestamp(now), executorId);
+        int updated = commandMapper.heartbeatExecutor(executorId, timestamp(now),
+                timestamp(now.plusSeconds(leaseSeconds)), timestamp(now));
         if (updated != 1) {
             throw PlatformException.notFound("attach_executor", executorId);
         }
-        jdbcTemplate.update("""
-                update attach_executor_target
-                   set status = 'ACTIVE',
-                       last_seen_at = ?,
-                       updated_at = ?
-                 where executor_id = ?
-                   and status in ('ACTIVE', 'ONLINE')
-                """, timestamp(now), timestamp(now), executorId);
-        jdbcTemplate.update("""
-                update instance
-                   set status = case when environment_id is null then 'PENDING_ASSIGNMENT' else 'ACTIVE' end,
-                       last_seen_at = ?,
-                       lease_expires_at = ?,
-                       updated_at = ?
-                 where id in (
-                       select instance_id
-                         from attach_executor_target
-                        where executor_id = ?
-                          and status in ('ACTIVE', 'ONLINE')
-                 )
-                """, timestamp(now), timestamp(now.plusSeconds(leaseSeconds)), timestamp(now), executorId);
+        commandMapper.heartbeatTargets(executorId, timestamp(now), timestamp(now));
+        commandMapper.heartbeatTargetInstances(executorId, timestamp(now),
+                timestamp(now.plusSeconds(leaseSeconds)), timestamp(now));
     }
 
     private Map<String, Object> command(String commandId) {
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "select * from attach_executor_command where id = ?", commandId);
-        if (rows.isEmpty()) {
+        Map<String, Object> command = commandMapper.findById(commandId);
+        if (command == null) {
             throw PlatformException.notFound("attach_executor_command", commandId);
         }
-        return rows.get(0);
+        return command;
     }
 
     private Map<String, Object> commandPayload(Map<String, Object> command) {

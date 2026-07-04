@@ -1,5 +1,6 @@
 package com.example.runtimemock.platform.api;
 
+import com.example.runtimemock.platform.persistence.mapper.IdempotencyRecordMapper;
 import com.example.runtimemock.platform.service.PlatformJson;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ReadListener;
@@ -10,7 +11,6 @@ import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingResponseWrapper;
@@ -20,17 +20,16 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Instant;
-import java.util.List;
 import java.util.Map;
 
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 20)
 final class IdempotencyFilter extends OncePerRequestFilter {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final IdempotencyRecordMapper idempotencyRecordMapper;
 
-    IdempotencyFilter(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    IdempotencyFilter(IdempotencyRecordMapper idempotencyRecordMapper) {
+        this.idempotencyRecordMapper = idempotencyRecordMapper;
     }
 
     @Override
@@ -61,12 +60,8 @@ final class IdempotencyFilter extends OncePerRequestFilter {
                 "uri", request.getRequestURI(),
                 "query", request.getQueryString() == null ? "" : request.getQueryString(),
                 "body", new String(requestBody, StandardCharsets.UTF_8)));
-        List<Map<String, Object>> existing = jdbcTemplate.queryForList("""
-                select * from idempotency_record
-                 where idempotency_key = ? and expires_at > current_timestamp
-                """, key);
-        if (!existing.isEmpty()) {
-            Map<String, Object> record = existing.get(0);
+        Map<String, Object> record = idempotencyRecordMapper.activeRecord(key);
+        if (record != null && !record.isEmpty()) {
             if (!actor.equals(String.valueOf(record.get("actor")))
                     || !requestHash.equals(String.valueOf(record.get("request_hash")))) {
                 writeError(response, 409, "IDEMPOTENCY_KEY_CONFLICT",
@@ -86,11 +81,7 @@ final class IdempotencyFilter extends OncePerRequestFilter {
         byte[] responseBody = wrappedResponse.getContentAsByteArray();
         if (wrappedResponse.getStatus() >= 200 && wrappedResponse.getStatus() < 500) {
             Instant now = Instant.now();
-            jdbcTemplate.update("""
-                    insert into idempotency_record(
-                        idempotency_key, actor, request_hash, response_status, response_json, created_at, expires_at
-                    ) values (?, ?, ?, ?, ?, ?, ?)
-                    """, key, actor, requestHash, wrappedResponse.getStatus(),
+            idempotencyRecordMapper.insertRecord(key, actor, requestHash, wrappedResponse.getStatus(),
                     new String(responseBody, StandardCharsets.UTF_8),
                     Timestamp.from(now), Timestamp.from(now.plusSeconds(86_400)));
         }

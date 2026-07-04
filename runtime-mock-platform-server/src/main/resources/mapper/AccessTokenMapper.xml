@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.runtimemock.platform.persistence.mapper.AccessTokenMapper">
+
+    <sql id="TokenVisibleColumns">
+        id, subject_type, subject_id,
+        case
+            when status = 'ACTIVE' and (expires_at is null or expires_at > current_timestamp) then 'VALID'
+            else 'INVALID'
+        end as status,
+        created_by, created_at, expires_at, last_used_at, revoked_at
+    </sql>
+
+    <select id="activeTokenByHash" resultType="map">
+        select *
+          from platform_access_token
+         where token_hash = #{tokenHash}
+           and status = 'ACTIVE'
+           and (expires_at is null or expires_at > current_timestamp)
+    </select>
+
+    <select id="describeActiveTokenByHash" resultType="map">
+        select id, subject_type, subject_id,
+               'VALID' as status,
+               created_at, expires_at, last_used_at
+          from platform_access_token
+         where token_hash = #{tokenHash}
+           and status = 'ACTIVE'
+           and (expires_at is null or expires_at > current_timestamp)
+    </select>
+
+    <update id="updateLastUsed">
+        update platform_access_token
+           set last_used_at = #{lastUsedAt}
+         where id = #{id}
+    </update>
+
+    <insert id="insertToken">
+        insert into platform_access_token(
+            id, token_hash, subject_type, subject_id, display_name, status,
+            created_by, created_at, expires_at, last_used_at, revoked_at
+        ) values (
+            #{id}, #{tokenHash}, #{subjectType}, #{subjectId}, #{displayName}, 'ACTIVE',
+            #{createdBy}, #{createdAt}, #{expiresAt}, null, null
+        )
+    </insert>
+
+    <select id="listVisibleTokens" resultType="map">
+        select <include refid="TokenVisibleColumns"/>
+          from platform_access_token
+         order by created_at desc, id
+    </select>
+
+    <select id="tokenSubject" resultType="map">
+        select id, subject_type, subject_id
+          from platform_access_token
+         where id = #{id}
+    </select>
+
+    <update id="renewToken">
+        update platform_access_token
+           set status = 'ACTIVE',
+               expires_at = #{expiresAt},
+               revoked_at = null
+         where id = #{id}
+    </update>
+
+    <select id="visibleToken" resultType="map">
+        select <include refid="TokenVisibleColumns"/>
+          from platform_access_token
+         where id = #{id}
+    </select>
+
+    <update id="revokeToken">
+        update platform_access_token
+           set status = 'REVOKED',
+               revoked_at = #{revokedAt}
+         where id = #{id}
+           and status = 'ACTIVE'
+    </update>
+
+    <delete id="deleteDifferentBootstrapToken">
+        delete from platform_access_token
+         where id = 'token-bootstrap'
+           and token_hash &lt;&gt; #{tokenHash}
+    </delete>
+
+    <select id="countBootstrapToken" resultType="int">
+        select count(*)
+          from platform_access_token
+         where id = 'token-bootstrap'
+    </select>
+
+    <insert id="insertBootstrapToken">
+        insert into platform_access_token(
+            id, token_hash, subject_type, subject_id, display_name, status,
+            created_by, created_at, expires_at, last_used_at, revoked_at
+        ) values (
+            'token-bootstrap', #{tokenHash}, 'USER', #{actor}, #{actor},
+            'ACTIVE', 'system', #{createdAt}, #{expiresAt}, null, null
+        )
+    </insert>
+
+    <select id="countActiveAgent" resultType="int">
+        select count(*)
+          from agent_instance
+         where id = #{subjectId}
+           and status &lt;&gt; 'REMOVED'
+    </select>
+
+    <select id="countActiveUser" resultType="int">
+        select count(*)
+          from user_account
+         where username = #{subjectId}
+           and status = 'ACTIVE'
+    </select>
+</mapper>

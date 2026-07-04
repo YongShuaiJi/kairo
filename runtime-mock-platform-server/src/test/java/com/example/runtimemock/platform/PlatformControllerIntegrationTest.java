@@ -2,13 +2,13 @@ package com.example.runtimemock.platform;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.runtimemock.platform.persistence.mapper.TestPlatformMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -33,25 +33,13 @@ class PlatformControllerIntegrationTest {
     ObjectMapper objectMapper;
 
     @Autowired
-    JdbcTemplate jdbcTemplate;
+    TestPlatformMapper testPlatformMapper;
 
     @BeforeEach
     void ensureDefaultTopology() {
-        jdbcTemplate.update("""
-                insert into project(id, organization_id, name, created_at)
-                select 'proj-default', 'org-default', 'Default Project', current_timestamp
-                 where not exists (select 1 from project where id = 'proj-default')
-                """);
-        jdbcTemplate.update("""
-                insert into application(id, project_id, name, created_at)
-                select 'app-default', 'proj-default', 'Default Application', current_timestamp
-                 where not exists (select 1 from application where id = 'app-default')
-                """);
-        jdbcTemplate.update("""
-                insert into environment(id, application_id, name, type, created_at)
-                select 'env-dev', 'app-default', 'dev', 'dev', current_timestamp
-                 where not exists (select 1 from environment where id = 'env-dev')
-                """);
+        testPlatformMapper.ensureDefaultProject();
+        testPlatformMapper.ensureDefaultApplication();
+        testPlatformMapper.ensureDefaultEnvironment();
     }
 
     @Test
@@ -114,23 +102,9 @@ class PlatformControllerIntegrationTest {
         ), "system");
         String operationId = operation.get("id").asText();
         assertThat(operationId).matches(BUSINESS_ID_PATTERN);
-        jdbcTemplate.update("""
-                insert into rollout_instance_execution(
-                    id, rollout_batch_id, operation_plan_id, instance_id, status,
-                    expected_agent_version, expected_rule_version, command_id, error_message,
-                    started_at, finished_at, version, updated_by, updated_at
-                ) values (?, null, ?, ?, 'SUCCEEDED', '0.1.0', 1, null, null,
-                          current_timestamp, current_timestamp, 1, 'system', current_timestamp)
-                """, "rollout-execution-unload-1", operationId, instanceId);
-        jdbcTemplate.update("""
-                update operation_plan set status = 'SUCCEEDED', version = 2 where id = ?
-                """, operationId);
-        jdbcTemplate.update("""
-                insert into rule_runtime_status(
-                    id, rule_id, rule_version, instance_id, status,
-                    hit_count, error_count, last_error, updated_at
-                ) values (?, ?, 1, ?, 'ACTIVE', 0, 0, null, current_timestamp)
-                """, "runtime-status-unload-1", ruleId, instanceId);
+        testPlatformMapper.insertSucceededRolloutExecution("rollout-execution-unload-1", operationId, instanceId);
+        testPlatformMapper.markOperationSucceeded(operationId);
+        testPlatformMapper.insertActiveRuleRuntimeStatus("runtime-status-unload-1", ruleId, instanceId);
 
         String fencingToken = issueFencingToken("operation_plan", operationId, "unload rule");
         JsonNode unload = postJson("/api/v1/operation-plans/" + operationId + "/unload", Map.of(
@@ -158,9 +132,7 @@ class PlatformControllerIntegrationTest {
 
         assertThat(getJson("/api/v1/details/operation-plans/" + operationId)
                 .get("status").asText()).isEqualTo("UNLOADED");
-        assertThat(jdbcTemplate.queryForObject(
-                "select status from rule_runtime_status where id = ?",
-                String.class, "runtime-status-unload-1")).isEqualTo("REMOVED");
+        assertThat(testPlatformMapper.ruleRuntimeStatusById("runtime-status-unload-1")).isEqualTo("REMOVED");
     }
 
     @Test
@@ -257,18 +229,12 @@ class PlatformControllerIntegrationTest {
         assertThat(runningOperation.get("version").asLong()).isEqualTo(2);
         JsonNode maintenance = postJson("/api/v1/control/schedulers/run-once", Map.of(), "system");
         assertThat(maintenance.at("/rollout/targetsCaptured").asInt()).isGreaterThanOrEqualTo(1);
-        String executionId = jdbcTemplate.queryForObject("""
-                select id from rollout_instance_execution where operation_plan_id = ? limit 1
-                """, String.class, operationId);
+        String executionId = testPlatformMapper.firstRolloutExecutionId(operationId);
         assertThat(executionId).matches(BUSINESS_ID_PATTERN);
-        String commandId = jdbcTemplate.queryForObject("""
-                select command_id from rollout_instance_execution where operation_plan_id = ? limit 1
-                """, String.class, operationId);
+        String commandId = testPlatformMapper.firstRolloutExecutionCommandId(operationId);
         assertThat(commandId).matches(BUSINESS_ID_PATTERN);
 
-        assertThat(jdbcTemplate.queryForObject(
-                "select status from rule_version where rule_id = ? and version = ?",
-                String.class, ruleId, 2)).isEqualTo("ENABLED");
+        assertThat(testPlatformMapper.ruleVersionStatus(ruleId, 2)).isEqualTo("ENABLED");
         assertThat(getJson("/api/v1/control/health").get("operationPlanCount").asLong()).isGreaterThanOrEqualTo(1);
     }
 
@@ -307,22 +273,13 @@ class PlatformControllerIntegrationTest {
         String operationId = createOperation(ruleId);
         insertSucceededExecution("rollout-execution-agent-gone-1", operationId, instanceId, ruleId);
 
-        jdbcTemplate.update("""
-                update agent_instance
-                   set status = 'ACTIVE',
-                       lease_expires_at = current_timestamp - interval '1' minute
-                 where id = ?
-                """, agentId);
+        testPlatformMapper.expireAgentLease(agentId);
         JsonNode maintenance = postJson("/api/v1/control/schedulers/run-once", Map.of(), "system");
         assertThat(maintenance.at("/runtimeLeases/operationPlansAutoUnloaded").asInt()).isGreaterThanOrEqualTo(1);
         assertThat(getJson("/api/v1/details/operation-plans/" + operationId).get("status").asText())
                 .isEqualTo("UNLOADED");
-        assertThat(jdbcTemplate.queryForObject(
-                "select terminal_source from operation_plan where id = ?",
-                String.class, operationId)).isEqualTo("AGENT_GONE");
-        assertThat(jdbcTemplate.queryForObject(
-                "select status from rule_runtime_status where rule_id = ? and instance_id = ?",
-                String.class, ruleId, instanceId)).isEqualTo("REMOVED");
+        assertThat(testPlatformMapper.operationPlanTerminalSource(operationId)).isEqualTo("AGENT_GONE");
+        assertThat(testPlatformMapper.ruleRuntimeStatus(ruleId, instanceId)).isEqualTo("REMOVED");
 
         JsonNode registration = postJson("/api/v1/agent-registrations/self", Map.ofEntries(
                 Map.entry("instanceId", instanceId),
@@ -342,12 +299,8 @@ class PlatformControllerIntegrationTest {
                 Map.entry("capabilities", java.util.List.of("APPLY_RULE", "RESET_CLASS"))
         ), "system");
         assertThat(registration.get("restoredOperationPlans").asInt()).isEqualTo(1);
-        assertThat(jdbcTemplate.queryForObject(
-                "select status from operation_plan where id = ?", String.class, operationId))
-                .isEqualTo("RUNNING");
-        assertThat(jdbcTemplate.queryForObject(
-                "select status from rollout_instance_execution where operation_plan_id = ?",
-                String.class, operationId)).isEqualTo("PENDING");
+        assertThat(testPlatformMapper.operationPlanStatus(operationId)).isEqualTo("RUNNING");
+        assertThat(testPlatformMapper.rolloutExecutionStatusByOperation(operationId)).isEqualTo("PENDING");
 
         postJson("/api/v1/control/schedulers/run-once", Map.of(), "system");
         JsonNode command = postJson("/api/v1/agents/" + agentId + "/commands/next",
@@ -365,13 +318,7 @@ class PlatformControllerIntegrationTest {
         String ruleId = createSimpleRule("Manual unload lifecycle rule", "com.example.ManualUnloadService");
         String operationId = createOperation(ruleId);
         insertSucceededExecution("rollout-execution-manual-unload-1", operationId, instanceId, ruleId);
-        jdbcTemplate.update("""
-                update operation_plan
-                   set status = 'UNLOADED',
-                       terminal_source = 'MANUAL',
-                       terminal_reason = 'operator requested unload'
-                 where id = ?
-                """, operationId);
+        testPlatformMapper.markOperationManuallyUnloaded(operationId);
 
         JsonNode registration = postJson("/api/v1/agent-registrations/self", Map.ofEntries(
                 Map.entry("instanceId", instanceId),
@@ -391,12 +338,8 @@ class PlatformControllerIntegrationTest {
                 Map.entry("capabilities", java.util.List.of("APPLY_RULE", "RESET_CLASS"))
         ), "system");
         assertThat(registration.get("restoredOperationPlans").asInt()).isZero();
-        assertThat(jdbcTemplate.queryForObject(
-                "select status from operation_plan where id = ?", String.class, operationId))
-                .isEqualTo("UNLOADED");
-        assertThat(jdbcTemplate.queryForObject(
-                "select terminal_source from operation_plan where id = ?", String.class, operationId))
-                .isEqualTo("MANUAL");
+        assertThat(testPlatformMapper.operationPlanStatus(operationId)).isEqualTo("UNLOADED");
+        assertThat(testPlatformMapper.operationPlanTerminalSource(operationId)).isEqualTo("MANUAL");
     }
 
     @Test
@@ -407,34 +350,42 @@ class PlatformControllerIntegrationTest {
         String ruleId = createSimpleRule("Abandoned lifecycle rule", "com.example.AbandonedService");
         String operationId = createOperation(ruleId);
         insertSucceededExecution("rollout-execution-abandoned-1", operationId, instanceId, ruleId);
-        jdbcTemplate.update("""
-                update agent_instance
-                   set status = 'OFFLINE',
-                       lease_expires_at = current_timestamp - interval '1' hour,
-                       last_heartbeat_at = current_timestamp - interval '1' hour,
-                       updated_at = current_timestamp - interval '1' hour
-                 where id = ?
-                """, agentId);
-        jdbcTemplate.update("""
-                update instance
-                   set status = 'OFFLINE',
-                       lease_expires_at = current_timestamp - interval '1' hour,
-                       last_seen_at = current_timestamp - interval '1' hour,
-                       updated_at = current_timestamp - interval '1' hour
-                 where id = ?
-                """, instanceId);
+        testPlatformMapper.markAgentOfflineExpired(agentId);
+        testPlatformMapper.markInstanceOfflineExpired(instanceId);
 
         JsonNode maintenance = postJson("/api/v1/control/schedulers/run-once", Map.of(), "system");
         assertThat(maintenance.at("/runtimeCleanup/operationPlansAbandoned").asInt()).isGreaterThanOrEqualTo(1);
-        assertThat(jdbcTemplate.queryForObject(
-                "select status from operation_plan where id = ?", String.class, operationId))
-                .isEqualTo("ABANDONED");
-        assertThat(jdbcTemplate.queryForObject(
-                "select terminal_source from operation_plan where id = ?", String.class, operationId))
-                .isEqualTo("INSTANCE_GONE");
-        assertThat(jdbcTemplate.queryForObject(
-                "select status from instance where id = ?", String.class, instanceId))
-                .isEqualTo("ARCHIVED");
+        assertThat(testPlatformMapper.operationPlanStatus(operationId)).isEqualTo("ABANDONED");
+        assertThat(testPlatformMapper.operationPlanTerminalSource(operationId)).isEqualTo("INSTANCE_GONE");
+        assertThat(testPlatformMapper.instanceStatus(instanceId)).isEqualTo("ARCHIVED");
+    }
+
+    @Test
+    void marksSidecarsOfflineWhenAttachExecutorLeaseExpires() throws Exception {
+        String instanceId = "instance-expired-executor-1";
+        postJson("/api/v1/instances", Map.of(
+                "id", instanceId,
+                "applicationId", "app-default",
+                "environmentId", "env-dev",
+                "hostname", "expired-executor-host",
+                "processId", "9001",
+                "runtime", "java-21",
+                "labels", Map.of("purpose", "expired-executor"),
+                "reason", "register expired executor test instance"
+        ), "system");
+        testPlatformMapper.insertExpiredAttachExecutor();
+        testPlatformMapper.insertExpiredAttachExecutorTarget(instanceId);
+        testPlatformMapper.insertExpiredSidecar(instanceId);
+
+        JsonNode maintenance = postJson("/api/v1/control/schedulers/run-once", Map.of(), "system");
+        assertThat(maintenance.at("/runtimeLeases/executorsOffline").asInt()).isGreaterThanOrEqualTo(1);
+        assertThat(maintenance.at("/runtimeLeases/targetsOffline").asInt()).isGreaterThanOrEqualTo(1);
+        assertThat(maintenance.at("/runtimeLeases/sidecarsOffline").asInt()).isGreaterThanOrEqualTo(1);
+        assertThat(testPlatformMapper.attachExecutorStatus("runtime-mock-expired-executor"))
+                .isEqualTo("OFFLINE");
+        assertThat(testPlatformMapper.attachExecutorTargetStatus("runtime-mock-expired-executor", instanceId))
+                .isEqualTo("OFFLINE");
+        assertThat(testPlatformMapper.sidecarStatus("sidecar-expired-executor-1")).isEqualTo("OFFLINE");
     }
 
     @Test
@@ -496,14 +447,8 @@ class PlatformControllerIntegrationTest {
 
     @Test
     void rolloutApplicationOptionsExcludeEmptyTopologyApplications() throws Exception {
-        jdbcTemplate.update("""
-                insert into application(id, project_id, name, created_at)
-                values ('app-empty-rollout-options', 'proj-default', 'Empty Rollout Options App', current_timestamp)
-                """);
-        jdbcTemplate.update("""
-                insert into environment(id, application_id, name, type, created_at)
-                values ('env-empty-rollout-options', 'app-empty-rollout-options', 'dev', 'dev', current_timestamp)
-                """);
+        testPlatformMapper.insertEmptyRolloutOptionsApplication();
+        testPlatformMapper.insertEmptyRolloutOptionsEnvironment();
 
         JsonNode options = getJson("/api/v1/query/rollout-applications?page=0&size=200&q=Empty%20Rollout%20Options");
 
@@ -596,29 +541,15 @@ class PlatformControllerIntegrationTest {
         ), "system");
         String operationId = operation.get("id").asText();
         assertThat(operationId).matches(BUSINESS_ID_PATTERN);
-        jdbcTemplate.update("update operation_plan set status = 'SUCCEEDED', version = 2 where id = ?",
-                operationId);
-        jdbcTemplate.update("update rule_version set status = 'ENABLED' where rule_id = ? and version = 1",
-                ruleId);
+        testPlatformMapper.markOperationSucceeded(operationId);
+        testPlatformMapper.enableRuleVersion(ruleId);
         return operationId;
     }
 
     private void insertSucceededExecution(String executionId, String operationId, String instanceId,
                                           String ruleId) {
-        jdbcTemplate.update("""
-                insert into rollout_instance_execution(
-                    id, rollout_batch_id, operation_plan_id, instance_id, status,
-                    expected_agent_version, expected_rule_version, command_id, error_message,
-                    started_at, finished_at, version, updated_by, updated_at
-                ) values (?, null, ?, ?, 'SUCCEEDED', '0.1.0', 1, null, null,
-                          current_timestamp, current_timestamp, 1, 'system', current_timestamp)
-                """, executionId, operationId, instanceId);
-        jdbcTemplate.update("""
-                insert into rule_runtime_status(
-                    id, rule_id, rule_version, instance_id, status,
-                    hit_count, error_count, last_error, updated_at
-                ) values (?, ?, 1, ?, 'ACTIVE', 0, 0, null, current_timestamp)
-                """, "runtime-status-" + executionId, ruleId, instanceId);
+        testPlatformMapper.insertSucceededRolloutExecution(executionId, operationId, instanceId);
+        testPlatformMapper.insertActiveRuleRuntimeStatus("runtime-status-" + executionId, ruleId, instanceId);
     }
 
     private JsonNode transitionOperation(String id, String expectedStatus, long expectedVersion,

@@ -1,14 +1,14 @@
 package com.example.runtimemock.platform.rollout;
 
 import com.example.runtimemock.platform.command.AgentCommandService;
+import com.example.runtimemock.platform.persistence.mapper.RolloutExecutionMapper;
 import com.example.runtimemock.platform.service.BusinessIdService;
-import com.example.runtimemock.platform.service.PlatformJdbcService;
+import com.example.runtimemock.platform.service.PlatformCoreService;
 import com.example.runtimemock.platform.service.PlatformJson;
 import com.example.runtimemock.platform.service.RequestContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,9 +25,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Component
 public class RolloutExecutor {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final RolloutExecutionMapper rolloutMapper;
     private final AgentCommandService commandService;
-    private final PlatformJdbcService eventWriter;
+    private final PlatformCoreService eventWriter;
     private final BusinessIdService businessIdService;
     private final Clock clock;
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -36,14 +36,14 @@ public class RolloutExecutor {
     private boolean schedulerEnabled;
 
     @Autowired
-    public RolloutExecutor(JdbcTemplate jdbcTemplate, AgentCommandService commandService,
-                           PlatformJdbcService eventWriter, BusinessIdService businessIdService) {
-        this(jdbcTemplate, commandService, eventWriter, businessIdService, Clock.systemUTC());
+    public RolloutExecutor(RolloutExecutionMapper rolloutMapper, AgentCommandService commandService,
+                           PlatformCoreService eventWriter, BusinessIdService businessIdService) {
+        this(rolloutMapper, commandService, eventWriter, businessIdService, Clock.systemUTC());
     }
 
-    RolloutExecutor(JdbcTemplate jdbcTemplate, AgentCommandService commandService,
-                    PlatformJdbcService eventWriter, BusinessIdService businessIdService, Clock clock) {
-        this.jdbcTemplate = jdbcTemplate;
+    RolloutExecutor(RolloutExecutionMapper rolloutMapper, AgentCommandService commandService,
+                    PlatformCoreService eventWriter, BusinessIdService businessIdService, Clock clock) {
+        this.rolloutMapper = rolloutMapper;
         this.commandService = commandService;
         this.eventWriter = eventWriter;
         this.businessIdService = businessIdService;
@@ -71,13 +71,7 @@ public class RolloutExecutor {
         int operationCount = 0;
         int targetCount = 0;
         int commandCount = 0;
-        List<Map<String, Object>> operations = normalizeRows(jdbcTemplate.queryForList("""
-                select *
-                  from operation_plan
-                 where status = 'RUNNING'
-                 order by updated_at, id
-                 limit 50
-                """));
+        List<Map<String, Object>> operations = normalizeRows(rolloutMapper.runningOperations());
         for (Map<String, Object> candidate : operations) {
             operationCount++;
             RolloutProgress progress = processOperation(context, candidate);
@@ -118,12 +112,7 @@ public class RolloutExecutor {
     }
 
     private List<Map<String, Object>> executions(String operationId) {
-        return normalizeRows(jdbcTemplate.queryForList("""
-                select *
-                  from rollout_instance_execution
-                 where operation_plan_id = ?
-                 order by updated_at, id
-                """, operationId));
+        return normalizeRows(rolloutMapper.executions(operationId));
     }
 
     private int captureTargets(RequestContext context, Map<String, Object> operation) {
@@ -131,27 +120,8 @@ public class RolloutExecutor {
         Map<String, Object> labels = selectorValueMap(strategy.get("labels"));
         List<String> requestedInstances = stringList(strategy.get("instanceIds"));
         String operationId = String.valueOf(operation.get("id"));
-        List<Map<String, Object>> instances = normalizeRows(jdbcTemplate.queryForList("""
-                select i.*,
-                       a.name as application_name,
-                       lower(coalesce(e.type, e.name)) as environment_name,
-                       (
-                           select t.executor_id
-                             from attach_executor_target t
-                            where t.instance_id = i.id
-                            order by t.last_seen_at desc nulls last, t.updated_at desc, t.executor_id
-                            limit 1
-                       ) as attach_executor_id
-                  from instance i
-                  join application a on a.id = i.application_id
-                  left join environment e on e.id = i.environment_id
-                 where i.application_id = ?
-                   and i.environment_id = ?
-                   and i.status = 'ACTIVE'
-                   and i.registration_status = 'ASSIGNED'
-                   and (i.lease_expires_at is null or i.lease_expires_at > current_timestamp)
-                 order by i.created_at, i.id
-                """, operation.get("application_id"), operation.get("environment_id")));
+        List<Map<String, Object>> instances = normalizeRows(rolloutMapper.activeTargetInstances(
+                operation.get("application_id"), operation.get("environment_id")));
         Instant now = clock.instant();
         int captured = 0;
         String businessName = eventWriter.rolloutBusinessName(
@@ -168,15 +138,8 @@ public class RolloutExecutor {
                 continue;
             }
             try {
-                jdbcTemplate.update("""
-                        insert into rollout_target_snapshot(
-                            id, operation_plan_id, instance_id, labels_json, agent_status, captured_at,
-                            instance_nickname, application_name, environment_name, java_version,
-                            agent_version, load_mode, process_start_id, instance_last_seen_at,
-                            attach_executor_id
-                        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, businessIdService.nextId("rollout_target", businessName), operationId, instanceId,
-                        instance.get("labels_json"), "UNKNOWN", timestamp(now),
+                rolloutMapper.insertTargetSnapshot(businessIdService.nextId("rollout_target", businessName),
+                        operationId, instanceId, instance.get("labels_json"), timestamp(now),
                         snapshotText(instance, "nickname", instanceId),
                         snapshotText(instance, "application_name", ""),
                         snapshotText(instance, "environment_name", ""),
@@ -190,16 +153,8 @@ public class RolloutExecutor {
                 // A retry reuses the immutable target snapshot.
             }
             try {
-                jdbcTemplate.update("""
-                        insert into rollout_instance_execution(
-                            id, rollout_batch_id, operation_plan_id, instance_id, status,
-                            expected_agent_version, expected_rule_version, command_id, error_message,
-                            started_at, finished_at, version, updated_by, updated_at,
-                            instance_nickname, application_name, environment_name, java_version,
-                            agent_version, load_mode, process_start_id, instance_last_seen_at,
-                            attach_executor_id
-                        ) values (?, null, ?, ?, 'PENDING', 'unknown', ?, null, null, null, null, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, businessIdService.nextId("rollout_execution", businessName), operationId, instanceId,
+                rolloutMapper.insertExecution(businessIdService.nextId("rollout_execution", businessName),
+                        operationId, instanceId,
                         ((Number) operation.get("resource_version")).longValue(),
                         context.actor(), timestamp(now),
                         snapshotText(instance, "nickname", instanceId),
@@ -228,15 +183,7 @@ public class RolloutExecutor {
     private boolean dispatchExecution(RequestContext context, Map<String, Object> operation,
                                       Map<String, Object> execution) {
         String instanceId = String.valueOf(execution.get("instance_id"));
-        List<Map<String, Object>> agents = normalizeRows(jdbcTemplate.queryForList("""
-                select *
-                  from agent_instance
-                 where instance_id = ?
-                   and status = 'ACTIVE'
-                   and (lease_expires_at is null or lease_expires_at > current_timestamp)
-                 order by last_heartbeat_at desc nulls last, updated_at desc, id
-                 limit 1
-                """, instanceId));
+        List<Map<String, Object>> agents = normalizeRows(rolloutMapper.activeAgentsByInstance(instanceId));
         if (agents.isEmpty()) {
             waitForAgent(execution, "实例 " + instanceId + " 没有在线 Agent");
             return false;
@@ -257,24 +204,12 @@ public class RolloutExecutor {
                 String.valueOf(payload.get("commandType")), payload,
                 "rollout-execution:" + executionId, 10, clock.instant());
         Instant now = clock.instant();
-        int updatedCount = jdbcTemplate.update("""
-                update rollout_instance_execution
-                   set status = 'WAITING_AGENT',
-                       command_id = ?,
-                       error_message = null,
-                       started_at = coalesce(started_at, ?),
-                       version = version + 1,
-                       updated_by = ?,
-                       updated_at = ?
-                 where id = ?
-                   and command_id is null
-                   and status in ('PENDING', 'WAITING_AGENT')
-                """, command.get("id"), timestamp(now), context.actor(), timestamp(now), executionId);
+        int updatedCount = rolloutMapper.markExecutionWaitingAgent(executionId, command.get("id"),
+                timestamp(now), context.actor(), timestamp(now));
         if (updatedCount == 0) {
             return false;
         }
-        Map<String, Object> updatedExecution = normalizeRow(jdbcTemplate.queryForMap(
-                "select * from rollout_instance_execution where id = ?", executionId));
+        Map<String, Object> updatedExecution = normalizeRow(rolloutMapper.execution(executionId));
         eventWriter.recordEvent(context, "rollout_instance_execution.dispatch",
                 "rollout_instance_execution", executionId, 1, execution, updatedExecution,
                 "SUCCESS", "已发送规则发布命令",
@@ -306,17 +241,13 @@ public class RolloutExecutor {
     private Map<String, Object> ruleCommandPayload(Map<String, Object> operation) {
         String ruleId = String.valueOf(operation.get("resource_id"));
         long version = ((Number) operation.get("resource_version")).longValue();
-        Map<String, Object> ruleVersion = normalizeRow(jdbcTemplate.queryForMap("""
-                select * from rule_version where rule_id = ? and version = ?
-                """, ruleId, version));
+        Map<String, Object> ruleVersion = normalizeRow(rolloutMapper.ruleVersion(ruleId, version));
         String versionStatus = String.valueOf(ruleVersion.get("status"));
         if (!"ENABLED".equals(versionStatus)) {
             throw new IllegalStateException("规则版本已停用，不能发布："
                     + ruleId + ":" + version + " status=" + versionStatus);
         }
-        List<Map<String, Object>> targets = normalizeRows(jdbcTemplate.queryForList("""
-                select * from rule_target where rule_version_id = ? order by created_at, id limit 1
-                """, ruleVersion.get("id")));
+        List<Map<String, Object>> targets = normalizeRows(rolloutMapper.firstRuleTarget(ruleVersion.get("id")));
         Map<String, Object> target = targets.isEmpty() ? Map.of() : targets.get(0);
         Map<String, Object> script = PlatformJson.readMap(String.valueOf(ruleVersion.get("script_json")));
         Map<String, Object> matcher = target.isEmpty()
@@ -345,32 +276,18 @@ public class RolloutExecutor {
     }
 
     private void waitForAgent(Map<String, Object> execution, String reason) {
-        jdbcTemplate.update("""
-                update rollout_instance_execution
-                   set status = 'WAITING_AGENT',
-                       error_message = ?,
-                       version = version + 1,
-                       updated_by = 'rollout-scheduler',
-                       updated_at = ?
-                 where id = ?
-                   and command_id is null
-                   and status in ('PENDING', 'WAITING_AGENT')
-                """, reason, timestamp(clock.instant()), execution.get("id"));
+        rolloutMapper.waitForAgent(execution.get("id"), reason, timestamp(clock.instant()));
     }
 
     private void failWithoutTargets(RequestContext context, Map<String, Object> operation) {
         Instant now = clock.instant();
         long currentVersion = ((Number) operation.get("version")).longValue();
-        int updated = jdbcTemplate.update("""
-                update operation_plan
-                   set status = 'FAILED', version = version + 1, updated_by = ?, updated_at = ?
-                 where id = ? and status = 'RUNNING' and version = ?
-                """, context.actor(), timestamp(now), operation.get("id"), currentVersion);
+        int updated = rolloutMapper.failOperationWithoutTargets(operation.get("id"),
+                context.actor(), timestamp(now), currentVersion);
         if (updated == 0) {
             return;
         }
-        Map<String, Object> current = normalizeRow(jdbcTemplate.queryForMap(
-                "select * from operation_plan where id = ?", operation.get("id")));
+        Map<String, Object> current = normalizeRow(rolloutMapper.operation(operation.get("id")));
         eventWriter.recordEvent(context, "operation_plan.no_targets", "operation_plan",
                 String.valueOf(operation.get("id")), ((Number) current.get("version")).longValue(),
                 operation, current, "FAILED", "没有匹配到在线且已分配的目标实例",

@@ -2,14 +2,14 @@ package com.example.runtimemock.platform.rollout;
 
 import com.example.runtimemock.platform.command.AgentCommandService;
 import com.example.runtimemock.platform.fencing.FencingTokenService;
+import com.example.runtimemock.platform.persistence.mapper.RuleUnloadMapper;
 import com.example.runtimemock.platform.service.PlatformException;
 import com.example.runtimemock.platform.service.BusinessIdService;
-import com.example.runtimemock.platform.service.PlatformJdbcService;
+import com.example.runtimemock.platform.service.PlatformCoreService;
 import com.example.runtimemock.platform.service.PlatformJson;
 import com.example.runtimemock.platform.service.RbacService;
 import com.example.runtimemock.platform.service.RequestContext;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,30 +24,30 @@ import java.util.Map;
 @Service
 public class RuleUnloadService {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final RuleUnloadMapper unloadMapper;
     private final RbacService rbacService;
     private final FencingTokenService fencingTokenService;
     private final AgentCommandService commandService;
-    private final PlatformJdbcService eventWriter;
+    private final PlatformCoreService eventWriter;
     private final BusinessIdService businessIdService;
     private final Clock clock;
 
     @Autowired
-    public RuleUnloadService(JdbcTemplate jdbcTemplate, RbacService rbacService,
+    public RuleUnloadService(RuleUnloadMapper unloadMapper, RbacService rbacService,
                              FencingTokenService fencingTokenService,
                              AgentCommandService commandService,
-                             PlatformJdbcService eventWriter,
+                             PlatformCoreService eventWriter,
                              BusinessIdService businessIdService) {
-        this(jdbcTemplate, rbacService, fencingTokenService, commandService,
+        this(unloadMapper, rbacService, fencingTokenService, commandService,
                 eventWriter, businessIdService, Clock.systemUTC());
     }
 
-    RuleUnloadService(JdbcTemplate jdbcTemplate, RbacService rbacService,
+    RuleUnloadService(RuleUnloadMapper unloadMapper, RbacService rbacService,
                       FencingTokenService fencingTokenService,
                       AgentCommandService commandService,
-                      PlatformJdbcService eventWriter,
+                      PlatformCoreService eventWriter,
                       BusinessIdService businessIdService, Clock clock) {
-        this.jdbcTemplate = jdbcTemplate;
+        this.unloadMapper = unloadMapper;
         this.rbacService = rbacService;
         this.fencingTokenService = fencingTokenService;
         this.commandService = commandService;
@@ -108,27 +108,15 @@ public class RuleUnloadService {
         String rollbackId = businessIdService.nextId("rollback_execution",
                 eventWriter.rolloutBusinessName(String.valueOf(operation.get("resource_type")),
                         String.valueOf(operation.get("resource_id"))));
-        int transitioned = jdbcTemplate.update("""
-                update operation_plan
-                   set status = 'UNLOADING',
-                       version = version + 1,
-                       terminal_source = 'MANUAL',
-                       terminal_reason = ?,
-                       updated_by = ?,
-                       updated_at = ?
-                 where id = ? and status = ? and version = ?
-                """, reason, context.actor(), timestamp(now), operationPlanId, currentStatus, currentVersion);
+        int transitioned = unloadMapper.transitionManualUnloading(operationPlanId, reason, context.actor(),
+                timestamp(now), currentStatus, currentVersion);
         if (transitioned == 0) {
             throw PlatformException.conflict("RESOURCE_VERSION_CONFLICT",
                     "发布计划状态或版本已发生变化，请刷新后重试",
                     Map.of("id", operationPlanId, "expectedVersion", currentVersion));
         }
-        jdbcTemplate.update("""
-                insert into rollback_execution(
-                    id, operation_plan_id, rollback_type, status, reason,
-                    created_by, created_at, finished_at
-                ) values (?, ?, 'RESET_CLASS', 'DISPATCHED', ?, ?, ?, null)
-                """, rollbackId, operationPlanId, reason, context.actor(), timestamp(now));
+        unloadMapper.insertRollbackExecution(rollbackId, operationPlanId, "RESET_CLASS", reason,
+                context.actor(), timestamp(now));
 
         for (Map<String, Object> agent : agents) {
             Map<String, Object> payload = new LinkedHashMap<>();
@@ -165,19 +153,7 @@ public class RuleUnloadService {
     public Map<String, Object> unloadRuleForDeletion(String ruleId, Long ruleVersion,
                                                      RequestContext context) {
         rbacService.require(context, "RULE_MANAGE");
-        String versionClause = ruleVersion == null ? "" : " and resource_version = ?";
-        Object[] args = ruleVersion == null
-                ? new Object[]{ruleId}
-                : new Object[]{ruleId, ruleVersion};
-        List<Map<String, Object>> operations = normalize(jdbcTemplate.queryForList("""
-                select *
-                 from operation_plan
-                 where resource_type = 'rule'
-                   and resource_id = ?
-                   %s
-                   and status <> 'UNLOADED'
-                 order by updated_at desc, id
-                """.formatted(versionClause), args));
+        List<Map<String, Object>> operations = normalize(unloadMapper.operationsForRule(ruleId, ruleVersion));
         Instant now = clock.instant();
         int commands = 0;
         int markedRolledBack = 0;
@@ -197,22 +173,9 @@ public class RuleUnloadService {
                     String rollbackId = businessIdService.nextId("rollback_execution",
                             eventWriter.rolloutBusinessName(String.valueOf(operation.get("resource_type")),
                                     String.valueOf(operation.get("resource_id"))));
-                    jdbcTemplate.update("""
-                            insert into rollback_execution(
-                                id, operation_plan_id, rollback_type, status, reason,
-                                created_by, created_at, finished_at
-                            ) values (?, ?, 'RESET_CLASS', 'DISPATCHED', ?, ?, ?, null)
-                            """, rollbackId, operationPlanId, "规则删除自动卸载", context.actor(), timestamp(now));
-                    jdbcTemplate.update("""
-                            update operation_plan
-                               set status = 'UNLOADING',
-                                   version = version + 1,
-                                   terminal_source = 'RULE_DELETION',
-                                   terminal_reason = '规则删除自动卸载',
-                                   updated_by = ?,
-                                   updated_at = ?
-                             where id = ?
-                            """, context.actor(), timestamp(now), operationPlanId);
+                    unloadMapper.insertRollbackExecution(rollbackId, operationPlanId, "RESET_CLASS",
+                            "规则删除自动卸载", context.actor(), timestamp(now));
+                    unloadMapper.markDeletionUnloading(operationPlanId, context.actor(), timestamp(now));
                     for (Map<String, Object> agent : agents) {
                         Map<String, Object> payload = new LinkedHashMap<>();
                         payload.put("commandType", "RESET_CLASS");
@@ -232,24 +195,8 @@ public class RuleUnloadService {
                 }
             }
             if (!dispatched) {
-                jdbcTemplate.update("""
-                        update operation_plan
-                           set status = 'UNLOADED',
-                               version = version + 1,
-                               terminal_source = 'RULE_DELETION',
-                               terminal_reason = '规则删除时没有可达 Agent，直接标记已卸载',
-                               updated_by = ?,
-                               updated_at = ?
-                         where id = ?
-                        """, context.actor(), timestamp(now), operationPlanId);
-                jdbcTemplate.update("""
-                        update rollout_instance_execution
-                           set status = 'UNLOADED',
-                               finished_at = coalesce(finished_at, ?),
-                               updated_at = ?
-                         where operation_plan_id = ?
-                           and status <> 'UNLOADED'
-                        """, timestamp(now), timestamp(now), operationPlanId);
+                unloadMapper.markDeletionUnloadedWithoutAgents(operationPlanId, context.actor(), timestamp(now));
+                unloadMapper.markExecutionsUnloaded(operationPlanId, timestamp(now), timestamp(now));
                 markedRolledBack++;
             }
         }
@@ -264,14 +211,8 @@ public class RuleUnloadService {
     }
 
     private Map<String, Object> ruleTarget(Map<String, Object> operation) {
-        List<Map<String, Object>> rows = normalize(jdbcTemplate.queryForList("""
-                select rt.*
-                  from rule_target rt
-                  join rule_version rv on rv.id = rt.rule_version_id
-                 where rv.rule_id = ? and rv.version = ?
-                 order by rt.created_at, rt.id
-                 limit 1
-                """, operation.get("resource_id"), operation.get("resource_version")));
+        List<Map<String, Object>> rows = normalize(unloadMapper.ruleTarget(
+                operation.get("resource_id"), operation.get("resource_version")));
         if (rows.isEmpty()) {
             throw PlatformException.conflict("RULE_TARGET_NOT_FOUND",
                     "未找到该发布版本对应的规则目标，无法执行卸载",
@@ -282,30 +223,19 @@ public class RuleUnloadService {
     }
 
     private List<Map<String, Object>> activeAgentsForSuccessfulExecutions(String operationPlanId) {
-        return normalize(jdbcTemplate.queryForList("""
-                select distinct a.*
-                  from rollout_instance_execution rie
-                  join agent_instance a on a.instance_id = rie.instance_id
-                 where rie.operation_plan_id = ?
-                   and rie.status = 'SUCCEEDED'
-                   and a.status = 'ACTIVE'
-                   and (a.lease_expires_at is null or a.lease_expires_at > current_timestamp)
-                 order by a.id
-                """, operationPlanId));
+        return normalize(unloadMapper.activeAgentsForSuccessfulExecutions(operationPlanId));
     }
 
     private Map<String, Object> operation(String id) {
-        List<Map<String, Object>> rows = normalize(
-                jdbcTemplate.queryForList("select * from operation_plan where id = ?", id));
-        if (rows.isEmpty()) {
+        Map<String, Object> operation = unloadMapper.operation(id);
+        if (operation == null) {
             throw PlatformException.notFound("operation_plan", id);
         }
-        return rows.get(0);
+        return normalizeOne(operation);
     }
 
     private Map<String, Object> unloadExecution(String id) {
-        return normalize(jdbcTemplate.queryForList(
-                "select * from rollback_execution where id = ?", id)).get(0);
+        return normalizeOne(unloadMapper.rollbackExecution(id));
     }
 
     private String requiredString(Map<String, Object> request, String key) {
@@ -332,11 +262,13 @@ public class RuleUnloadService {
     }
 
     private List<Map<String, Object>> normalize(List<Map<String, Object>> rows) {
-        return rows.stream().map(row -> {
-            Map<String, Object> normalized = new LinkedHashMap<>();
-            row.forEach((key, value) -> normalized.put(key.toLowerCase(), value));
-            return normalized;
-        }).toList();
+        return rows.stream().map(this::normalizeOne).toList();
+    }
+
+    private Map<String, Object> normalizeOne(Map<String, Object> row) {
+        Map<String, Object> normalized = new LinkedHashMap<>();
+        row.forEach((key, value) -> normalized.put(key.toLowerCase(), value));
+        return normalized;
     }
 
     private Timestamp timestamp(Instant instant) {

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.runtimemock.platform.persistence.mapper.TargetDiscoveryMapper">
+
+    <select id="activeAgents" resultType="map">
+        select a.id as agent_id, a.instance_id, i.application_id, i.environment_id
+          from agent_instance a
+          join instance i on i.id = a.instance_id
+         where i.application_id = #{applicationId}
+           and i.environment_id = #{environmentId}
+           and i.status = 'ACTIVE'
+           and i.registration_status = 'ASSIGNED'
+           and a.status = 'ACTIVE'
+           and (a.lease_expires_at is null or a.lease_expires_at > current_timestamp)
+         order by a.last_heartbeat_at desc nulls last, a.id
+    </select>
+</mapper>

@@ -5,7 +5,7 @@ import com.example.runtimemock.platform.attach.AttachExecutorCommandService;
 import com.example.runtimemock.platform.attach.PlatformAgentLifecycleService;
 import com.example.runtimemock.platform.rollout.RuleUnloadService;
 import com.example.runtimemock.platform.service.PlatformException;
-import com.example.runtimemock.platform.service.PlatformJdbcService;
+import com.example.runtimemock.platform.service.PlatformCoreService;
 import com.example.runtimemock.platform.service.PlatformMaintenanceService;
 import com.example.runtimemock.platform.service.RequestContext;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,7 +31,7 @@ import java.util.Map;
         havingValue = "true", matchIfMissing = true)
 public final class PlatformController {
 
-    private final PlatformJdbcService service;
+    private final PlatformCoreService service;
     private final AgentCommandService agentCommandService;
     private final AttachExecutorCommandService attachExecutorCommandService;
     private final PlatformMaintenanceService maintenanceService;
@@ -39,7 +39,7 @@ public final class PlatformController {
     private final RuleUnloadService ruleUnloadService;
     private final RequestContextFactory requestContextFactory;
 
-    public PlatformController(PlatformJdbcService service, AgentCommandService agentCommandService,
+    public PlatformController(PlatformCoreService service, AgentCommandService agentCommandService,
                               AttachExecutorCommandService attachExecutorCommandService,
                               PlatformMaintenanceService maintenanceService,
                               PlatformAgentLifecycleService agentLifecycleService,

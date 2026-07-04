@@ -2,13 +2,13 @@ package com.example.runtimemock.platform;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.runtimemock.platform.persistence.mapper.TestPlatformMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
@@ -40,25 +40,13 @@ class PlatformLocalTokenIntegrationTest {
     ObjectMapper objectMapper;
 
     @Autowired
-    JdbcTemplate jdbcTemplate;
+    TestPlatformMapper testPlatformMapper;
 
     @BeforeEach
     void ensureDefaultTopology() {
-        jdbcTemplate.update("""
-                insert into project(id, organization_id, name, created_at)
-                select 'proj-default', 'org-default', 'Default Project', current_timestamp
-                 where not exists (select 1 from project where id = 'proj-default')
-                """);
-        jdbcTemplate.update("""
-                insert into application(id, project_id, name, created_at)
-                select 'app-default', 'proj-default', 'Default Application', current_timestamp
-                 where not exists (select 1 from application where id = 'app-default')
-                """);
-        jdbcTemplate.update("""
-                insert into environment(id, application_id, name, type, created_at)
-                select 'env-dev', 'app-default', 'dev', 'dev', current_timestamp
-                 where not exists (select 1 from environment where id = 'env-dev')
-                """);
+        testPlatformMapper.ensureDefaultProject();
+        testPlatformMapper.ensureDefaultApplication();
+        testPlatformMapper.ensureDefaultEnvironment();
     }
 
     @Test

@@ -2,6 +2,8 @@ package com.example.runtimemock.platform.service;
 
 import com.example.runtimemock.platform.domain.OperationPlanStatus;
 import com.example.runtimemock.platform.fencing.FencingTokenService;
+import com.example.runtimemock.platform.persistence.mapper.AttachRegistrationMapper;
+import com.example.runtimemock.platform.persistence.mapper.PlatformCoreMapper;
 import com.example.runtimemock.platform.persistence.mapper.RuleVersionLifecycleMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -11,8 +13,6 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
-import org.springframework.jdbc.core.ConnectionCallback;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,14 +30,13 @@ import java.util.Map;
 import java.util.UUID;
 
 @Service
-public class PlatformJdbcService {
+public class PlatformCoreService {
 
     private static final String GENESIS_HASH = "GENESIS";
-    private static final long AUDIT_CHAIN_LOCK_ID = 0x52554E54494D454DL;
-
-    private final JdbcTemplate jdbcTemplate;
+    private final PlatformCoreMapper platformCoreMapper;
     private final RbacService rbacService;
     private final FencingTokenService fencingTokenService;
+    private final AttachRegistrationMapper attachRegistrationMapper;
     private final RuleVersionLifecycleMapper ruleVersionLifecycleMapper;
     private final BusinessIdService businessIdService;
     private final Clock clock;
@@ -47,21 +46,24 @@ public class PlatformJdbcService {
             .build();
 
     @Autowired
-    public PlatformJdbcService(JdbcTemplate jdbcTemplate, RbacService rbacService,
+    public PlatformCoreService(PlatformCoreMapper platformCoreMapper, RbacService rbacService,
                                FencingTokenService fencingTokenService,
+                               AttachRegistrationMapper attachRegistrationMapper,
                                RuleVersionLifecycleMapper ruleVersionLifecycleMapper,
                                BusinessIdService businessIdService) {
-        this(jdbcTemplate, rbacService, fencingTokenService, ruleVersionLifecycleMapper,
+        this(platformCoreMapper, rbacService, fencingTokenService, attachRegistrationMapper, ruleVersionLifecycleMapper,
                 businessIdService, Clock.systemUTC());
     }
 
-    PlatformJdbcService(JdbcTemplate jdbcTemplate, RbacService rbacService,
+    PlatformCoreService(PlatformCoreMapper platformCoreMapper, RbacService rbacService,
                         FencingTokenService fencingTokenService,
+                        AttachRegistrationMapper attachRegistrationMapper,
                         RuleVersionLifecycleMapper ruleVersionLifecycleMapper,
                         BusinessIdService businessIdService, Clock clock) {
-        this.jdbcTemplate = jdbcTemplate;
+        this.platformCoreMapper = platformCoreMapper;
         this.rbacService = rbacService;
         this.fencingTokenService = fencingTokenService;
+        this.attachRegistrationMapper = attachRegistrationMapper;
         this.ruleVersionLifecycleMapper = ruleVersionLifecycleMapper;
         this.businessIdService = businessIdService;
         this.clock = clock;
@@ -69,7 +71,7 @@ public class PlatformJdbcService {
 
     public Map<String, Object> health() {
         long started = System.nanoTime();
-        jdbcTemplate.queryForObject("select 1", Integer.class);
+        platformCoreMapper.ping();
         long latencyMs = java.time.Duration.ofNanos(System.nanoTime() - started).toMillis();
         Map<String, Object> services = new LinkedHashMap<>();
         services.put("platformApi", Map.of("status", "UP", "latencyMs", 0));
@@ -86,28 +88,15 @@ public class PlatformJdbcService {
     }
 
     public List<Map<String, Object>> list(String table, String orderBy) {
-        return normalizeRows(jdbcTemplate.queryForList(
-                "select * from " + table + " order by " + orderBy + " limit 1000"));
+        return normalizeRows(platformCoreMapper.list(table, orderBy));
     }
 
     public List<Map<String, Object>> listFencingTokens() {
-        return normalizeRows(jdbcTemplate.queryForList("""
-                select id, resource_type, resource_id, purpose, sequence, owner, status,
-                       lease_expires_at, created_at, consumed_at, correlation_id
-                  from fencing_token
-                 order by created_at desc, id
-                 limit 1000
-                """));
+        return normalizeRows(platformCoreMapper.listFencingTokens());
     }
 
     public List<Map<String, Object>> listAgents() {
-        return normalizeRows(jdbcTemplate.queryForList("""
-                select id, instance_id, sidecar_id, status, agent_version, bootstrap_version,
-                       listen_host, listen_port, capabilities_json, last_heartbeat_at, created_at, updated_at
-                  from agent_instance
-                 order by created_at, id
-                 limit 1000
-                """));
+        return normalizeRows(platformCoreMapper.listAgents());
     }
 
     @Transactional
@@ -141,23 +130,12 @@ public class PlatformJdbcService {
         }
         String nickname = uniqueInstanceNickname(
                 optionalString(request, "nickname", applicationName), applicationName, now);
-        jdbcTemplate.update("""
-                insert into instance(
-                    id, application_id, environment_id, nickname, hostname, process_id, runtime, status,
-                    labels_json, last_seen_at, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                id,
-                applicationId,
-                environmentId,
-                nickname,
+        platformCoreMapper.insertInstance(id, applicationId, environmentId, nickname,
                 requiredString(request, "hostname", null),
                 requiredString(request, "processId", "unknown"),
                 requiredString(request, "runtime", "java"),
                 requiredString(request, "status", "ACTIVE"),
                 jsonValue(request, "labels", Map.of()),
-                timestamp(now),
-                timestamp(now),
                 timestamp(now));
         insertLabels(id, optionalMap(request, "labels"), now);
         recordAudit(context, "instance.create", "instance", id, 1,
@@ -174,11 +152,7 @@ public class PlatformJdbcService {
         String nickname = normalizeNickname(requiredString(request, "nickname", null));
         Instant now = clock.instant();
         try {
-            int updated = jdbcTemplate.update("""
-                    update instance
-                       set nickname = ?, updated_at = ?
-                     where id = ?
-                    """, nickname, timestamp(now), instanceId);
+            int updated = platformCoreMapper.updateInstanceNickname(instanceId, nickname, timestamp(now));
             if (updated != 1) {
                 throw PlatformException.notFound("instance", instanceId);
             }
@@ -199,17 +173,14 @@ public class PlatformJdbcService {
         rbacService.require(context, "AGENT_MANAGE");
         RegistrationApplication registrationApplication = resolveRegistrationApplication(request);
         String applicationId = registrationApplication.applicationId();
-        String environmentId = optionalString(request, "environmentId", null);
-        if (environmentId != null) {
-            validateEnvironment(applicationId, environmentId);
-        }
+        String environmentId = resolveEnvironmentId(applicationId, optionalString(request, "environmentId", null),
+                optionalString(request, "environmentName", null));
         String processStartId = requiredString(request, "processStartId", null);
         Instant now = clock.instant();
         Instant leaseExpiresAt = now.plusSeconds(30);
         String requestedInstanceId = optionalString(request, "instanceId", null);
-        List<Map<String, Object>> existingInstances = requestedInstanceId == null
-                ? jdbcTemplate.queryForList("select * from instance where process_start_id = ?", processStartId)
-                : jdbcTemplate.queryForList("select * from instance where id = ?", requestedInstanceId);
+        List<Map<String, Object>> existingInstances =
+                platformCoreMapper.findInstanceForRegistration(requestedInstanceId, processStartId);
         if (requestedInstanceId != null && existingInstances.isEmpty()) {
             throw PlatformException.notFound("instance", requestedInstanceId);
         }
@@ -219,25 +190,12 @@ public class PlatformJdbcService {
             String nickname = uniqueInstanceNickname(
                     optionalString(request, "nickname", registrationApplication.applicationName()),
                     registrationApplication.applicationName(), now);
-            jdbcTemplate.update("""
-                    insert into instance(
-                        id, application_id, environment_id, nickname, hostname, process_id, runtime, status,
-                        labels_json, last_seen_at, created_at, updated_at, process_start_id,
-                        jvm_started_at, java_version, load_mode, agent_version, capabilities_json,
-                        lease_expires_at, registration_status
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    instanceId,
-                    applicationId,
-                    environmentId,
-                    nickname,
+            platformCoreMapper.insertRuntimeInstance(instanceId, applicationId, environmentId, nickname,
                     requiredString(request, "hostname", null),
                     requiredString(request, "processId", null),
                     requiredString(request, "runtime", "java"),
                     environmentId == null ? "PENDING_ASSIGNMENT" : "ACTIVE",
                     jsonValue(request, "labels", Map.of()),
-                    timestamp(now),
-                    timestamp(now),
                     timestamp(now),
                     processStartId,
                     timestamp(Instant.ofEpochMilli(optionalLong(request, "jvmStartedAtEpochMillis",
@@ -251,33 +209,11 @@ public class PlatformJdbcService {
         } else {
             Map<String, Object> existing = normalizeRow(existingInstances.get(0));
             instanceId = String.valueOf(existing.get("id"));
-            jdbcTemplate.update("""
-                    update instance
-                       set application_id = ?,
-                           environment_id = coalesce(?, environment_id),
-                           hostname = ?,
-                           process_id = ?,
-                           runtime = ?,
-                           status = case when coalesce(?, environment_id) is null
-                                         then 'PENDING_ASSIGNMENT' else 'ACTIVE' end,
-                           last_seen_at = ?,
-                           updated_at = ?,
-                           process_start_id = ?,
-                           jvm_started_at = ?,
-                           java_version = ?,
-                           load_mode = ?,
-                           agent_version = ?,
-                           capabilities_json = ?,
-                           lease_expires_at = ?,
-                           registration_status = case when coalesce(?, environment_id) is null
-                                                      then 'PENDING_ASSIGNMENT' else 'ASSIGNED' end
-                     where id = ?
-                    """, applicationId, environmentId,
+            platformCoreMapper.updateRuntimeInstance(instanceId, applicationId, environmentId,
                     requiredString(request, "hostname", null),
                     requiredString(request, "processId", null),
                     requiredString(request, "runtime", "java"),
-                    environmentId,
-                    timestamp(now), timestamp(now),
+                    timestamp(now),
                     processStartId,
                     timestamp(Instant.ofEpochMilli(optionalLong(request, "jvmStartedAtEpochMillis",
                             now.toEpochMilli()))),
@@ -285,52 +221,32 @@ public class PlatformJdbcService {
                     requiredString(request, "loadMode", "unknown"),
                     requiredString(request, "agentVersion", "unknown"),
                     jsonValue(request, "capabilities", List.of()),
-                    timestamp(leaseExpiresAt), environmentId, instanceId);
+                    timestamp(leaseExpiresAt));
         }
 
         String sidecarIdForAgent = latestSidecarId(instanceId);
-        List<Map<String, Object>> existingAgents = jdbcTemplate.queryForList(
-                "select * from agent_instance where instance_id = ? order by created_at limit 1", instanceId);
+        List<Map<String, Object>> existingAgents = platformCoreMapper.firstAgentByInstance(instanceId);
         String agentId;
         if (existingAgents.isEmpty()) {
             agentId = "agent-" + UUID.randomUUID();
-            jdbcTemplate.update("""
-                    insert into agent_instance(
-                        id, instance_id, sidecar_id, status, agent_version, bootstrap_version,
-                        listen_host, listen_port, token_hash, capabilities_json,
-                        last_heartbeat_at, created_at, updated_at, lease_expires_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, agentId, instanceId, sidecarIdForAgent, "ACTIVE",
+            platformCoreMapper.insertRuntimeAgent(agentId, instanceId, sidecarIdForAgent, "ACTIVE",
                     requiredString(request, "agentVersion", "unknown"),
                     requiredString(request, "bootstrapVersion", "embedded"),
                     requiredString(request, "listenHost", "127.0.0.1"),
                     (int) optionalLong(request, "listenPort", 0),
                     "platform-authenticated",
                     jsonValue(request, "capabilities", List.of()),
-                    timestamp(now), timestamp(now), timestamp(now), timestamp(leaseExpiresAt));
+                    timestamp(now), timestamp(leaseExpiresAt));
         } else {
             agentId = String.valueOf(normalizeRow(existingAgents.get(0)).get("id"));
-            jdbcTemplate.update("""
-                    update agent_instance
-                       set status = 'ACTIVE',
-                           sidecar_id = coalesce(?, sidecar_id),
-                           agent_version = ?,
-                           bootstrap_version = ?,
-                           listen_host = ?,
-                           listen_port = ?,
-                           capabilities_json = ?,
-                           last_heartbeat_at = ?,
-                           updated_at = ?,
-                           lease_expires_at = ?
-                     where id = ?
-                    """, sidecarIdForAgent,
+            platformCoreMapper.updateRuntimeAgent(agentId, sidecarIdForAgent,
                     requiredString(request, "agentVersion", "unknown"),
                     requiredString(request, "bootstrapVersion", "embedded"),
                     requiredString(request, "listenHost", "127.0.0.1"),
                     (int) optionalLong(request, "listenPort", 0),
                     jsonValue(request, "capabilities", List.of()),
-                    timestamp(now), timestamp(now), timestamp(leaseExpiresAt), agentId);
-            jdbcTemplate.update("delete from agent_capability where agent_id = ?", agentId);
+                    timestamp(now), timestamp(leaseExpiresAt));
+            platformCoreMapper.deleteAgentCapabilities(agentId);
         }
         insertAgentCapabilities(agentId, optionalList(request, "capabilities"), now);
         int restoredOperationPlans = restoreAgentGoneOperationPlans(context, instanceId, now);
@@ -364,34 +280,17 @@ public class PlatformJdbcService {
 
         String projectName = requiredString(request, "projectName", null);
         String applicationName = requiredString(request, "applicationName", null);
-        String projectId = jdbcTemplate.query("""
-                        select id from project
-                         where organization_id = 'org-default' and name = ?
-                         order by created_at
-                         limit 1
-                        """, resultSet -> resultSet.next() ? resultSet.getString(1) : null, projectName);
+        String projectId = platformCoreMapper.findProjectId(projectName);
         if (projectId == null) {
             projectId = "project-" + UUID.randomUUID();
-            jdbcTemplate.update("""
-                    insert into project(id, organization_id, name, created_at)
-                    values (?, 'org-default', ?, ?)
-                    """, projectId, projectName, timestamp(clock.instant()));
+            platformCoreMapper.insertProject(projectId, projectName, timestamp(clock.instant()));
         }
 
         String resolvedProjectId = projectId;
-        String resolvedApplicationId = jdbcTemplate.query("""
-                        select id from application
-                         where project_id = ? and name = ?
-                         order by created_at
-                         limit 1
-                        """, resultSet -> resultSet.next() ? resultSet.getString(1) : null,
-                resolvedProjectId, applicationName);
+        String resolvedApplicationId = platformCoreMapper.findApplicationId(resolvedProjectId, applicationName);
         if (resolvedApplicationId == null) {
             resolvedApplicationId = "application-" + UUID.randomUUID();
-            jdbcTemplate.update("""
-                    insert into application(id, project_id, name, created_at)
-                    values (?, ?, ?, ?)
-                    """, resolvedApplicationId, resolvedProjectId, applicationName,
+            platformCoreMapper.insertApplication(resolvedApplicationId, resolvedProjectId, applicationName,
                     timestamp(clock.instant()));
         }
         ensureStandardEnvironments(resolvedApplicationId);
@@ -400,17 +299,11 @@ public class PlatformJdbcService {
 
     private void ensureStandardEnvironments(String applicationId) {
         for (String type : List.of("dev", "sit", "uat", "prod")) {
-            Integer count = jdbcTemplate.queryForObject("""
-                    select count(*) from environment
-                     where application_id = ? and lower(type) = ?
-                    """, Integer.class, applicationId, type);
-            if (count != null && count > 0) {
+            if (platformCoreMapper.countEnvironmentType(applicationId, type) > 0) {
                 continue;
             }
-            jdbcTemplate.update("""
-                    insert into environment(id, application_id, name, type, created_at)
-                    values (?, ?, ?, ?, ?)
-                    """, "environment-" + UUID.randomUUID(), applicationId, type, type, timestamp(clock.instant()));
+            platformCoreMapper.insertEnvironment("environment-" + UUID.randomUUID(),
+                    applicationId, type, type, timestamp(clock.instant()));
         }
     }
 
@@ -422,12 +315,7 @@ public class PlatformJdbcService {
         String environmentId = requiredString(request, "environmentId", null);
         validateEnvironment(String.valueOf(instance.get("application_id")), environmentId);
         Instant now = clock.instant();
-        jdbcTemplate.update("""
-                update instance
-                   set environment_id = ?, status = 'ACTIVE', registration_status = 'ASSIGNED',
-                       updated_at = ?
-                 where id = ?
-                """, environmentId, timestamp(now), instanceId);
+        platformCoreMapper.assignInstanceEnvironment(instanceId, environmentId, timestamp(now));
         recordAudit(context, "instance.assign_environment", "instance", instanceId, 1,
                 hash(instance), hash(Map.of("environmentId", environmentId)), "SUCCESS",
                 "分配运行环境", Map.of("environmentId", environmentId));
@@ -439,20 +327,11 @@ public class PlatformJdbcService {
         rbacService.require(context, "AGENT_MANAGE");
         Instant now = clock.instant();
         String id = optionalString(request, "id", "sidecar-" + UUID.randomUUID());
-        jdbcTemplate.update("""
-                insert into sidecar_instance(
-                    id, instance_id, status, sidecar_version, endpoint, capabilities_json,
-                    last_heartbeat_at, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                id,
-                optionalString(request, "instanceId", null),
+        platformCoreMapper.insertSidecar(id, optionalString(request, "instanceId", null),
                 requiredString(request, "status", "ACTIVE"),
                 requiredString(request, "sidecarVersion", "unknown"),
                 requiredString(request, "endpoint", null),
                 jsonValue(request, "capabilities", List.of()),
-                timestamp(now),
-                timestamp(now),
                 timestamp(now));
         recordAudit(context, "sidecar_instance.create", "sidecar_instance", id, 1,
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "create sidecar"),
@@ -485,6 +364,7 @@ public class PlatformJdbcService {
             throw PlatformException.badRequest("ATTACH_TARGET_REQUIRED", "Attach executor must register at least one target");
         }
         deleteStaleAttachTargets(executorId, registeredTargets, now);
+        attachRegistrationMapper.markSidecarsOfflineForOfflineTargets(executorId, timestamp(now));
         recordAudit(context, "attach_executor.self_register", "attach_executor", executorId, 1,
                 "", hash(request), "SUCCESS", "Attach 执行器自动注册",
                 Map.of("targetCount", registeredTargets.size(), "endpoint", endpoint));
@@ -508,15 +388,9 @@ public class PlatformJdbcService {
 
     private void upsertAttachExecutor(String executorId, Map<String, Object> request, String endpoint,
                                       Instant leaseExpiresAt, Instant now) {
-        List<Map<String, Object>> existing = jdbcTemplate.queryForList(
-                "select * from attach_executor where id = ?", executorId);
-        if (existing.isEmpty()) {
-            jdbcTemplate.update("""
-                    insert into attach_executor(
-                        id, executor_type, hostname, endpoint, status, executor_version,
-                        capabilities_json, last_heartbeat_at, lease_expires_at, created_at, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, executorId,
+        Map<String, Object> existing = attachRegistrationMapper.findAttachExecutor(executorId);
+        if (existing == null || existing.isEmpty()) {
+            attachRegistrationMapper.insertAttachExecutor(executorId,
                     requiredString(request, "executorType", "SIDECAR_CONTAINER"),
                     requiredString(request, "hostname", "unknown"),
                     endpoint,
@@ -525,25 +399,14 @@ public class PlatformJdbcService {
                     jsonValue(request, "capabilities", List.of("ATTACH_AGENT", "RELOAD_AGENT")),
                     timestamp(now), timestamp(leaseExpiresAt), timestamp(now), timestamp(now));
         } else {
-            jdbcTemplate.update("""
-                    update attach_executor
-                       set executor_type = ?,
-                           hostname = ?,
-                           endpoint = ?,
-                           status = ?,
-                           executor_version = ?,
-                           capabilities_json = ?,
-                           last_heartbeat_at = ?,
-                           lease_expires_at = ?,
-                           updated_at = ?
-                     where id = ?
-                    """, requiredString(request, "executorType", "SIDECAR_CONTAINER"),
+            attachRegistrationMapper.updateAttachExecutor(executorId,
+                    requiredString(request, "executorType", "SIDECAR_CONTAINER"),
                     requiredString(request, "hostname", "unknown"),
                     endpoint,
                     requiredString(request, "status", "ACTIVE"),
                     requiredString(request, "sidecarVersion", "unknown"),
                     jsonValue(request, "capabilities", List.of("ATTACH_AGENT", "RELOAD_AGENT")),
-                    timestamp(now), timestamp(leaseExpiresAt), timestamp(now), executorId);
+                    timestamp(now), timestamp(leaseExpiresAt), timestamp(now));
         }
     }
 
@@ -557,21 +420,14 @@ public class PlatformJdbcService {
         String hostname = requiredString(request, "hostname", "unknown");
         String processStartId = optionalString(request, "processStartId",
                 registrationApplication.applicationName() + ":" + hostname + ":" + processId);
-        List<Map<String, Object>> existingInstances = jdbcTemplate.queryForList(
-                "select * from instance where process_start_id = ?", processStartId);
+        Map<String, Object> existingInstance = attachRegistrationMapper.findInstanceByProcessStartId(processStartId);
         String instanceId;
-        if (existingInstances.isEmpty()) {
+        if (existingInstance == null || existingInstance.isEmpty()) {
             instanceId = businessIdService.nextId("instance", registrationApplication.applicationName());
             String nickname = uniqueInstanceNickname(
                     optionalString(request, "nickname", registrationApplication.applicationName()),
                     registrationApplication.applicationName(), now);
-            jdbcTemplate.update("""
-                    insert into instance(
-                        id, application_id, environment_id, nickname, hostname, process_id, runtime, status,
-                        labels_json, last_seen_at, created_at, updated_at, process_start_id,
-                        java_version, load_mode, capabilities_json, lease_expires_at, registration_status
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+            attachRegistrationMapper.insertAttachTargetInstance(
                     instanceId,
                     applicationId,
                     environmentId,
@@ -591,69 +447,38 @@ public class PlatformJdbcService {
                     timestamp(leaseExpiresAt),
                     environmentId == null ? "PENDING_ASSIGNMENT" : "ASSIGNED");
         } else {
-            Map<String, Object> existing = normalizeRow(existingInstances.get(0));
+            Map<String, Object> existing = normalizeRow(existingInstance);
             instanceId = String.valueOf(existing.get("id"));
-            jdbcTemplate.update("""
-                    update instance
-                       set application_id = ?,
-                           environment_id = coalesce(?, environment_id),
-                           hostname = ?,
-                           process_id = ?,
-                           runtime = ?,
-                           status = case when coalesce(?, environment_id) is null
-                                         then 'PENDING_ASSIGNMENT' else 'ACTIVE' end,
-                           last_seen_at = ?,
-                           updated_at = ?,
-                           java_version = ?,
-                           capabilities_json = ?,
-                           lease_expires_at = ?,
-                           registration_status = case when coalesce(?, environment_id) is null
-                                                      then 'PENDING_ASSIGNMENT' else 'ASSIGNED' end
-                     where id = ?
-                    """, applicationId, environmentId,
+            attachRegistrationMapper.updateAttachTargetInstance(instanceId,
+                    applicationId,
+                    environmentId,
                     requiredString(request, "hostname", null),
                     requiredString(request, "processId", null),
                     requiredString(request, "runtime", "java"),
-                    environmentId,
                     timestamp(now), timestamp(now),
                     requiredString(request, "javaVersion", "unknown"),
                     jsonValue(request, "capabilities", List.of()),
-                    timestamp(leaseExpiresAt), environmentId, instanceId);
+                    timestamp(leaseExpiresAt));
         }
 
-        List<Map<String, Object>> existingSidecars = jdbcTemplate.queryForList(
-                "select * from sidecar_instance where instance_id = ? and coalesce(executor_id, '') = ? order by created_at limit 1",
-                instanceId, executorId);
+        Map<String, Object> existingSidecar =
+                attachRegistrationMapper.findSidecarByInstanceAndExecutor(instanceId, executorId);
         String sidecarId;
-        if (existingSidecars.isEmpty()) {
+        if (existingSidecar == null || existingSidecar.isEmpty()) {
             sidecarId = "sidecar-" + UUID.randomUUID();
-            jdbcTemplate.update("""
-                    insert into sidecar_instance(
-                        id, instance_id, executor_id, status, sidecar_version, endpoint, capabilities_json,
-                        last_heartbeat_at, created_at, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, sidecarId, instanceId, executorId, "ACTIVE",
+            attachRegistrationMapper.insertAttachSidecar(sidecarId, instanceId, executorId, "ACTIVE",
                     requiredString(request, "sidecarVersion", "unknown"),
                     endpoint,
                     jsonValue(request, "capabilities", List.of("ATTACH_AGENT")),
                     timestamp(now), timestamp(now), timestamp(now));
         } else {
-            sidecarId = String.valueOf(normalizeRow(existingSidecars.get(0)).get("id"));
-            jdbcTemplate.update("""
-                    update sidecar_instance
-                       set status = 'ACTIVE',
-                           executor_id = ?,
-                           sidecar_version = ?,
-                           endpoint = ?,
-                           capabilities_json = ?,
-                           last_heartbeat_at = ?,
-                           updated_at = ?
-                     where id = ?
-                    """, executorId,
+            sidecarId = String.valueOf(normalizeRow(existingSidecar).get("id"));
+            attachRegistrationMapper.updateAttachSidecar(sidecarId,
+                    executorId,
                     requiredString(request, "sidecarVersion", "unknown"),
                     endpoint,
                     jsonValue(request, "capabilities", List.of("ATTACH_AGENT")),
-                    timestamp(now), timestamp(now), sidecarId);
+                    timestamp(now), timestamp(now));
         }
         upsertAttachExecutorTarget(executorId, instanceId, request, processId, now);
         Map<String, Object> result = new LinkedHashMap<>();
@@ -673,21 +498,7 @@ public class PlatformJdbcService {
     private void upsertAttachExecutorTarget(String executorId, String instanceId, Map<String, Object> request,
                                             String processId, Instant now) {
         String agentJar = requiredString(request, "agentJar", "/app/runtime-mock-agent-bootstrap.jar");
-        jdbcTemplate.update("""
-                insert into attach_executor_target(
-                    executor_id, instance_id, process_id, agent_jar, runtime, java_version,
-                    status, capabilities_json, last_seen_at, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict (executor_id, instance_id) do update
-                   set process_id = excluded.process_id,
-                       agent_jar = excluded.agent_jar,
-                       runtime = excluded.runtime,
-                       java_version = excluded.java_version,
-                       status = excluded.status,
-                       capabilities_json = excluded.capabilities_json,
-                       last_seen_at = excluded.last_seen_at,
-                       updated_at = excluded.updated_at
-                """, executorId, instanceId, processId, agentJar,
+        attachRegistrationMapper.upsertAttachExecutorTarget(executorId, instanceId, processId, agentJar,
                 requiredString(request, "runtime", "java"),
                 requiredString(request, "javaVersion", "unknown"),
                 requiredString(request, "targetStatus", "ACTIVE"),
@@ -703,98 +514,34 @@ public class PlatformJdbcService {
         if (activeInstanceIds.isEmpty()) {
             return;
         }
-        String placeholders = String.join(",", java.util.Collections.nCopies(activeInstanceIds.size(), "?"));
-        List<Object> queryArgs = new ArrayList<>();
-        queryArgs.add(executorId);
-        queryArgs.addAll(activeInstanceIds);
-        List<Map<String, Object>> staleTargets = normalizeRows(jdbcTemplate.queryForList("""
-                select instance_id
-                  from attach_executor_target
-                 where executor_id = ?
-                   and status in ('ACTIVE', 'ONLINE')
-                   and instance_id not in (%s)
-                """.formatted(placeholders), queryArgs.toArray()));
+        List<Map<String, Object>> staleTargets = normalizeRows(
+                attachRegistrationMapper.findStaleAttachTargets(executorId, activeInstanceIds));
         for (Map<String, Object> target : staleTargets) {
             Object instanceId = target.get("instance_id");
-            Integer activeAgentCount = jdbcTemplate.queryForObject("""
-                    select count(*)
-                      from agent_instance a
-                     where a.instance_id = ?
-                       and a.status in ('ACTIVE', 'ONLINE')
-                       and (a.lease_expires_at is null or a.lease_expires_at > ?)
-                    """, Integer.class, instanceId, timestamp(now));
+            attachRegistrationMapper.markSidecarsOfflineForTarget(executorId, instanceId, timestamp(now));
+            Integer activeAgentCount = attachRegistrationMapper.countActiveAgentsByInstance(instanceId, timestamp(now));
             if (activeAgentCount != null && activeAgentCount > 0) {
-                jdbcTemplate.update("""
-                        update attach_executor_target
-                           set status = 'OFFLINE',
-                               updated_at = ?
-                         where executor_id = ?
-                           and instance_id = ?
-                        """, timestamp(now), executorId, instanceId);
+                attachRegistrationMapper.markAttachExecutorTargetOffline(executorId, instanceId, timestamp(now));
                 continue;
             }
             markExecutionsAbandonedForInstance(instanceId, now);
             markPlansAbandonedForInstanceIfNoLiveTargets(instanceId, now);
-            jdbcTemplate.update("delete from rule_runtime_status where instance_id = ?", instanceId);
-            jdbcTemplate.update("delete from rule_instance_binding where instance_id = ?", instanceId);
-            jdbcTemplate.update("delete from instance_label where instance_id = ?", instanceId);
-            jdbcTemplate.update("delete from asset_claim where instance_id = ?", instanceId);
-            jdbcTemplate.update("delete from attach_executor_target where instance_id = ?", instanceId);
-            jdbcTemplate.update("""
-                    delete from sidecar_instance s
-                     where s.instance_id = ?
-                       and not exists (
-                           select 1
-                             from agent_instance a
-                            where a.sidecar_id = s.id
-                       )
-                    """, instanceId);
-            jdbcTemplate.update("""
-                    update instance
-                       set status = 'ARCHIVED',
-                           updated_at = ?
-                     where id = ?
-                    """, timestamp(now), instanceId);
+            platformCoreMapper.deleteInstanceRuleRuntimeStatus(instanceId);
+            platformCoreMapper.deleteInstanceRuleBindings(instanceId);
+            platformCoreMapper.deleteInstanceLabels(instanceId);
+            platformCoreMapper.deleteInstanceAssetClaims(instanceId);
+            platformCoreMapper.deleteInstanceAttachTargets(instanceId);
+            platformCoreMapper.deleteInstanceSidecarsWithoutAgents(instanceId);
+            platformCoreMapper.archiveInstance(instanceId, timestamp(now));
         }
     }
 
     private void markExecutionsAbandonedForInstance(Object instanceId, Instant now) {
-        jdbcTemplate.update("""
-                update rollout_instance_execution
-                   set status = 'ABANDONED',
-                       error_message = '目标实例已被运行时清理',
-                       finished_at = coalesce(finished_at, ?),
-                       updated_at = ?
-                 where instance_id = ?
-                   and status <> 'ABANDONED'
-                """, timestamp(now), timestamp(now), instanceId);
+        platformCoreMapper.abandonExecutionsForInstance(instanceId, timestamp(now));
     }
 
     private void markPlansAbandonedForInstanceIfNoLiveTargets(Object instanceId, Instant now) {
-        jdbcTemplate.update("""
-                update operation_plan op
-                   set status = 'ABANDONED',
-                       version = version + 1,
-                       terminal_source = 'INSTANCE_GONE',
-                       terminal_reason = '目标实例已被运行时清理，计划仅保留历史痕迹',
-                       updated_by = 'runtime-maintenance',
-                       updated_at = ?
-                 where op.status <> 'ABANDONED'
-                   and exists (
-                       select 1
-                         from rollout_instance_execution rie
-                        where rie.operation_plan_id = op.id
-                          and rie.instance_id = ?
-                   )
-                   and not exists (
-                       select 1
-                         from rollout_instance_execution rie
-                         join instance i on i.id = rie.instance_id
-                        where rie.operation_plan_id = op.id
-                          and rie.instance_id <> ?
-                          and i.status not in ('OFFLINE', 'ARCHIVED')
-                   )
-                """, timestamp(now), instanceId, instanceId);
+        platformCoreMapper.abandonPlansForInstanceWithoutLiveTargets(instanceId, timestamp(now));
     }
 
     private Map<String, Object> mergedTargetRequest(Map<String, Object> envelope, Map<String, Object> target) {
@@ -814,15 +561,7 @@ public class PlatformJdbcService {
         Instant now = clock.instant();
         String id = optionalString(request, "id", "agent-" + UUID.randomUUID());
         String agentStatus = requiredString(request, "status", "ACTIVE");
-        jdbcTemplate.update("""
-                insert into agent_instance(
-                    id, instance_id, sidecar_id, status, agent_version, bootstrap_version,
-                    listen_host, listen_port, token_hash, capabilities_json,
-                    last_heartbeat_at, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                id,
-                optionalString(request, "instanceId", null),
+        platformCoreMapper.insertManualAgent(id, optionalString(request, "instanceId", null),
                 optionalString(request, "sidecarId", null),
                 agentStatus,
                 requiredString(request, "agentVersion", "unknown"),
@@ -831,8 +570,6 @@ public class PlatformJdbcService {
                 (int) optionalLong(request, "listenPort", 0),
                 requiredString(request, "tokenHash", "unregistered"),
                 jsonValue(request, "capabilities", List.of()),
-                timestamp(now),
-                timestamp(now),
                 timestamp(now));
         insertAgentCapabilities(id, optionalList(request, "capabilities"), now);
         String instanceId = optionalString(request, "instanceId", null);
@@ -855,26 +592,13 @@ public class PlatformJdbcService {
         Instant now = clock.instant();
         String status = requiredString(request, "status", "ACTIVE");
         Instant leaseExpiresAt = now.plusSeconds(30);
-        jdbcTemplate.update("""
-                update agent_instance
-                   set status = ?, last_heartbeat_at = ?, updated_at = ?, lease_expires_at = ?
-                 where id = ?
-                """, status, timestamp(now), timestamp(now), timestamp(leaseExpiresAt), id);
-        jdbcTemplate.update("""
-                update instance
-                   set status = case when environment_id is null then 'PENDING_ASSIGNMENT' else 'ACTIVE' end,
-                       last_seen_at = ?, updated_at = ?, lease_expires_at = ?
-                 where id = (select instance_id from agent_instance where id = ?)
-                """, timestamp(now), timestamp(now), timestamp(leaseExpiresAt), id);
-        String instanceId = jdbcTemplate.queryForObject(
-                "select instance_id from agent_instance where id = ?", String.class, id);
+        platformCoreMapper.updateAgentHeartbeat(id, status, timestamp(now), timestamp(leaseExpiresAt));
+        platformCoreMapper.updateInstanceHeartbeatByAgent(id, timestamp(now), timestamp(leaseExpiresAt));
+        String instanceId = platformCoreMapper.instanceIdByAgent(id);
         int restoredOperationPlans = instanceId == null || !isOnlineRuntimeStatus(status)
                 ? 0
                 : restoreAgentGoneOperationPlans(context, instanceId, now);
-        jdbcTemplate.update("""
-                insert into agent_heartbeat(id, agent_id, status, metrics_json, received_at)
-                values (?, ?, ?, ?, ?)
-                """, "agent-heartbeat-" + UUID.randomUUID(), id, status,
+        platformCoreMapper.insertAgentHeartbeat("agent-heartbeat-" + UUID.randomUUID(), id, status,
                 jsonValue(request, "metrics", Map.of()), timestamp(now));
         recordAudit(context, "agent_instance.heartbeat", "agent_instance", id, 1,
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "agent heartbeat"),
@@ -887,52 +611,17 @@ public class PlatformJdbcService {
     }
 
     private int restoreAgentGoneOperationPlans(RequestContext context, String instanceId, Instant now) {
-        List<Map<String, Object>> operations = normalizeRows(jdbcTemplate.queryForList("""
-                select distinct op.*
-                  from operation_plan op
-                  join rollout_instance_execution rie on rie.operation_plan_id = op.id
-                  join rule_version rv on rv.rule_id = op.resource_id
-                                      and rv.version = op.resource_version
-                 where rie.instance_id = ?
-                   and op.status = 'UNLOADED'
-                   and op.terminal_source = 'AGENT_GONE'
-                   and op.resource_type = 'rule'
-                   and rv.status = 'ENABLED'
-                 order by op.updated_at, op.id
-                """, instanceId));
+        List<Map<String, Object>> operations = normalizeRows(platformCoreMapper.agentGoneOperations(instanceId));
         int restored = 0;
         for (Map<String, Object> operation : operations) {
             String operationId = String.valueOf(operation.get("id"));
             long version = ((Number) operation.get("version")).longValue();
-            int updated = jdbcTemplate.update("""
-                    update operation_plan
-                       set status = 'RUNNING',
-                           version = version + 1,
-                           terminal_source = '',
-                           terminal_reason = '',
-                           updated_by = ?,
-                           updated_at = ?
-                     where id = ?
-                       and status = 'UNLOADED'
-                       and terminal_source = 'AGENT_GONE'
-                       and version = ?
-                    """, context.actor(), timestamp(now), operationId, version);
+            int updated = platformCoreMapper.restoreAgentGoneOperation(operationId,
+                    context.actor(), timestamp(now), version);
             if (updated == 0) {
                 continue;
             }
-            jdbcTemplate.update("""
-                    update rollout_instance_execution
-                       set status = 'PENDING',
-                           command_id = null,
-                           error_message = 'Agent 重新注册，等待自动恢复发布',
-                           started_at = null,
-                           finished_at = null,
-                           version = version + 1,
-                           updated_by = ?,
-                           updated_at = ?
-                     where operation_plan_id = ?
-                       and instance_id = ?
-                    """, context.actor(), timestamp(now), operationId, instanceId);
+            platformCoreMapper.resetRestoredExecution(operationId, instanceId, context.actor(), timestamp(now));
             Map<String, Object> current = getById("operation_plan", operationId);
             recordEvent(context, "operation_plan.restore_after_agent_register", "operation_plan",
                     operationId, ((Number) current.get("version")).longValue(),
@@ -951,21 +640,9 @@ public class PlatformJdbcService {
         rejectClientProvidedRuleId(request);
         String id = businessIdService.nextId("rule", ruleBusinessName(request));
         ApplicationEnvironment scope = requireApplicationEnvironment(request);
-        jdbcTemplate.update("""
-                insert into rule(
-                    id, application_id, environment_id, name, status, current_draft_version, latest_version,
-                    created_by, created_at, updated_by, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                id,
-                scope.applicationId(),
-                scope.environmentId(),
+        platformCoreMapper.insertRule(id, scope.applicationId(), scope.environmentId(),
                 requiredString(request, "name", null),
                 ruleLifecycleStatus(request, "status", "ENABLED"),
-                1L,
-                1L,
-                context.actor(),
-                timestamp(now),
                 context.actor(),
                 timestamp(now));
         insertRuleVersion(context, id, 1L, request, now);
@@ -982,11 +659,7 @@ public class PlatformJdbcService {
         long version = nextScopedVersion("rule_version", "rule_id", ruleId);
         Instant now = clock.instant();
         insertRuleVersion(context, ruleId, version, request, now);
-        jdbcTemplate.update("""
-                update rule
-                   set current_draft_version = ?, latest_version = ?, status = 'ENABLED', updated_by = ?, updated_at = ?
-                 where id = ?
-                """, version, version, context.actor(), timestamp(now), ruleId);
+        platformCoreMapper.updateRuleAfterVersion(ruleId, version, context.actor(), timestamp(now));
         recordAudit(context, "rule_version.create", "rule", ruleId, version,
                 hash(rule), hash(request), "SUCCESS", optionalString(request, "reason", "create rule version"),
                 Map.of("version", version));
@@ -1052,24 +725,17 @@ public class PlatformJdbcService {
     public Map<String, Object> deleteRule(String ruleId, RequestContext context) {
         rbacService.require(context, "RULE_MANAGE");
         Map<String, Object> rule = getById("rule", ruleId);
-        Integer versionCount = jdbcTemplate.queryForObject(
-                "select count(*) from rule_version where rule_id = ?", Integer.class, ruleId);
-        int deletedCapabilities = jdbcTemplate.update("""
-                delete from rule_capability
-                 where rule_version_id in (select id from rule_version where rule_id = ?)
-                """, ruleId);
-        int deletedTargets = jdbcTemplate.update("""
-                delete from rule_target
-                 where rule_version_id in (select id from rule_version where rule_id = ?)
-                """, ruleId);
-        int deletedRuntimeStatuses = jdbcTemplate.update("delete from rule_runtime_status where rule_id = ?", ruleId);
-        int deletedBindings = jdbcTemplate.update("delete from rule_instance_binding where rule_id = ?", ruleId);
-        int deletedLocks = jdbcTemplate.update("delete from rule_lock where rule_id = ?", ruleId);
-        int deletedVersions = jdbcTemplate.update("delete from rule_version where rule_id = ?", ruleId);
-        int deletedRules = jdbcTemplate.update("delete from rule where id = ?", ruleId);
+        int versionCount = platformCoreMapper.countRuleVersions(ruleId);
+        int deletedCapabilities = platformCoreMapper.deleteRuleCapabilities(ruleId);
+        int deletedTargets = platformCoreMapper.deleteRuleTargets(ruleId);
+        int deletedRuntimeStatuses = platformCoreMapper.deleteRuleRuntimeStatuses(ruleId);
+        int deletedBindings = platformCoreMapper.deleteRuleBindings(ruleId);
+        int deletedLocks = platformCoreMapper.deleteRuleLocks(ruleId);
+        int deletedVersions = platformCoreMapper.deleteRuleVersions(ruleId);
+        int deletedRules = platformCoreMapper.deleteRule(ruleId);
         recordAudit(context, "rule.delete", "rule", ruleId, 1,
                 hash(rule), "", "SUCCESS", "delete rule",
-                Map.of("versionCount", versionCount == null ? 0 : versionCount));
+                Map.of("versionCount", versionCount));
         return Map.of(
                 "ruleId", ruleId,
                 "rulesDeleted", deletedRules,
@@ -1090,48 +756,21 @@ public class PlatformJdbcService {
         if (distinctVersions.isEmpty()) {
             throw PlatformException.badRequest("FIELD_REQUIRED", "缺少待删除规则版本");
         }
-        Integer totalVersions = jdbcTemplate.queryForObject(
-                "select count(*) from rule_version where rule_id = ?", Integer.class, ruleId);
-        if (totalVersions != null && distinctVersions.size() >= totalVersions) {
+        int totalVersions = platformCoreMapper.countRuleVersions(ruleId);
+        if (distinctVersions.size() >= totalVersions) {
             throw PlatformException.conflict("RULE_VERSION_DELETE_ALL",
                     "不能删除规则的全部版本；如需删除所有版本，请删除规则本身",
                     Map.of("ruleId", ruleId));
         }
-        String placeholders = String.join(",", java.util.Collections.nCopies(distinctVersions.size(), "?"));
-        List<Object> args = new ArrayList<>();
-        args.add(ruleId);
-        args.addAll(distinctVersions);
-        Integer matchedVersions = jdbcTemplate.queryForObject("""
-                select count(*) from rule_version
-                 where rule_id = ? and version in (%s)
-                """.formatted(placeholders), Integer.class, args.toArray());
-        if (matchedVersions == null || matchedVersions != distinctVersions.size()) {
+        int matchedVersions = platformCoreMapper.countRuleVersionsIn(ruleId, distinctVersions);
+        if (matchedVersions != distinctVersions.size()) {
             throw PlatformException.notFound("rule_version", ruleId + ":" + distinctVersions);
         }
-        int deletedCapabilities = jdbcTemplate.update("""
-                delete from rule_capability
-                 where rule_version_id in (
-                       select id from rule_version where rule_id = ? and version in (%s)
-                 )
-                """.formatted(placeholders), args.toArray());
-        int deletedTargets = jdbcTemplate.update("""
-                delete from rule_target
-                 where rule_version_id in (
-                       select id from rule_version where rule_id = ? and version in (%s)
-                 )
-                """.formatted(placeholders), args.toArray());
-        int deletedRuntimeStatuses = jdbcTemplate.update("""
-                delete from rule_runtime_status
-                 where rule_id = ? and rule_version in (%s)
-                """.formatted(placeholders), args.toArray());
-        int deletedBindings = jdbcTemplate.update("""
-                delete from rule_instance_binding
-                 where rule_id = ? and rule_version in (%s)
-                """.formatted(placeholders), args.toArray());
-        int deletedVersions = jdbcTemplate.update("""
-                delete from rule_version
-                 where rule_id = ? and version in (%s)
-                """.formatted(placeholders), args.toArray());
+        int deletedCapabilities = platformCoreMapper.deleteRuleCapabilitiesByVersions(ruleId, distinctVersions);
+        int deletedTargets = platformCoreMapper.deleteRuleTargetsByVersions(ruleId, distinctVersions);
+        int deletedRuntimeStatuses = platformCoreMapper.deleteRuleRuntimeStatusesByVersions(ruleId, distinctVersions);
+        int deletedBindings = platformCoreMapper.deleteRuleBindingsByVersions(ruleId, distinctVersions);
+        int deletedVersions = platformCoreMapper.deleteRuleVersionsByVersions(ruleId, distinctVersions);
         refreshRuleVersionPointers(ruleId, context);
         recordAudit(context, "rule_version.delete", "rule", ruleId, 1,
                 "", hash(Map.of("versions", distinctVersions)), "SUCCESS",
@@ -1161,15 +800,7 @@ public class PlatformJdbcService {
         validateEnvironment(applicationId, environmentId);
         validateRolloutResource(applicationId, environmentId, resourceType, resourceId, resourceVersion);
         String id = businessIdService.nextId("operation_plan", rolloutBusinessName(resourceType, resourceId));
-        jdbcTemplate.update("""
-                insert into operation_plan(
-                    id, application_id, environment_id, plan_type, resource_type, resource_id, resource_version,
-                    status, version, strategy_json, created_by, created_at, updated_by, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                id,
-                applicationId,
-                environmentId,
+        platformCoreMapper.insertOperationPlan(id, applicationId, environmentId,
                 requiredString(request, "planType", "RULE_ROLLOUT"),
                 resourceType,
                 resourceId,
@@ -1180,8 +811,6 @@ public class PlatformJdbcService {
                         "targetMode", "ALL_ACTIVE_INSTANCES",
                         "automaticUnload", true
                 )),
-                context.actor(),
-                timestamp(now),
                 context.actor(),
                 timestamp(now));
         recordAudit(context, "operation_plan.create", "operation_plan", id, 1,
@@ -1249,10 +878,8 @@ public class PlatformJdbcService {
 
     public String rolloutBusinessName(String resourceType, String resourceId) {
         if ("rule".equals(resourceType)) {
-            List<Map<String, Object>> rules = normalizeRows(jdbcTemplate.queryForList(
-                    "select name from rule where id = ?", resourceId));
-            if (!rules.isEmpty()) {
-                String name = String.valueOf(rules.get(0).get("name"));
+            String name = platformCoreMapper.ruleName(resourceId);
+            if (name != null) {
                 if (!"RL".equals(businessIdService.abbreviation(name))) {
                     return name;
                 }
@@ -1282,12 +909,8 @@ public class PlatformJdbcService {
         String reason = requiredString(request, "reason", null);
         long newVersion = currentVersion + 1;
         Instant now = clock.instant();
-        int updated = jdbcTemplate.update("""
-                    update operation_plan
-                       set status = ?, version = ?, updated_by = ?, updated_at = ?
-                     where id = ? and status = ? and version = ?
-                    """, targetStatus.name(), newVersion, context.actor(), timestamp(now),
-                id, expectedStatus.name(), expectedVersion);
+        int updated = platformCoreMapper.transitionOperationPlan(id, targetStatus.name(), newVersion,
+                context.actor(), timestamp(now), expectedStatus.name(), expectedVersion);
         if (updated == 0) {
             throw PlatformException.conflict("RESOURCE_VERSION_CONFLICT",
                     "发布计划状态或版本已发生变化，请刷新后重试",
@@ -1316,19 +939,14 @@ public class PlatformJdbcService {
     }
 
     private void insertLabels(String instanceId, Map<String, Object> labels, Instant now) {
-        labels.forEach((key, value) -> jdbcTemplate.update("""
-                insert into instance_label(id, instance_id, label_key, label_value, created_at)
-                values (?, ?, ?, ?, ?)
-                """, "instance-label-" + UUID.randomUUID(), instanceId, key, String.valueOf(value), timestamp(now)));
+        labels.forEach((key, value) -> platformCoreMapper.insertLabel(
+                "instance-label-" + UUID.randomUUID(), instanceId, key, String.valueOf(value), timestamp(now)));
     }
 
     private void insertAgentCapabilities(String agentId, List<?> capabilities, Instant now) {
         for (Object capability : capabilities) {
             String capabilityName = String.valueOf(capability);
-            jdbcTemplate.update("""
-                    insert into agent_capability(id, agent_id, capability, metadata_json, created_at)
-                    values (?, ?, ?, ?, ?)
-                    """, "agent-capability-" + UUID.randomUUID(), agentId, capabilityName,
+            platformCoreMapper.insertAgentCapability("agent-capability-" + UUID.randomUUID(), agentId, capabilityName,
                     json(Map.of()), timestamp(now));
         }
     }
@@ -1337,15 +955,7 @@ public class PlatformJdbcService {
                                    Map<String, Object> request, Instant now) {
         String versionId = ruleId + ":" + version;
         Object script = request.getOrDefault("script", Map.of());
-        jdbcTemplate.update("""
-                insert into rule_version(
-                    id, rule_id, version, status, risk_level, matcher_json, script_hash,
-                    script_json, governance_json, created_by, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                versionId,
-                ruleId,
-                version,
+        platformCoreMapper.insertRuleVersion(versionId, ruleId, version,
                 ruleLifecycleStatus(request, "versionStatus", "ENABLED"),
                 requiredString(request, "riskLevel", "MEDIUM"),
                 jsonValue(request, "matcher", Map.of()),
@@ -1360,13 +970,7 @@ public class PlatformJdbcService {
         }
         for (Object item : targets) {
             Map<String, Object> target = asMap(item, "targets");
-            jdbcTemplate.update("""
-                    insert into rule_target(
-                        id, rule_version_id, protocol, class_name, method_name, matcher_json, created_at
-                    ) values (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    "rule-target-" + UUID.randomUUID(),
-                    versionId,
+            platformCoreMapper.insertRuleTarget("rule-target-" + UUID.randomUUID(), versionId,
                     requiredString(target, "protocol", "JAVA_METHOD"),
                     requiredString(target, "className", null),
                     requiredString(target, "methodName", null),
@@ -1374,10 +978,8 @@ public class PlatformJdbcService {
                     timestamp(now));
         }
         for (Object capability : optionalList(request, "capabilities")) {
-            jdbcTemplate.update("""
-                    insert into rule_capability(id, rule_version_id, capability, created_at)
-                    values (?, ?, ?, ?)
-                    """, "rule-capability-" + UUID.randomUUID(), versionId, String.valueOf(capability), timestamp(now));
+            platformCoreMapper.insertRuleCapability("rule-capability-" + UUID.randomUUID(),
+                    versionId, String.valueOf(capability), timestamp(now));
         }
     }
 
@@ -1416,35 +1018,24 @@ public class PlatformJdbcService {
     }
 
     private long nextScopedVersion(String table, String keyColumn, String keyValue) {
-        Long maximum = jdbcTemplate.queryForObject(
-                "select coalesce(max(version), 0) from " + table + " where " + keyColumn + " = ?",
-                Long.class, keyValue);
-        return nextCounter(table + ":" + keyValue, maximum == null ? 1 : maximum + 1);
+        if (!"rule_version".equals(table) || !"rule_id".equals(keyColumn)) {
+            throw new IllegalArgumentException("Unsupported scoped version: " + table + "." + keyColumn);
+        }
+        long maximum = platformCoreMapper.maxRuleVersion(keyValue);
+        return nextCounter(table + ":" + keyValue, maximum + 1);
     }
 
     private long nextCounter(String counterKey, long initialValue) {
-        int updated = jdbcTemplate.update("""
-                update scoped_counter
-                   set current_value = current_value + 1, updated_at = ?
-                 where counter_key = ?
-                """, timestamp(clock.instant()), counterKey);
+        int updated = platformCoreMapper.incrementScopedCounter(counterKey, timestamp(clock.instant()));
         if (updated == 0) {
             try {
-                jdbcTemplate.update("""
-                        insert into scoped_counter(counter_key, current_value, updated_at)
-                        values (?, ?, ?)
-                        """, counterKey, initialValue, timestamp(clock.instant()));
+                platformCoreMapper.insertScopedCounter(counterKey, initialValue, timestamp(clock.instant()));
                 return initialValue;
             } catch (DuplicateKeyException ignored) {
-                jdbcTemplate.update("""
-                        update scoped_counter
-                           set current_value = current_value + 1, updated_at = ?
-                         where counter_key = ?
-                        """, timestamp(clock.instant()), counterKey);
+                platformCoreMapper.incrementScopedCounter(counterKey, timestamp(clock.instant()));
             }
         }
-        Long value = jdbcTemplate.queryForObject(
-                "select current_value from scoped_counter where counter_key = ?", Long.class, counterKey);
+        Long value = platformCoreMapper.scopedCounterValue(counterKey);
         if (value == null) {
             throw new IllegalStateException("Counter did not return a value: " + counterKey);
         }
@@ -1452,25 +1043,22 @@ public class PlatformJdbcService {
     }
 
     private Map<String, Object> getById(String table, String id) {
-        try {
-            return normalizeRow(jdbcTemplate.queryForMap("select * from " + table + " where id = ?", id));
-        } catch (Exception e) {
+        Map<String, Object> row = platformCoreMapper.findById(table, id);
+        if (row == null) {
             throw PlatformException.notFound(table, id);
         }
+        return normalizeRow(row);
     }
 
     private void requireExists(String table, String id) {
-        Integer count = jdbcTemplate.queryForObject(
-                "select count(*) from " + table + " where id = ?", Integer.class, id);
-        if (count == null || count == 0) {
+        if (platformCoreMapper.countById(table, id) == 0) {
             throw PlatformException.notFound(table, id);
         }
     }
 
     private void validateEnvironment(String applicationId, String environmentId) {
-        List<Map<String, Object>> rows = normalizeRows(jdbcTemplate.queryForList("""
-                select * from environment where id = ? and application_id = ?
-                """, environmentId, applicationId));
+        List<Map<String, Object>> rows = normalizeRows(
+                platformCoreMapper.validateEnvironment(applicationId, environmentId));
         if (rows.isEmpty()) {
             throw PlatformException.badRequest("INVALID_ENVIRONMENT",
                     "所选环境不存在，或不属于当前应用");
@@ -1483,14 +1071,7 @@ public class PlatformJdbcService {
     }
 
     private String latestSidecarId(String instanceId) {
-        List<Map<String, Object>> rows = normalizeRows(jdbcTemplate.queryForList("""
-                select id
-                  from sidecar_instance
-                 where instance_id = ?
-                   and status in ('ACTIVE', 'ONLINE')
-                 order by last_heartbeat_at desc nulls last, updated_at desc, id
-                 limit 1
-                """, instanceId));
+        List<Map<String, Object>> rows = normalizeRows(platformCoreMapper.latestSidecar(instanceId));
         return rows.isEmpty() ? null : String.valueOf(rows.get(0).get("id"));
     }
 
@@ -1503,13 +1084,7 @@ public class PlatformJdbcService {
             return null;
         }
         String normalized = environmentName.trim().toUpperCase(Locale.ROOT);
-        List<Map<String, Object>> rows = normalizeRows(jdbcTemplate.queryForList("""
-                select * from environment
-                 where application_id = ?
-                   and (upper(type) = ? or upper(name) = ?)
-                 order by created_at
-                 limit 1
-                """, applicationId, normalized, normalized));
+        List<Map<String, Object>> rows = normalizeRows(platformCoreMapper.environmentByName(applicationId, normalized));
         return rows.isEmpty() ? null : String.valueOf(rows.get(0).get("id"));
     }
 
@@ -1533,10 +1108,7 @@ public class PlatformJdbcService {
     }
 
     private boolean instanceNicknameExists(String nickname) {
-        Integer count = jdbcTemplate.queryForObject("""
-                select count(*) from instance where nickname = ?
-                """, Integer.class, nickname);
-        return count != null && count > 0;
+        return platformCoreMapper.countInstanceNickname(nickname) > 0;
     }
 
     private String appendNicknameSuffix(String base, String suffix) {
@@ -1588,13 +1160,7 @@ public class PlatformJdbcService {
     }
 
     private long count(String table) {
-        Long value = jdbcTemplate.queryForObject("select count(*) from " + table, Long.class);
-        return value == null ? 0 : value;
-    }
-
-    private long countWhere(String table, String where) {
-        Long value = jdbcTemplate.queryForObject("select count(*) from " + table + " where " + where, Long.class);
-        return value == null ? 0 : value;
+        return platformCoreMapper.count(table);
     }
 
     private void assertExpected(Enum<?> currentStatus, Enum<?> expectedStatus, long currentVersion, long expectedVersion) {
@@ -1618,7 +1184,6 @@ public class PlatformJdbcService {
     private void recordAudit(RequestContext context, String action, String resourceType, String resourceId,
                                 long resourceVersion, String beforeHash, String afterHash, String result,
                                 String reason, Map<String, Object> details) {
-        lockAuditChain();
         Instant now = clock.instant();
         String previousHash = previousAuditHash();
         String auditId = "audit-" + UUID.randomUUID();
@@ -1642,35 +1207,14 @@ public class PlatformJdbcService {
         auditPayload.put("details", details);
         String recordHash = hash(auditPayload);
 
-        jdbcTemplate.update("""
-                insert into audit_record(
-                    id, occurred_at, actor, identity_source, action, resource_type, resource_id, resource_version,
-                    before_hash, after_hash, previous_record_hash, record_hash, correlation_id, ip_address,
-                    device, result, reason, details_json
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, auditId, timestamp(now), context.actor(), context.identitySource(), action,
+        platformCoreMapper.insertAudit(auditId, timestamp(now), context.actor(), context.identitySource(), action,
                 resourceType, resourceId, resourceVersion, beforeHash, afterHash, previousHash, recordHash,
                 context.correlationId(), context.ipAddress(), context.device(), result, reason, json(details));
 
     }
 
-    private void lockAuditChain() {
-        jdbcTemplate.execute((ConnectionCallback<Void>) connection -> {
-            String database = connection.getMetaData().getDatabaseProductName();
-            if ("PostgreSQL".equalsIgnoreCase(database)) {
-                try (var statement = connection.prepareStatement("select pg_advisory_xact_lock(?)")) {
-                    statement.setLong(1, AUDIT_CHAIN_LOCK_ID);
-                    statement.execute();
-                }
-            }
-            return null;
-        });
-    }
-
     private String previousAuditHash() {
-        List<String> hashes = jdbcTemplate.query(
-                "select record_hash from audit_record order by sequence desc limit 1",
-                (rs, rowNum) -> rs.getString(1));
+        List<String> hashes = platformCoreMapper.auditHashes();
         return hashes.isEmpty() ? GENESIS_HASH : hashes.get(0);
     }
 

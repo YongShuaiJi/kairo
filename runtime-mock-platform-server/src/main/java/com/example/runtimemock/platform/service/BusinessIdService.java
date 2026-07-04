@@ -1,11 +1,11 @@
 package com.example.runtimemock.platform.service;
 
 import com.example.runtimemock.platform.fencing.FencingProperties;
+import com.example.runtimemock.platform.persistence.mapper.BusinessIdMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.sql.Timestamp;
@@ -20,23 +20,23 @@ public class BusinessIdService {
 
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.BASIC_ISO_DATE;
 
-    private final JdbcTemplate jdbcTemplate;
+    private final BusinessIdMapper businessIdMapper;
     private final ObjectProvider<StringRedisTemplate> redisTemplateProvider;
     private final FencingProperties fencingProperties;
     private final Clock clock;
 
     @Autowired
-    public BusinessIdService(JdbcTemplate jdbcTemplate,
+    public BusinessIdService(BusinessIdMapper businessIdMapper,
                              ObjectProvider<StringRedisTemplate> redisTemplateProvider,
                              FencingProperties fencingProperties) {
-        this(jdbcTemplate, redisTemplateProvider, fencingProperties, Clock.systemDefaultZone());
+        this(businessIdMapper, redisTemplateProvider, fencingProperties, Clock.systemDefaultZone());
     }
 
-    BusinessIdService(JdbcTemplate jdbcTemplate,
+    BusinessIdService(BusinessIdMapper businessIdMapper,
                       ObjectProvider<StringRedisTemplate> redisTemplateProvider,
                       FencingProperties fencingProperties,
                       Clock clock) {
-        this.jdbcTemplate = jdbcTemplate;
+        this.businessIdMapper = businessIdMapper;
         this.redisTemplateProvider = redisTemplateProvider;
         this.fencingProperties = fencingProperties;
         this.clock = clock;
@@ -96,29 +96,16 @@ public class BusinessIdService {
             upsertDbSequence(resourceKey, value);
             return value;
         }
-        int updated = jdbcTemplate.update("""
-                update fencing_sequence
-                   set current_value = current_value + 1, updated_at = ?
-                 where resource_key = ?
-                """, Timestamp.from(clock.instant()), resourceKey);
+        int updated = businessIdMapper.incrementSequence(resourceKey, Timestamp.from(clock.instant()));
         if (updated == 0) {
             try {
-                jdbcTemplate.update("""
-                        insert into fencing_sequence(resource_key, current_value, updated_at)
-                        values (?, 1, ?)
-                        """, resourceKey, Timestamp.from(clock.instant()));
+                businessIdMapper.insertSequence(resourceKey, 1L, Timestamp.from(clock.instant()));
                 return 1L;
             } catch (DuplicateKeyException ignored) {
-                jdbcTemplate.update("""
-                        update fencing_sequence
-                           set current_value = current_value + 1, updated_at = ?
-                         where resource_key = ?
-                        """, Timestamp.from(clock.instant()), resourceKey);
+                businessIdMapper.incrementSequence(resourceKey, Timestamp.from(clock.instant()));
             }
         }
-        Long value = jdbcTemplate.queryForObject("""
-                select current_value from fencing_sequence where resource_key = ?
-                """, Long.class, resourceKey);
+        Long value = businessIdMapper.currentSequence(resourceKey);
         if (value == null) {
             throw PlatformException.conflict("BUSINESS_ID_SEQUENCE_FAILED",
                     "Database did not return a business ID sequence", Map.of("resourceKey", resourceKey));
@@ -127,23 +114,12 @@ public class BusinessIdService {
     }
 
     private void upsertDbSequence(String resourceKey, long value) {
-        int updated = jdbcTemplate.update("""
-                update fencing_sequence
-                   set current_value = ?, updated_at = ?
-                 where resource_key = ?
-                """, value, Timestamp.from(clock.instant()), resourceKey);
+        int updated = businessIdMapper.updateSequenceValue(resourceKey, value, Timestamp.from(clock.instant()));
         if (updated == 0) {
             try {
-                jdbcTemplate.update("""
-                        insert into fencing_sequence(resource_key, current_value, updated_at)
-                        values (?, ?, ?)
-                        """, resourceKey, value, Timestamp.from(clock.instant()));
+                businessIdMapper.insertSequence(resourceKey, value, Timestamp.from(clock.instant()));
             } catch (DuplicateKeyException ignored) {
-                jdbcTemplate.update("""
-                        update fencing_sequence
-                           set current_value = greatest(current_value, ?), updated_at = ?
-                         where resource_key = ?
-                        """, value, Timestamp.from(clock.instant()), resourceKey);
+                businessIdMapper.updateSequenceAtLeast(resourceKey, value, Timestamp.from(clock.instant()));
             }
         }
     }
