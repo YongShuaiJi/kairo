@@ -6,11 +6,18 @@ import { decryptSession, encryptSession, type SessionPayload } from "@/lib/auth/
 const apiBase = () => (process.env.RUNTIME_MOCK_PLATFORM_API_URL ?? "http://127.0.0.1:18280").replace(/\/$/, "");
 const demoMode = () => process.env.RUNTIME_MOCK_WEB_DEMO_MODE === "true";
 
+function validExpiresAt(value: string | null | undefined, fallback: string | null) {
+  if (value === null) return null;
+  if (typeof value === "string" && !Number.isNaN(new Date(value).getTime())) return value;
+  return fallback;
+}
+
 function setSessionCookie(response: NextResponse, payload: SessionPayload) {
   const encrypted = encryptSession(payload);
-  const maxAge = payload.expiresAt === null
+  const expiresAt = validExpiresAt(payload.expiresAt, null);
+  const maxAge = expiresAt === null
     ? 8 * 60 * 60
-    : Math.max(60, Math.min(8 * 60 * 60, Math.floor((new Date(payload.expiresAt).getTime() - Date.now()) / 1000)));
+    : Math.max(60, Math.min(8 * 60 * 60, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000)));
   response.cookies.set(SESSION_COOKIE, encrypted, {
     httpOnly: true,
     sameSite: "lax",
@@ -58,7 +65,7 @@ export async function POST(request: Request) {
     roles: identity.roles,
     capabilities: identity.capabilities,
     scopes: identity.scopes,
-    expiresAt: identity.expiresAt,
+    expiresAt: validExpiresAt(identity.expiresAt, session.expiresAt),
     demo: false,
   };
   const response = NextResponse.json({ ...identity, demo: false });

@@ -7,11 +7,18 @@ const apiBase = () => (process.env.RUNTIME_MOCK_PLATFORM_API_URL ?? "http://127.
 const demoMode = () => process.env.RUNTIME_MOCK_WEB_DEMO_MODE === "true";
 type Identity = Omit<SessionPayload, "token" | "demo">;
 
+function validExpiresAt(value: string | null | undefined, fallback: string | null) {
+  if (value === null) return null;
+  if (typeof value === "string" && !Number.isNaN(new Date(value).getTime())) return value;
+  return fallback;
+}
+
 function setSessionCookie(response: NextResponse, payload: SessionPayload) {
   const encrypted = encryptSession(payload);
-  const maxAge = payload.expiresAt === null
+  const expiresAt = validExpiresAt(payload.expiresAt, null);
+  const maxAge = expiresAt === null
     ? 8 * 60 * 60
-    : Math.max(60, Math.min(8 * 60 * 60, Math.floor((new Date(payload.expiresAt).getTime() - Date.now()) / 1000)));
+    : Math.max(60, Math.min(8 * 60 * 60, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000)));
   response.cookies.set(SESSION_COOKIE, encrypted, {
     httpOnly: true,
     sameSite: "lax",
@@ -67,7 +74,7 @@ export async function POST(request: Request) {
     roles: identity.roles,
     capabilities: identity.capabilities,
     scopes: identity.scopes,
-    expiresAt: identity.expiresAt,
+    expiresAt: validExpiresAt(identity.expiresAt, null),
     demo: demoMode(),
   };
   const response = NextResponse.json({
@@ -121,7 +128,7 @@ export async function PATCH(request: Request) {
     roles: identity.roles,
     capabilities: identity.capabilities,
     scopes: identity.scopes,
-    expiresAt: identity.expiresAt,
+    expiresAt: validExpiresAt(identity.expiresAt, session.expiresAt),
     demo: demoMode(),
   };
   const response = NextResponse.json({ ...identity, demo: demoMode() });
