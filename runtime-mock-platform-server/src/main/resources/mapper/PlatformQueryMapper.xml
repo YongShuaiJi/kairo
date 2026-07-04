@@ -174,11 +174,6 @@
                 <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(subject_id, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where>
                 order by created_at desc, id limit #{limit} offset #{offset}
             </when>
-            <when test="resource == 'users'">
-                select id, username, display_name, status, created_at from user_account
-                <where>status = 'ACTIVE'<if test="search != ''"> and (lower(coalesce(id, '')) like #{like} or lower(coalesce(username, '')) like #{like} or lower(coalesce(display_name, '')) like #{like})</if></where>
-                order by username, id limit #{limit} offset #{offset}
-            </when>
             <otherwise>
                 select * from rule where 1 = 0
             </otherwise>
@@ -204,7 +199,6 @@
             <when test="resource == 'rollout-targets'">select count(*) from rollout_target_snapshot <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(operation_plan_id, '')) like #{like} or lower(coalesce(instance_id, '')) like #{like} or lower(coalesce(instance_nickname, '')) like #{like} or lower(coalesce(application_name, '')) like #{like} or lower(coalesce(environment_name, '')) like #{like} or lower(coalesce(agent_status, '')) like #{like})</if></where></when>
             <when test="resource == 'rollback-executions'">select count(*) from rollback_execution <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(operation_plan_id, '')) like #{like} or lower(coalesce(rollback_type, '')) like #{like} or lower(coalesce(status, '')) like #{like} or lower(coalesce(reason, '')) like #{like})</if></where></when>
             <when test="resource == 'tokens'">select count(*) from <include refid="VisibleTokenTable"/> <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(subject_id, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where></when>
-            <when test="resource == 'users'">select count(*) from user_account <where>status = 'ACTIVE'<if test="search != ''"> and (lower(coalesce(id, '')) like #{like} or lower(coalesce(username, '')) like #{like} or lower(coalesce(display_name, '')) like #{like})</if></where></when>
             <otherwise>select 0</otherwise>
         </choose>
     </select>
@@ -227,7 +221,6 @@
             <when test="resource == 'rollout-targets'">select id, operation_plan_id, instance_id, labels_json, agent_status, captured_at, instance_nickname, application_name, environment_name, java_version, agent_version, load_mode, process_start_id, instance_last_seen_at, attach_executor_id from rollout_target_snapshot where id = #{id}</when>
             <when test="resource == 'rollback-executions'">select * from rollback_execution where id = #{id}</when>
             <when test="resource == 'tokens'">select id, subject_type, subject_id, status, created_by, created_at, expires_at, last_used_at, revoked_at from <include refid="VisibleTokenTable"/> where id = #{id}</when>
-            <when test="resource == 'users'">select id, username, display_name, status, created_at from user_account where id = #{id}</when>
             <otherwise>select * from rule where 1 = 0</otherwise>
         </choose>
     </select>

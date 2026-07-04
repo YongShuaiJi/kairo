@@ -28,8 +28,7 @@ export type ResourceField = {
     | "rollout-environments"
     | "environments"
     | "rules"
-    | "rule-versions"
-    | "users";
+    | "rule-versions";
   dependsOn?: string[];
 };
 
@@ -71,6 +70,9 @@ const dateTime = (
   required = true,
 ): ResourceField => ({
   key, label, defaultValue, required, type: "date-time",
+});
+const text = (key: string, label: string, defaultValue = "", required = true): ResourceField => ({
+  key, label, defaultValue, required, type: "text",
 });
 const select = (key: string, label: string, options: string[], defaultValue = options[0]): ResourceField => ({
   key, label, options, defaultValue, required: true, type: "select",
@@ -238,7 +240,7 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
     form: {
       capability: "ADMIN",
       createLabel: "签发 Token",
-      fields: [resource("username", "用户名", "users"), dateTime("expiresAt", "过期时间", "", false)],
+      fields: [text("username", "用户名"), dateTime("expiresAt", "过期时间", "", false)],
       buildEndpoint: () => "auth/tokens",
       buildPayload: (form) => ({
         username: form.username,

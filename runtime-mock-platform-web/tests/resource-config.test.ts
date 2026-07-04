@@ -90,8 +90,8 @@ describe("resource form relationships", () => {
     ]);
     expect(fields.map((field) => field.key)).toEqual(["username", "expiresAt"]);
     expect(fields.find((field) => field.key === "username")).toMatchObject({
-      type: "resource",
-      source: "users",
+      type: "text",
+      required: true,
     });
     expect(fields.find((field) => field.key === "expiresAt")).toMatchObject({ type: "date-time", required: false });
     expect(humanize("VALID")).toBe("有效");
