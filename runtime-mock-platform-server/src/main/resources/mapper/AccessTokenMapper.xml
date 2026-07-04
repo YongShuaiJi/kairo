@@ -116,4 +116,16 @@
          where username = #{subjectId}
            and status = 'ACTIVE'
     </select>
+
+    <update id="activateUserForToken">
+        update user_account
+           set display_name = #{displayName},
+               status = 'ACTIVE'
+         where username = #{username}
+    </update>
+
+    <insert id="insertUserForToken">
+        insert into user_account(id, username, display_name, status)
+        values (#{id}, #{username}, #{displayName}, 'ACTIVE')
+    </insert>
 </mapper>

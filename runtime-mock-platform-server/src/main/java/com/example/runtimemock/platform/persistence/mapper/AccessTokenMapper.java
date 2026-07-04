@@ -45,4 +45,11 @@ public interface AccessTokenMapper {
     int countActiveAgent(@Param("subjectId") String subjectId);
 
     int countActiveUser(@Param("subjectId") String subjectId);
+
+    int activateUserForToken(@Param("username") String username,
+                             @Param("displayName") String displayName);
+
+    int insertUserForToken(@Param("id") String id,
+                           @Param("username") String username,
+                           @Param("displayName") String displayName);
 }

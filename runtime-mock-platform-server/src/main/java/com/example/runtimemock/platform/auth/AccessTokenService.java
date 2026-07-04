@@ -4,6 +4,7 @@ import com.example.runtimemock.platform.persistence.mapper.AccessTokenMapper;
 import com.example.runtimemock.platform.service.PlatformException;
 import com.example.runtimemock.platform.service.RequestContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -75,20 +76,27 @@ public class AccessTokenService {
 
     @Transactional
     public Map<String, Object> issue(RequestContext context, Map<String, Object> request) {
-        String subjectType = optional(request, "subjectType", "USER").toUpperCase();
-        String subjectId = optional(request, "subjectId", optional(request, "username", ""));
+        String subjectType = optional(request, "subjectType", "USER").trim().toUpperCase();
+        String subjectId = optional(request, "subjectId", optional(request, "username", "")).trim();
         if (subjectId.isBlank()) {
             throw PlatformException.badRequest("MISSING_FIELD", "username is required");
         }
         if (!"USER".equals(subjectType) && !"AGENT".equals(subjectType)) {
             throw PlatformException.badRequest("INVALID_SUBJECT_TYPE", "subjectType must be USER or AGENT");
         }
-        validateSubject(subjectType, subjectId);
+        String displayName = optional(request, "displayName", subjectId).trim();
+        if (displayName.isBlank()) {
+            displayName = subjectId;
+        }
+        if ("USER".equals(subjectType)) {
+            ensureLocalUser(subjectId, displayName);
+        } else {
+            validateSubject(subjectType, subjectId);
+        }
         Instant now = clock.instant();
         Instant expiresAt = validatedExpiresAt(request, now);
         String rawToken = generateToken();
         String id = "token-" + UUID.randomUUID();
-        String displayName = optional(request, "displayName", subjectId);
         accessTokenMapper.insertToken(id, hash(rawToken), subjectType, subjectId, displayName,
                 context.actor(), Timestamp.from(now), timestamp(expiresAt));
         Map<String, Object> response = new LinkedHashMap<>();
@@ -153,6 +161,17 @@ public class AccessTokenService {
                 : accessTokenMapper.countActiveUser(subjectId);
         if (count == 0) {
             throw PlatformException.notFound(subjectType.toLowerCase(), subjectId);
+        }
+    }
+
+    private void ensureLocalUser(String username, String displayName) {
+        if (accessTokenMapper.activateUserForToken(username, displayName) > 0) {
+            return;
+        }
+        try {
+            accessTokenMapper.insertUserForToken("user-" + UUID.randomUUID(), username, displayName);
+        } catch (DuplicateKeyException ignored) {
+            accessTokenMapper.activateUserForToken(username, displayName);
         }
     }
 

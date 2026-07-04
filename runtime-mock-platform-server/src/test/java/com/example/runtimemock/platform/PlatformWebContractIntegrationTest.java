@@ -12,6 +12,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -165,6 +166,25 @@ class PlatformWebContractIntegrationTest {
                 "username", "system"
         ));
         assertThat(permanentIssued.path("expiresAt").isNull()).isTrue();
+
+        JsonNode newUserIssued = postJson("/api/v1/auth/tokens", Map.of(
+                "username", " 测试 ",
+                "displayName", " 测试用户 ",
+                "expiresAt", java.time.Instant.now().plus(Duration.ofHours(1)).toString()
+        ));
+        assertThat(newUserIssued.path("token").asText()).isNotBlank();
+        assertThat(newUserIssued.path("subjectType").asText()).isEqualTo("USER");
+        assertThat(newUserIssued.path("subjectId").asText()).isEqualTo("测试");
+        assertThat(newUserIssued.path("displayName").asText()).isEqualTo("测试用户");
+
+        String newUserTokenList = mockMvc.perform(get("/api/v1/query/tokens")
+                        .param("q", "测试")
+                        .header("X-Actor", "system"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        JsonNode newUserToken = objectMapper.readTree(newUserTokenList).path("items").get(0);
+        assertThat(newUserToken.path("subject_id").asText()).isEqualTo("测试");
+        assertThat(newUserToken.path("status").asText()).isEqualTo("VALID");
 
         String agents = mockMvc.perform(get("/api/v1/query/agents").header("X-Actor", "system"))
                 .andExpect(status().isOk())
@@ -362,7 +382,7 @@ class PlatformWebContractIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(body)))
                 .andExpect(status().is2xxSuccessful())
-                .andReturn().getResponse().getContentAsString();
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         return objectMapper.readTree(response);
     }
 
