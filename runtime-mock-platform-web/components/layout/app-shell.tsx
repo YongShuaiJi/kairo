@@ -26,7 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { RuntimeMockIcon } from "@/components/brand/runtime-mock-icon";
 import { ThemeSwitcher } from "@/components/theme/theme-switcher";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AccountSelfPanel } from "@/components/settings/account-self-panel";
 
 const navigation = [
@@ -58,6 +58,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const workspaceRoute = pathname === "/rules/new" || /^\/rules\/[^/]+\/versions\/(?:new|[^/]+)$/.test(pathname);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [user, setUser] = useState<SessionUser | null>(null);
   const [platformHealthy, setPlatformHealthy] = useState<boolean | null>(null);
@@ -201,42 +202,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content
-                  align="end"
-                  className="theme-panel-elevated z-50 w-[min(calc(100vw-1.5rem),420px)] rounded-xl border p-0 shadow-[0_18px_60px_rgb(15_23_42/0.18)]"
-                  onInteractOutside={(event) => {
-                    const target = event.target instanceof Element ? event.target : null;
-                    if (target?.closest("[data-runtime-mock-date-picker]")) event.preventDefault();
-                  }}
-                  onFocusOutside={(event) => {
-                    const target = event.target instanceof Element ? event.target : null;
-                    if (target?.closest("[data-runtime-mock-date-picker]")) event.preventDefault();
-                  }}
-                >
+                <DropdownMenu.Content align="end" className="theme-panel-elevated z-50 min-w-56 rounded-xl border p-1.5 shadow-[0_18px_60px_rgb(15_23_42/0.18)]">
                   <div className="px-2 py-2 md:hidden">
                     <ThemeSwitcher />
                   </div>
                   <DropdownMenu.Separator className="my-1 h-px bg-[var(--border)] md:hidden" />
-                  <div className="border-b border-[color:var(--border)] px-4 py-3">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-[color:var(--foreground)]">
-                      <Settings className="size-4" />
-                      账户与设置
-                    </div>
-                  </div>
-                  <AccountSelfPanel user={user} onUserChange={setUser} className="p-4" />
+                  <DropdownMenu.Item
+                    onSelect={() => setAccountOpen(true)}
+                    className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none hover:bg-[var(--surface-muted)]"
+                  >
+                    <Settings className="size-4" />
+                    账户与设置
+                  </DropdownMenu.Item>
                   {user?.capabilities?.includes("ADMIN") ? (
-                    <>
-                      <DropdownMenu.Separator className="h-px bg-[var(--border)]" />
-                      <DropdownMenu.Item asChild>
-                        <Link href="/settings" className="flex cursor-pointer items-center gap-2 px-4 py-3 text-sm outline-none hover:bg-[var(--surface-muted)]">
-                          <Settings className="size-4" />
-                          打开用户管理
-                        </Link>
-                      </DropdownMenu.Item>
-                    </>
+                    <DropdownMenu.Item asChild>
+                      <Link href="/settings" className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none hover:bg-[var(--surface-muted)]">
+                        <Settings className="size-4" />
+                        用户管理
+                      </Link>
+                    </DropdownMenu.Item>
                   ) : null}
-                  <DropdownMenu.Separator className="h-px bg-[var(--border)]" />
-                  <DropdownMenu.Item onSelect={logout} className="cursor-pointer px-4 py-3 text-sm text-red-600 outline-none hover:bg-red-50">退出登录</DropdownMenu.Item>
+                  <DropdownMenu.Separator className="my-1 h-px bg-[var(--border)]" />
+                  <DropdownMenu.Item onSelect={logout} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-red-600 outline-none hover:bg-red-50">退出登录</DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
@@ -278,6 +265,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {!commandItems.length ? <div className="p-8 text-center text-sm text-slate-400"><FlaskConical className="mx-auto mb-2 size-6" />没有找到匹配功能</div> : null}
           </div>
           <div className="flex items-center gap-4 border-t border-[color:var(--border)] bg-[var(--surface-subtle)] px-5 py-2.5 text-[10px] text-[color:var(--muted)]"><span>↑↓ 选择</span><span>Enter 打开</span><span>Esc 关闭</span><ScrollText className="ml-auto size-3.5" /></div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={accountOpen} onOpenChange={setAccountOpen}>
+        <DialogContent className="max-w-lg overflow-visible">
+          <DialogHeader>
+            <DialogTitle>账户与设置</DialogTitle>
+            <DialogDescription>修改自己的用户名，并更换自己的 Token；个人不能续期当前 Token。</DialogDescription>
+          </DialogHeader>
+          <AccountSelfPanel user={user} onUserChange={setUser} />
         </DialogContent>
       </Dialog>
     </div>

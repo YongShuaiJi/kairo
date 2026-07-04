@@ -142,13 +142,14 @@ public class AccessTokenService {
     }
 
     @Transactional
-    public Map<String, Object> replaceSelfToken(RequestContext context, Map<String, Object> request) {
+    public Map<String, Object> replaceSelfToken(RequestContext context, String rawToken) {
         Map<String, Object> user = normalizeUser(context.actor());
+        Instant expiresAt = instantValue(describe(rawToken).get("expires_at"));
         return replaceUserTokenInternal(
                 context.actor(),
                 String.valueOf(user.get("display_name")),
                 context.actor(),
-                validatedExpiresAt(request, clock.instant())
+                expiresAt
         );
     }
 
@@ -359,6 +360,19 @@ public class AccessTokenService {
 
     private Timestamp timestamp(Instant value) {
         return value == null ? null : Timestamp.from(value);
+    }
+
+    private Instant instantValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Instant instant) {
+            return instant;
+        }
+        if (value instanceof java.util.Date date) {
+            return date.toInstant();
+        }
+        return Instant.parse(String.valueOf(value));
     }
 
     private long longValue(Map<String, Object> request, String name, long fallback) {

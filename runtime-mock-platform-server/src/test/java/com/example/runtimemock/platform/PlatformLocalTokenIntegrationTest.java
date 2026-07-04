@@ -12,6 +12,8 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -174,6 +176,7 @@ class PlatformLocalTokenIntegrationTest {
                 "ttlSeconds", 3600
         ), "bootstrap-test-token");
         String userToken = issued.path("token").asText();
+        Instant originalUserTokenExpiresAt = Instant.parse(issued.path("expiresAt").asText());
 
         mockMvc.perform(post("/api/v1/instances")
                         .header("Authorization", "Bearer " + userToken)
@@ -215,10 +218,14 @@ class PlatformLocalTokenIntegrationTest {
                 .andExpect(jsonPath("$.subject").value("business-user-renamed"));
 
         JsonNode selfReplacement = postJson("/api/v1/auth/me/token/replace", Map.of(
-                "ttlSeconds", 3600
+                "ttlSeconds", 7200
         ), userToken);
         String selfReplacementToken = selfReplacement.path("token").asText();
         assertThat(selfReplacementToken).isNotBlank();
+        Instant selfReplacementExpiresAt = Instant.parse(selfReplacement.path("expiresAt").asText());
+        assertThat(Duration.between(originalUserTokenExpiresAt, selfReplacementExpiresAt).abs())
+                .isLessThan(Duration.ofSeconds(5));
+        assertThat(selfReplacementExpiresAt).isBefore(Instant.now().plus(Duration.ofMinutes(90)));
 
         mockMvc.perform(get("/api/v1/auth/me")
                         .header("Authorization", "Bearer " + userToken))

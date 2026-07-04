@@ -69,7 +69,7 @@ public final class AuthController {
     public Map<String, Object> replaceMyToken(HttpServletRequest httpRequest,
                                               @RequestBody Map<String, Object> request) {
         var context = requestContextFactory.from(httpRequest);
-        Map<String, Object> token = accessTokenService.replaceSelfToken(context, request);
+        Map<String, Object> token = accessTokenService.replaceSelfToken(context, bearerToken(httpRequest));
         return withTokenMetadata(rbacService.describe(String.valueOf(token.get("subjectId"))), token);
     }
 
@@ -154,6 +154,14 @@ public final class AuthController {
             response.put("expiresAt", token.get("expiresAt"));
         }
         return response;
+    }
+
+    private String bearerToken(HttpServletRequest request) {
+        String authorization = request.getHeader("Authorization");
+        if (authorization == null || !authorization.startsWith("Bearer ")) {
+            throw PlatformException.unauthorized("Authorization: Bearer token is required");
+        }
+        return authorization.substring("Bearer ".length()).trim();
     }
 
 }

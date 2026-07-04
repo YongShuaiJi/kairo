@@ -8,7 +8,6 @@ import type { SessionUser } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DateTimePicker } from "@/components/ui/date-time-picker";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -22,12 +21,6 @@ type AccountSelfPanelProps = {
   onUserChange: (user: SessionUser) => void;
   className?: string;
 };
-
-function isoInstant(value: string) {
-  if (!value.trim()) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
 
 async function sessionRequest<T>(path: string, init: RequestInit) {
   const response = await fetch(path, {
@@ -47,7 +40,6 @@ async function sessionRequest<T>(path: string, init: RequestInit) {
 export function AccountSelfPanel({ user, onUserChange, className }: AccountSelfPanelProps) {
   const queryClient = useQueryClient();
   const [username, setUsername] = useState("");
-  const [selfExpiresAt, setSelfExpiresAt] = useState("");
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
   const superAdmin = Boolean(user?.capabilities?.includes("ADMIN"));
 
@@ -79,11 +71,10 @@ export function AccountSelfPanel({ user, onUserChange, className }: AccountSelfP
   const replaceSelfTokenMutation = useMutation({
     mutationFn: () => sessionRequest<TokenResult>("/api/auth/session/token", {
       method: "POST",
-      body: JSON.stringify({ expiresAt: isoInstant(selfExpiresAt) }),
+      body: JSON.stringify({}),
     }),
     onSuccess: async (result) => {
       toast.success("我的 Token 已更换，旧 Token 已失效");
-      setSelfExpiresAt("");
       setIssuedToken(result.token);
       onUserChange(result);
       await refreshSharedQueries();
@@ -96,7 +87,7 @@ export function AccountSelfPanel({ user, onUserChange, className }: AccountSelfP
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-[color:var(--foreground)]">我的账户</p>
-          <p className="mt-1 text-xs leading-5 text-[color:var(--muted)]">修改自己的用户名，并更换自己的 Token。</p>
+          <p className="mt-1 text-xs leading-5 text-[color:var(--muted)]">修改自己的用户名，并更换自己的 Token；不能续期当前 Token。</p>
         </div>
         {user ? <Badge variant={superAdmin ? "success" : "info"}>{superAdmin ? "超级管理员" : "业务用户"}</Badge> : null}
       </div>
@@ -129,8 +120,9 @@ export function AccountSelfPanel({ user, onUserChange, className }: AccountSelfP
           </div>
 
           <div className="space-y-2 border-t pt-4">
-            <label className="text-xs font-medium text-[color:var(--foreground)]">新 Token 过期时间</label>
-            <DateTimePicker value={selfExpiresAt} onChange={setSelfExpiresAt} required={false} />
+            <p className="text-xs leading-5 text-[color:var(--muted)]">
+              更换后旧 Token 会立即失效；Token 续期只能由超级管理员在用户管理中操作。
+            </p>
             <Button
               type="button"
               className="w-full"
