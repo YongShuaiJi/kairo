@@ -86,7 +86,6 @@ export function DateTimePicker({
               onChange(toDateOnly(date));
               setOpen(false);
             }}
-            captionLayout="dropdown"
             startMonth={startMonth}
             endMonth={endMonth}
             defaultMonth={selected ?? now}
