@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, Copy, KeyRound, RefreshCw, Save, Trash2, UserPlus } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { CalendarClock, Copy, KeyRound, RefreshCw, Settings, Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { platformFetch } from "@/lib/api/client";
 import type { PlatformRecord, SessionUser } from "@/lib/api/types";
@@ -14,6 +14,7 @@ import { Card } from "@/components/ui/card";
 import { DateTimePicker } from "@/components/ui/date-time-picker";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 
 type UserRecord = PlatformRecord & {
@@ -45,21 +46,6 @@ function isoInstant(value: string) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-async function sessionRequest<T>(path: string, init: RequestInit) {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init.headers,
-    },
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.message ?? "请求失败");
-  }
-  return response.json() as Promise<T>;
-}
-
 function roleLabel(user: UserRecord) {
   return valueOf(user, "superAdmin") ? "超级管理员" : "业务用户";
 }
@@ -69,9 +55,6 @@ function activeTokenCount(user: UserRecord) {
 }
 
 export function AccountSettingsPage() {
-  const queryClient = useQueryClient();
-  const [username, setUsername] = useState("");
-  const [selfExpiresAt, setSelfExpiresAt] = useState("");
   const [newUsername, setNewUsername] = useState("");
   const [newUserExpiresAt, setNewUserExpiresAt] = useState("");
   const [issuedToken, setIssuedToken] = useState<{ title: string; token: string } | null>(null);
@@ -90,47 +73,10 @@ export function AccountSettingsPage() {
   const session = sessionQuery.data;
   const superAdmin = Boolean(session?.capabilities?.includes("ADMIN"));
 
-  useEffect(() => {
-    if (session?.subject) {
-      setUsername(session.subject);
-    }
-  }, [session?.subject]);
-
   const usersQuery = useQuery({
     queryKey: ["auth-users"],
     queryFn: () => platformFetch<UserRecord[]>("auth/users"),
     enabled: superAdmin,
-  });
-
-  const updateProfileMutation = useMutation({
-    mutationFn: () => sessionRequest<SessionUser>("/api/auth/session", {
-      method: "PATCH",
-      body: JSON.stringify({ username: username.trim(), displayName: username.trim() }),
-    }),
-    onSuccess: async (result) => {
-      toast.success("用户名已更新");
-      setUsername(result.subject);
-      await queryClient.invalidateQueries({ queryKey: ["session"] });
-      await sessionQuery.refetch();
-      if (superAdmin) await usersQuery.refetch();
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "用户名更新失败"),
-  });
-
-  const replaceSelfTokenMutation = useMutation({
-    mutationFn: () => sessionRequest<TokenResult>("/api/auth/session/token", {
-      method: "POST",
-      body: JSON.stringify({ expiresAt: isoInstant(selfExpiresAt) }),
-    }),
-    onSuccess: async (result) => {
-      toast.success("我的 Token 已更换，旧 Token 已失效");
-      setSelfExpiresAt("");
-      setIssuedToken({ title: "新的个人 Token", token: result.token });
-      await queryClient.invalidateQueries({ queryKey: ["session"] });
-      await sessionQuery.refetch();
-      if (superAdmin) await usersQuery.refetch();
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Token 更换失败"),
   });
 
   const createUserMutation = useMutation({
@@ -201,8 +147,8 @@ export function AccountSettingsPage() {
     <>
       <PageHeader
         eyebrow="Account"
-        title="账户与设置"
-        description="管理当前账户和访问 Token；超级管理员可创建用户、强制更换 Token、删除用户。"
+        title="用户管理"
+        description="当前账户和个人 Token 已移到右上角用户菜单；超级管理员可在这里创建用户、续期用户 Token、强制更换 Token、删除用户。"
         actions={superAdmin ? (
           <Button variant="secondary" onClick={() => usersQuery.refetch()} disabled={usersQuery.isFetching}>
             <RefreshCw className={usersQuery.isFetching ? "animate-spin" : ""} />
@@ -211,171 +157,132 @@ export function AccountSettingsPage() {
         ) : null}
       />
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,360px)_1fr]">
-        <Card className="p-5">
-          <div className="flex items-start justify-between gap-3">
+      {sessionQuery.isLoading ? (
+        <Card className="space-y-3 p-5">
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+        </Card>
+      ) : superAdmin ? (
+        <Card className="overflow-hidden">
+          <div className="space-y-4 border-b p-5">
             <div>
-              <p className="text-sm font-semibold text-[color:var(--foreground)]">我的账户</p>
-              <p className="mt-1 text-sm leading-6 text-[color:var(--muted)]">所有用户都可以修改自己的用户名，并更换自己的 Token。</p>
+              <p className="text-sm font-semibold text-[color:var(--foreground)]">用户管理</p>
+              <p className="mt-1 text-sm leading-6 text-[color:var(--muted)]">创建用户会同时签发首次 Token；普通用户只有业务操作权限，不能管理用户。</p>
             </div>
-            {session ? <Badge variant={superAdmin ? "success" : "info"}>{superAdmin ? "超级管理员" : "业务用户"}</Badge> : null}
+            <div className="grid gap-2 md:grid-cols-[minmax(180px,1fr)_220px_auto]">
+              <Input
+                value={newUsername}
+                onChange={(event) => setNewUsername(event.target.value)}
+                placeholder="新用户名"
+                aria-label="新用户名"
+              />
+              <DateTimePicker value={newUserExpiresAt} onChange={setNewUserExpiresAt} required={false} />
+              <Button
+                onClick={() => createUserMutation.mutate()}
+                disabled={!newUsername.trim() || createUserMutation.isPending}
+              >
+                <UserPlus />
+                创建并签发
+              </Button>
+            </div>
           </div>
 
-          {sessionQuery.isLoading ? (
-            <div className="mt-5 space-y-3">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
+          {usersQuery.isLoading ? (
+            <div className="space-y-3 p-5">
+              {[1, 2, 3].map((item) => <Skeleton key={item} className="h-12 w-full" />)}
+            </div>
+          ) : usersQuery.isError ? (
+            <div className="p-8 text-center text-sm text-red-600">
+              {usersQuery.error instanceof Error ? usersQuery.error.message : "用户列表加载失败"}
             </div>
           ) : (
-            <div className="mt-5 space-y-5">
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-[color:var(--foreground)]" htmlFor="account-username">用户名</label>
-                <div className="flex gap-2">
-                  <Input
-                    id="account-username"
-                    value={username}
-                    onChange={(event) => setUsername(event.target.value)}
-                    placeholder="输入用户名"
-                  />
-                  <Button
-                    onClick={() => updateProfileMutation.mutate()}
-                    disabled={!username.trim() || username.trim() === session?.subject || updateProfileMutation.isPending}
-                  >
-                    <Save />
-                    保存
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-2 border-t pt-5">
-                <label className="text-sm font-medium text-[color:var(--foreground)]">新 Token 过期时间</label>
-                <DateTimePicker value={selfExpiresAt} onChange={setSelfExpiresAt} required={false} />
-                <Button
-                  className="w-full"
-                  onClick={() => replaceSelfTokenMutation.mutate()}
-                  disabled={replaceSelfTokenMutation.isPending}
-                >
-                  <KeyRound />
-                  {replaceSelfTokenMutation.isPending ? "正在更换…" : "更换我的 Token"}
-                </Button>
-              </div>
+            <div className="scrollbar-thin overflow-x-auto">
+              <table className="w-full min-w-[910px] table-fixed text-left text-sm">
+                <thead className="theme-muted-panel text-xs font-medium uppercase tracking-wide text-[color:var(--muted)]">
+                  <tr>
+                    <th className="w-[190px] px-4 py-3">用户名</th>
+                    <th className="w-[130px] px-4 py-3">权限</th>
+                    <th className="w-[100px] px-4 py-3">有效 Token</th>
+                    <th className="w-[150px] px-4 py-3">创建时间</th>
+                    <th className="w-[340px] px-4 py-3 text-right">操作</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {sortedUsers.map((user) => {
+                    const target = String(valueOf(user, "username") ?? "");
+                    const isSelf = target === session?.subject;
+                    const isSuperAdmin = Boolean(valueOf(user, "superAdmin"));
+                    return (
+                      <tr key={String(valueOf(user, "id") ?? target)} className="theme-row">
+                        <td className="px-4 py-3.5">
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-[color:var(--foreground)]">{target}</p>
+                            <p className="truncate text-xs text-[color:var(--muted)]">{String(valueOf(user, "displayName") ?? valueOf(user, "display_name") ?? target)}</p>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <Badge variant={isSuperAdmin ? "success" : "info"}>{roleLabel(user)}</Badge>
+                        </td>
+                        <td className="px-4 py-3.5 text-[color:var(--foreground)]">{activeTokenCount(user)}</td>
+                        <td className="px-4 py-3.5 text-[color:var(--muted)]">{formatDate(valueOf(user, "createdAt"))}</td>
+                        <td className="px-4 py-3.5">
+                          <div className="flex justify-end gap-2">
+                            {!isSelf && activeTokenCount(user) > 0 ? (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => {
+                                  setRenewTarget(user);
+                                  setRenewUserExpiresAt("");
+                                }}
+                                disabled={renewUserTokenMutation.isPending}
+                              >
+                                <CalendarClock />
+                                续期
+                              </Button>
+                            ) : null}
+                            {!isSelf ? (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => replaceUserTokenMutation.mutate(target)}
+                                disabled={replaceUserTokenMutation.isPending}
+                              >
+                                <KeyRound />
+                                更换 Token
+                              </Button>
+                            ) : null}
+                            {!isSuperAdmin ? (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => setDeleteTarget(user)}
+                                disabled={deleteUserMutation.isPending}
+                              >
+                                <Trash2 />
+                                删除
+                              </Button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </Card>
-
-        {superAdmin ? (
-          <Card className="overflow-hidden">
-            <div className="space-y-4 border-b p-5">
-              <div>
-                <p className="text-sm font-semibold text-[color:var(--foreground)]">用户管理</p>
-                <p className="mt-1 text-sm leading-6 text-[color:var(--muted)]">创建用户会同时签发首次 Token；普通用户只有业务操作权限，不能管理用户。</p>
-              </div>
-              <div className="grid gap-2 md:grid-cols-[minmax(180px,1fr)_220px_auto]">
-                <Input
-                  value={newUsername}
-                  onChange={(event) => setNewUsername(event.target.value)}
-                  placeholder="新用户名"
-                  aria-label="新用户名"
-                />
-                <DateTimePicker value={newUserExpiresAt} onChange={setNewUserExpiresAt} required={false} />
-                <Button
-                  onClick={() => createUserMutation.mutate()}
-                  disabled={!newUsername.trim() || createUserMutation.isPending}
-                >
-                  <UserPlus />
-                  创建并签发
-                </Button>
-              </div>
-            </div>
-
-            {usersQuery.isLoading ? (
-              <div className="space-y-3 p-5">
-                {[1, 2, 3].map((item) => <Skeleton key={item} className="h-12 w-full" />)}
-              </div>
-            ) : usersQuery.isError ? (
-              <div className="p-8 text-center text-sm text-red-600">
-                {usersQuery.error instanceof Error ? usersQuery.error.message : "用户列表加载失败"}
-              </div>
-            ) : (
-              <div className="scrollbar-thin overflow-x-auto">
-                <table className="w-full min-w-[910px] table-fixed text-left text-sm">
-                  <thead className="theme-muted-panel text-xs font-medium uppercase tracking-wide text-[color:var(--muted)]">
-                    <tr>
-                      <th className="w-[190px] px-4 py-3">用户名</th>
-                      <th className="w-[130px] px-4 py-3">权限</th>
-                      <th className="w-[100px] px-4 py-3">有效 Token</th>
-                      <th className="w-[150px] px-4 py-3">创建时间</th>
-                      <th className="w-[340px] px-4 py-3 text-right">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {sortedUsers.map((user) => {
-                      const target = String(valueOf(user, "username") ?? "");
-                      const isSelf = target === session?.subject;
-                      const isSuperAdmin = Boolean(valueOf(user, "superAdmin"));
-                      return (
-                        <tr key={String(valueOf(user, "id") ?? target)} className="theme-row">
-                          <td className="px-4 py-3.5">
-                            <div className="min-w-0">
-                              <p className="truncate font-medium text-[color:var(--foreground)]">{target}</p>
-                              <p className="truncate text-xs text-[color:var(--muted)]">{String(valueOf(user, "displayName") ?? valueOf(user, "display_name") ?? target)}</p>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3.5">
-                            <Badge variant={isSuperAdmin ? "success" : "info"}>{roleLabel(user)}</Badge>
-                          </td>
-                          <td className="px-4 py-3.5 text-[color:var(--foreground)]">{activeTokenCount(user)}</td>
-                          <td className="px-4 py-3.5 text-[color:var(--muted)]">{formatDate(valueOf(user, "createdAt"))}</td>
-                          <td className="px-4 py-3.5">
-                            <div className="flex justify-end gap-2">
-                              {!isSelf && activeTokenCount(user) > 0 ? (
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  onClick={() => {
-                                    setRenewTarget(user);
-                                    setRenewUserExpiresAt("");
-                                  }}
-                                  disabled={renewUserTokenMutation.isPending}
-                                >
-                                  <CalendarClock />
-                                  续期
-                                </Button>
-                              ) : null}
-                              {!isSelf ? (
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  onClick={() => replaceUserTokenMutation.mutate(target)}
-                                  disabled={replaceUserTokenMutation.isPending}
-                                >
-                                  <KeyRound />
-                                  更换 Token
-                                </Button>
-                              ) : null}
-                              {!isSuperAdmin ? (
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  onClick={() => setDeleteTarget(user)}
-                                  disabled={deleteUserMutation.isPending}
-                                >
-                                  <Trash2 />
-                                  删除
-                                </Button>
-                              ) : null}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        ) : null}
-      </div>
+      ) : (
+        <Card>
+          <EmptyState
+            icon={Settings}
+            title="用户管理仅超级管理员可用"
+            description="当前账户资料和个人 Token 请在右上角用户菜单中维护。"
+          />
+        </Card>
+      )}
 
       <Dialog open={Boolean(issuedToken)} onOpenChange={(open) => !open && setIssuedToken(null)}>
         <DialogContent>

@@ -27,6 +27,7 @@ import { RuntimeMockIcon } from "@/components/brand/runtime-mock-icon";
 import { ThemeSwitcher } from "@/components/theme/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AccountSelfPanel } from "@/components/settings/account-self-panel";
 
 const navigation = [
   {
@@ -46,7 +47,7 @@ const navigation = [
   {
     label: "系统",
     items: [
-      { href: "/settings", label: "账户与设置", icon: Settings },
+      { href: "/settings", label: "用户管理", icon: Settings, capability: "ADMIN" },
     ],
   },
 ];
@@ -200,14 +201,42 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content align="end" className="theme-panel-elevated z-50 min-w-48 rounded-xl border p-1.5">
+                <DropdownMenu.Content
+                  align="end"
+                  className="theme-panel-elevated z-50 w-[min(calc(100vw-1.5rem),420px)] rounded-xl border p-0 shadow-[0_18px_60px_rgb(15_23_42/0.18)]"
+                  onInteractOutside={(event) => {
+                    const target = event.target instanceof Element ? event.target : null;
+                    if (target?.closest("[data-runtime-mock-date-picker]")) event.preventDefault();
+                  }}
+                  onFocusOutside={(event) => {
+                    const target = event.target instanceof Element ? event.target : null;
+                    if (target?.closest("[data-runtime-mock-date-picker]")) event.preventDefault();
+                  }}
+                >
                   <div className="px-2 py-2 md:hidden">
                     <ThemeSwitcher />
                   </div>
                   <DropdownMenu.Separator className="my-1 h-px bg-[var(--border)] md:hidden" />
-                  <DropdownMenu.Item asChild><Link href="/settings" className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none hover:bg-[var(--surface-muted)]"><Settings className="size-4" />账户与设置</Link></DropdownMenu.Item>
-                  <DropdownMenu.Separator className="my-1 h-px bg-[var(--border)]" />
-                  <DropdownMenu.Item onSelect={logout} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-red-600 outline-none hover:bg-red-50">退出登录</DropdownMenu.Item>
+                  <div className="border-b border-[color:var(--border)] px-4 py-3">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-[color:var(--foreground)]">
+                      <Settings className="size-4" />
+                      账户与设置
+                    </div>
+                  </div>
+                  <AccountSelfPanel user={user} onUserChange={setUser} className="p-4" />
+                  {user?.capabilities?.includes("ADMIN") ? (
+                    <>
+                      <DropdownMenu.Separator className="h-px bg-[var(--border)]" />
+                      <DropdownMenu.Item asChild>
+                        <Link href="/settings" className="flex cursor-pointer items-center gap-2 px-4 py-3 text-sm outline-none hover:bg-[var(--surface-muted)]">
+                          <Settings className="size-4" />
+                          打开用户管理
+                        </Link>
+                      </DropdownMenu.Item>
+                    </>
+                  ) : null}
+                  <DropdownMenu.Separator className="h-px bg-[var(--border)]" />
+                  <DropdownMenu.Item onSelect={logout} className="cursor-pointer px-4 py-3 text-sm text-red-600 outline-none hover:bg-red-50">退出登录</DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
