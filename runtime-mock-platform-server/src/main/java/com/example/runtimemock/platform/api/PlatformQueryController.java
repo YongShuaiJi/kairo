@@ -1,6 +1,7 @@
 package com.example.runtimemock.platform.api;
 
 import com.example.runtimemock.platform.service.PlatformQueryService;
+import com.example.runtimemock.platform.service.RbacService;
 import com.example.runtimemock.platform.service.TargetDiscoveryService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -22,25 +23,33 @@ public final class PlatformQueryController {
     private final PlatformQueryService service;
     private final TargetDiscoveryService targetDiscoveryService;
     private final RequestContextFactory requestContextFactory;
+    private final RbacService rbacService;
 
     public PlatformQueryController(PlatformQueryService service,
                                    TargetDiscoveryService targetDiscoveryService,
-                                   RequestContextFactory requestContextFactory) {
+                                   RequestContextFactory requestContextFactory,
+                                   RbacService rbacService) {
         this.service = service;
         this.targetDiscoveryService = targetDiscoveryService;
         this.requestContextFactory = requestContextFactory;
+        this.rbacService = rbacService;
     }
 
     @GetMapping("/query/{resource}")
     public Map<String, Object> page(@PathVariable String resource,
+                                    HttpServletRequest request,
                                     @RequestParam(defaultValue = "0") int page,
                                     @RequestParam(defaultValue = "25") int size,
                                     @RequestParam(defaultValue = "") String q) {
+        requireTokenAdmin(resource, request);
         return service.page(resource, page, size, q);
     }
 
     @GetMapping("/details/{resource}/{id}")
-    public Map<String, Object> detail(@PathVariable String resource, @PathVariable String id) {
+    public Map<String, Object> detail(@PathVariable String resource,
+                                      @PathVariable String id,
+                                      HttpServletRequest request) {
+        requireTokenAdmin(resource, request);
         return service.detail(resource, id);
     }
 
@@ -61,5 +70,11 @@ public final class PlatformQueryController {
                                                    @RequestParam(defaultValue = "") String environmentId) {
         return targetDiscoveryService.search(requestContextFactory.from(request),
                 q, applicationId, environmentId);
+    }
+
+    private void requireTokenAdmin(String resource, HttpServletRequest request) {
+        if ("tokens".equals(resource)) {
+            rbacService.require(requestContextFactory.from(request), "USER_MANAGE");
+        }
     }
 }

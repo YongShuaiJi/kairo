@@ -19,7 +19,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest(properties = {
@@ -109,8 +111,10 @@ class PlatformLocalTokenIntegrationTest {
         JsonNode newUserMe = objectMapper.readTree(newUserMeResponse);
         assertThat(newUserMe.path("subject").asText()).isEqualTo("测试");
         assertThat(newUserMe.path("displayName").asText()).isEqualTo("测试用户");
-        assertThat(newUserMe.path("roles")).isEmpty();
-        assertThat(newUserMe.path("capabilities")).isEmpty();
+        assertThat(newUserMe.path("roles").toString()).contains("BUSINESS_USER");
+        assertThat(newUserMe.path("capabilities").toString())
+                .contains("RULE_MANAGE")
+                .doesNotContain("ADMIN");
 
         createAgent("token-instance-1", "token-agent-1");
         createAgent("token-instance-2", "token-agent-2");
@@ -162,6 +166,97 @@ class PlatformLocalTokenIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    @Test
+    void appliesSimpleUserPermissionModelAndInvalidatesOldTokens() throws Exception {
+        JsonNode issued = postJson("/api/v1/auth/tokens", Map.of(
+                "username", "business-user",
+                "displayName", "Business User",
+                "ttlSeconds", 3600
+        ), "bootstrap-test-token");
+        String userToken = issued.path("token").asText();
+
+        mockMvc.perform(post("/api/v1/instances")
+                        .header("Authorization", "Bearer " + userToken)
+                        .header("Idempotency-Key", "business-user-create-instance")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of(
+                                "id", "business-user-instance",
+                                "applicationId", "app-default",
+                                "environmentId", "env-dev",
+                                "hostname", "business-host",
+                                "processId", "1001",
+                                "runtime", "java-21",
+                                "labels", Map.of(),
+                                "reason", "business user permission test"
+                        ))))
+                .andExpect(status().is2xxSuccessful());
+
+        mockMvc.perform(post("/api/v1/auth/tokens")
+                        .header("Authorization", "Bearer " + userToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of(
+                                "username", "should-not-create",
+                                "ttlSeconds", 3600
+                        ))))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/v1/query/tokens")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+
+        JsonNode renamed = patchJson("/api/v1/auth/me", Map.of(
+                "username", "business-user-renamed"
+        ), userToken);
+        assertThat(renamed.path("subject").asText()).isEqualTo("business-user-renamed");
+
+        mockMvc.perform(get("/api/v1/auth/me")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.subject").value("business-user-renamed"));
+
+        JsonNode selfReplacement = postJson("/api/v1/auth/me/token/replace", Map.of(
+                "ttlSeconds", 3600
+        ), userToken);
+        String selfReplacementToken = selfReplacement.path("token").asText();
+        assertThat(selfReplacementToken).isNotBlank();
+
+        mockMvc.perform(get("/api/v1/auth/me")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/v1/auth/me")
+                        .header("Authorization", "Bearer " + selfReplacementToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.subject").value("business-user-renamed"));
+
+        String adminReplacementResponse = mockMvc.perform(post("/api/v1/auth/users/{username}/token/replace", "business-user-renamed")
+                        .header("Authorization", "Bearer bootstrap-test-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        JsonNode adminReplacement = objectMapper.readTree(adminReplacementResponse);
+        String adminReplacementToken = adminReplacement.path("token").asText();
+        assertThat(adminReplacementToken).isNotBlank();
+
+        mockMvc.perform(get("/api/v1/auth/me")
+                        .header("Authorization", "Bearer " + selfReplacementToken))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/v1/auth/me")
+                        .header("Authorization", "Bearer " + adminReplacementToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/v1/auth/users/{username}", "system")
+                        .header("Authorization", "Bearer bootstrap-test-token"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(delete("/api/v1/auth/users/{username}", "business-user-renamed")
+                        .header("Authorization", "Bearer bootstrap-test-token"))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/v1/auth/me")
+                        .header("Authorization", "Bearer " + adminReplacementToken))
+                .andExpect(status().isUnauthorized());
+    }
+
     private void createAgent(String instanceId, String agentId) throws Exception {
         postJson("/api/v1/instances", Map.of(
                 "id", instanceId,
@@ -188,6 +283,16 @@ class PlatformLocalTokenIntegrationTest {
 
     private JsonNode postJson(String path, Object body, String token) throws Exception {
         String response = mockMvc.perform(post(path)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(body)))
+                .andExpect(status().is2xxSuccessful())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        return objectMapper.readTree(response);
+    }
+
+    private JsonNode patchJson(String path, Object body, String token) throws Exception {
+        String response = mockMvc.perform(patch(path)
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(body)))

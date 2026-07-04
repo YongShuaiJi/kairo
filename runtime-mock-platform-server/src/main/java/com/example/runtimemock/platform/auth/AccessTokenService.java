@@ -28,6 +28,7 @@ import java.util.UUID;
 @Service
 public class AccessTokenService {
 
+    private static final String SUPER_ADMIN_USER_ID = "user-system";
     private static final SecureRandom RANDOM = new SecureRandom();
     private final AccessTokenMapper accessTokenMapper;
     private final Clock clock;
@@ -93,25 +94,90 @@ public class AccessTokenService {
         } else {
             validateSubject(subjectType, subjectId);
         }
-        Instant now = clock.instant();
-        Instant expiresAt = validatedExpiresAt(request, now);
-        String rawToken = generateToken();
-        String id = "token-" + UUID.randomUUID();
-        accessTokenMapper.insertToken(id, hash(rawToken), subjectType, subjectId, displayName,
-                context.actor(), Timestamp.from(now), timestamp(expiresAt));
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("id", id);
-        response.put("token", rawToken);
-        response.put("subjectType", subjectType);
-        response.put("subjectId", subjectId);
-        response.put("displayName", displayName);
-        response.put("status", "VALID");
-        response.put("expiresAt", expiresAt);
-        return response;
+        return createToken(context.actor(), subjectType, subjectId, displayName,
+                validatedExpiresAt(request, clock.instant()));
     }
 
     public List<Map<String, Object>> list() {
         return accessTokenMapper.listVisibleTokens().stream().map(this::normalize).toList();
+    }
+
+    public List<Map<String, Object>> listUsers() {
+        return accessTokenMapper.listUsers().stream().map(row -> {
+            Map<String, Object> user = normalize(row);
+            user.put("role", Boolean.TRUE.equals(user.get("super_admin")) ? "SUPER_ADMIN" : "BUSINESS_USER");
+            return user;
+        }).toList();
+    }
+
+    @Transactional
+    public Map<String, Object> updateSelfProfile(RequestContext context, Map<String, Object> request) {
+        String oldUsername = context.actor();
+        Map<String, Object> existing = normalizeUser(oldUsername);
+        String newUsername = optional(request, "username", oldUsername).trim();
+        if (newUsername.isBlank()) {
+            throw PlatformException.badRequest("MISSING_FIELD", "username is required");
+        }
+        String displayName = optional(request, "displayName", newUsername).trim();
+        if (displayName.isBlank()) {
+            displayName = newUsername;
+        }
+
+        try {
+            int updated = accessTokenMapper.updateUserProfile(oldUsername, newUsername, displayName);
+            if (updated == 0) {
+                throw PlatformException.notFound("user", oldUsername);
+            }
+        } catch (DuplicateKeyException e) {
+            throw PlatformException.conflict("USERNAME_CONFLICT",
+                    "用户名已存在，请换一个用户名", Map.of("username", newUsername));
+        }
+        accessTokenMapper.updateUserTokenSubject(oldUsername, newUsername, displayName);
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("subject", newUsername);
+        response.put("displayName", displayName);
+        response.put("previousSubject", existing.get("username"));
+        return response;
+    }
+
+    @Transactional
+    public Map<String, Object> replaceSelfToken(RequestContext context, Map<String, Object> request) {
+        Map<String, Object> user = normalizeUser(context.actor());
+        return replaceUserTokenInternal(
+                context.actor(),
+                String.valueOf(user.get("display_name")),
+                context.actor(),
+                validatedExpiresAt(request, clock.instant())
+        );
+    }
+
+    @Transactional
+    public Map<String, Object> replaceUserToken(RequestContext context, String username, Map<String, Object> request) {
+        String normalizedUsername = username == null ? "" : username.trim();
+        Map<String, Object> user = normalizeUser(normalizedUsername);
+        return replaceUserTokenInternal(
+                normalizedUsername,
+                String.valueOf(user.get("display_name")),
+                context.actor(),
+                validatedExpiresAt(request, clock.instant())
+        );
+    }
+
+    @Transactional
+    public void deleteUser(String username) {
+        String normalizedUsername = username == null ? "" : username.trim();
+        Map<String, Object> user = normalizeUser(normalizedUsername);
+        if (SUPER_ADMIN_USER_ID.equals(String.valueOf(user.get("id")))) {
+            throw PlatformException.badRequest("CANNOT_DELETE_SUPER_ADMIN", "不能删除超级管理员");
+        }
+        accessTokenMapper.deleteUserTokens(normalizedUsername);
+        accessTokenMapper.deleteExternalIdentities(String.valueOf(user.get("id")));
+        accessTokenMapper.deleteUserRoleBindings(String.valueOf(user.get("id")));
+        int deleted = accessTokenMapper.deleteUser(normalizedUsername);
+        if (deleted == 0) {
+            throw PlatformException.notFound("user", normalizedUsername);
+        }
     }
 
     @Transactional
@@ -145,7 +211,7 @@ public class AccessTokenService {
         if (rawToken == null || rawToken.isBlank()) {
             return;
         }
-        validateSubject("USER", actor);
+        ensureBootstrapUser(actor);
         Instant now = clock.instant();
         accessTokenMapper.deleteDifferentBootstrapToken(hash(rawToken));
         if (accessTokenMapper.countBootstrapToken() > 0) {
@@ -173,6 +239,60 @@ public class AccessTokenService {
         } catch (DuplicateKeyException ignored) {
             accessTokenMapper.activateUserForToken(username, displayName);
         }
+    }
+
+    private void ensureBootstrapUser(String username) {
+        String normalized = username == null || username.isBlank() ? "system" : username.trim();
+        if (accessTokenMapper.countActiveUser(normalized) > 0) {
+            return;
+        }
+        if (accessTokenMapper.activateBootstrapUser(SUPER_ADMIN_USER_ID, normalized, normalized) > 0) {
+            return;
+        }
+        try {
+            accessTokenMapper.insertUserForToken(SUPER_ADMIN_USER_ID, normalized, normalized);
+        } catch (DuplicateKeyException ignored) {
+            accessTokenMapper.activateBootstrapUser(SUPER_ADMIN_USER_ID, normalized, normalized);
+        }
+    }
+
+    private Map<String, Object> normalizeUser(String username) {
+        if (username == null || username.isBlank()) {
+            throw PlatformException.badRequest("MISSING_FIELD", "username is required");
+        }
+        Map<String, Object> user = accessTokenMapper.userByUsername(username.trim());
+        if (user == null) {
+            throw PlatformException.notFound("user", username.trim());
+        }
+        Map<String, Object> normalized = normalize(user);
+        if (!"ACTIVE".equals(String.valueOf(normalized.get("status")))) {
+            throw PlatformException.notFound("user", username.trim());
+        }
+        return normalized;
+    }
+
+    private Map<String, Object> replaceUserTokenInternal(String username, String displayName,
+                                                        String createdBy, Instant expiresAt) {
+        accessTokenMapper.revokeActiveUserTokens(username, Timestamp.from(clock.instant()));
+        return createToken(createdBy, "USER", username, displayName, expiresAt);
+    }
+
+    private Map<String, Object> createToken(String createdBy, String subjectType, String subjectId,
+                                            String displayName, Instant expiresAt) {
+        Instant now = clock.instant();
+        String rawToken = generateToken();
+        String id = "token-" + UUID.randomUUID();
+        accessTokenMapper.insertToken(id, hash(rawToken), subjectType, subjectId, displayName,
+                createdBy, Timestamp.from(now), timestamp(expiresAt));
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("id", id);
+        response.put("token", rawToken);
+        response.put("subjectType", subjectType);
+        response.put("subjectId", subjectId);
+        response.put("displayName", displayName);
+        response.put("status", "VALID");
+        response.put("expiresAt", expiresAt);
+        return response;
     }
 
     private String optional(Map<String, Object> request, String name, String fallback) {

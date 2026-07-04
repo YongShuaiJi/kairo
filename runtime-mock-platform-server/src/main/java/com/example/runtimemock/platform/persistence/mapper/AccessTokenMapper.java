@@ -42,6 +42,14 @@ public interface AccessTokenMapper {
                              @Param("createdAt") Timestamp createdAt,
                              @Param("expiresAt") Timestamp expiresAt);
 
+    List<Map<String, Object>> listUsers();
+
+    Map<String, Object> userByUsername(@Param("username") String username);
+
+    int activateBootstrapUser(@Param("id") String id,
+                              @Param("username") String username,
+                              @Param("displayName") String displayName);
+
     int countActiveAgent(@Param("subjectId") String subjectId);
 
     int countActiveUser(@Param("subjectId") String subjectId);
@@ -52,4 +60,23 @@ public interface AccessTokenMapper {
     int insertUserForToken(@Param("id") String id,
                            @Param("username") String username,
                            @Param("displayName") String displayName);
+
+    int updateUserProfile(@Param("oldUsername") String oldUsername,
+                          @Param("newUsername") String newUsername,
+                          @Param("displayName") String displayName);
+
+    int updateUserTokenSubject(@Param("oldUsername") String oldUsername,
+                               @Param("newUsername") String newUsername,
+                               @Param("displayName") String displayName);
+
+    int revokeActiveUserTokens(@Param("username") String username,
+                               @Param("revokedAt") Timestamp revokedAt);
+
+    int deleteUserRoleBindings(@Param("userId") String userId);
+
+    int deleteExternalIdentities(@Param("userId") String userId);
+
+    int deleteUserTokens(@Param("username") String username);
+
+    int deleteUser(@Param("username") String username);
 }

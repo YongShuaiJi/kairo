@@ -5,7 +5,7 @@
 <mapper namespace="com.example.runtimemock.platform.persistence.mapper.AccessTokenMapper">
 
     <sql id="TokenVisibleColumns">
-        id, subject_type, subject_id,
+        id, subject_type, subject_id, display_name,
         case
             when status = 'ACTIVE' and (expires_at is null or expires_at > current_timestamp) then 'VALID'
             else 'INVALID'
@@ -22,7 +22,7 @@
     </select>
 
     <select id="describeActiveTokenByHash" resultType="map">
-        select id, subject_type, subject_id,
+        select id, subject_type, subject_id, display_name,
                'VALID' as status,
                created_at, expires_at, last_used_at
           from platform_access_token
@@ -103,6 +103,41 @@
         )
     </insert>
 
+    <select id="listUsers" resultType="map">
+        select u.id,
+               u.username,
+               u.display_name,
+               u.status,
+               u.created_at,
+               case when u.id = 'user-system' then true else false end as super_admin,
+               (
+                   select count(*)
+                     from platform_access_token t
+                    where t.subject_type = 'USER'
+                      and t.subject_id = u.username
+                      and t.status = 'ACTIVE'
+                      and (t.expires_at is null or t.expires_at > current_timestamp)
+               ) as active_token_count
+          from user_account u
+         order by case when u.id = 'user-system' then 0 else 1 end,
+                  u.created_at desc,
+                  u.username
+    </select>
+
+    <select id="userByUsername" resultType="map">
+        select id, username, display_name, status, created_at
+          from user_account
+         where username = #{username}
+    </select>
+
+    <update id="activateBootstrapUser">
+        update user_account
+           set username = #{username},
+               display_name = #{displayName},
+               status = 'ACTIVE'
+         where id = #{id}
+    </update>
+
     <select id="countActiveAgent" resultType="int">
         select count(*)
           from agent_instance
@@ -128,4 +163,50 @@
         insert into user_account(id, username, display_name, status)
         values (#{id}, #{username}, #{displayName}, 'ACTIVE')
     </insert>
+
+    <update id="updateUserProfile">
+        update user_account
+           set username = #{newUsername},
+               display_name = #{displayName}
+         where username = #{oldUsername}
+           and status = 'ACTIVE'
+    </update>
+
+    <update id="updateUserTokenSubject">
+        update platform_access_token
+           set subject_id = #{newUsername},
+               display_name = #{displayName}
+         where subject_type = 'USER'
+           and subject_id = #{oldUsername}
+    </update>
+
+    <update id="revokeActiveUserTokens">
+        update platform_access_token
+           set status = 'REVOKED',
+               revoked_at = #{revokedAt}
+         where subject_type = 'USER'
+           and subject_id = #{username}
+           and status = 'ACTIVE'
+    </update>
+
+    <delete id="deleteUserRoleBindings">
+        delete from user_role_binding
+         where user_id = #{userId}
+    </delete>
+
+    <delete id="deleteExternalIdentities">
+        delete from external_identity
+         where user_id = #{userId}
+    </delete>
+
+    <delete id="deleteUserTokens">
+        delete from platform_access_token
+         where subject_type = 'USER'
+           and subject_id = #{username}
+    </delete>
+
+    <delete id="deleteUser">
+        delete from user_account
+         where username = #{username}
+    </delete>
 </mapper>

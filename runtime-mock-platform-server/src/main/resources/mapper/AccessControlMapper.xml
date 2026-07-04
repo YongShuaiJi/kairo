@@ -36,6 +36,21 @@
            )
     </select>
 
+    <select id="countActiveUser" resultType="int">
+        select count(*)
+          from user_account
+         where username = #{username}
+           and status = 'ACTIVE'
+    </select>
+
+    <select id="countSuperAdmin" resultType="int">
+        select count(*)
+          from user_account
+         where username = #{username}
+           and id = 'user-system'
+           and status = 'ACTIVE'
+    </select>
+
     <select id="activeUser" resultType="map">
         select username, display_name, status
           from user_account

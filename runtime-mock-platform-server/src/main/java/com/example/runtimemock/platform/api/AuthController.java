@@ -7,6 +7,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestController
@@ -54,6 +56,47 @@ public final class AuthController {
         return response;
     }
 
+    @PatchMapping("/me")
+    public Map<String, Object> updateMe(HttpServletRequest httpRequest,
+                                        @RequestBody Map<String, Object> request) {
+        var context = requestContextFactory.from(httpRequest);
+        Map<String, Object> updated = accessTokenService.updateSelfProfile(context, request);
+        return withTokenMetadata(rbacService.describe(String.valueOf(updated.get("subject"))), null);
+    }
+
+    @PostMapping("/me/token/replace")
+    public Map<String, Object> replaceMyToken(HttpServletRequest httpRequest,
+                                              @RequestBody Map<String, Object> request) {
+        var context = requestContextFactory.from(httpRequest);
+        Map<String, Object> token = accessTokenService.replaceSelfToken(context, request);
+        return withTokenMetadata(rbacService.describe(String.valueOf(token.get("subjectId"))), token);
+    }
+
+    @GetMapping("/users")
+    public List<Map<String, Object>> users(HttpServletRequest request) {
+        var context = requestContextFactory.from(request);
+        rbacService.require(context, "USER_MANAGE");
+        return accessTokenService.listUsers();
+    }
+
+    @PostMapping("/users/{username}/token/replace")
+    public Map<String, Object> replaceUserToken(@PathVariable String username,
+                                                HttpServletRequest httpRequest,
+                                                @RequestBody Map<String, Object> request) {
+        var context = requestContextFactory.from(httpRequest);
+        rbacService.require(context, "USER_MANAGE");
+        Map<String, Object> token = accessTokenService.replaceUserToken(context, username, request);
+        return withTokenMetadata(rbacService.describe(String.valueOf(token.get("subjectId"))), token);
+    }
+
+    @DeleteMapping("/users/{username}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteUser(@PathVariable String username, HttpServletRequest request) {
+        var context = requestContextFactory.from(request);
+        rbacService.require(context, "USER_MANAGE");
+        accessTokenService.deleteUser(username);
+    }
+
     @GetMapping("/tokens")
     public List<Map<String, Object>> list(HttpServletRequest request) {
         var context = requestContextFactory.from(request);
@@ -85,5 +128,17 @@ public final class AuthController {
         var context = requestContextFactory.from(request);
         rbacService.require(context, "ADMIN");
         accessTokenService.revoke(id);
+    }
+
+    private Map<String, Object> withTokenMetadata(Map<String, Object> identity,
+                                                  Map<String, Object> token) {
+        Map<String, Object> response = new LinkedHashMap<>(identity);
+        if (token != null) {
+            response.put("token", token.get("token"));
+            response.put("tokenId", token.get("id"));
+            response.put("subjectType", token.get("subjectType"));
+            response.put("expiresAt", token.get("expiresAt"));
+        }
+        return response;
     }
 }
