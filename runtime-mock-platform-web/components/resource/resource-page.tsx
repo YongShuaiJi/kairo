@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Copy, Pencil, Plus, RefreshCw, RotateCcw, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { platformFetch } from "@/lib/api/client";
+import { recordValue as valueOf, toOptionalIsoInstant } from "@/lib/api/record";
 import type { PlatformRecord, SessionUser } from "@/lib/api/types";
 import { resourceConfigs, type ResourceColumn, type ResourceField, type ResourceForm } from "@/lib/resource-config";
 import { actionLabel, fieldLabel, formatBytes, formatDate, humanize, shortId } from "@/lib/utils";
@@ -33,11 +34,6 @@ type RuleDetailData = {
   targets: PlatformRecord[];
   capabilities: PlatformRecord[];
 };
-
-function valueOf(record: PlatformRecord, key: string) {
-  const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-  return record[key] ?? record[snake];
-}
 
 function statusVariant(status: string) {
   const value = status.toUpperCase();
@@ -79,9 +75,6 @@ function groupApplicationInstances(rows: PlatformRecord[]) {
 
 function detailTitle(configKey: string, detail: PlatformRecord | null | undefined) {
   if (!detail) return "详情";
-  if (configKey === "settings") {
-    return String(valueOf(detail, "subjectId") ?? valueOf(detail, "username") ?? "访问 Token");
-  }
   if (configKey === "applications") {
     const app = String(valueOf(detail, "applicationName") ?? "");
     const env = environmentName(detail);
@@ -728,12 +721,6 @@ function initialForm(form: ResourceForm | undefined) {
   ]));
 }
 
-function isoInstant(value: string) {
-  if (!value.trim()) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
 function splitApplicationEnvironment(value: string | undefined) {
   const [applicationId = "", environmentId = ""] = String(value ?? "").split("|");
   return { applicationId, environmentId };
@@ -1090,7 +1077,7 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
       if (!id) throw new Error("未找到需要续期的 Token");
       return platformFetch<PlatformRecord>(`auth/tokens/${encodeURIComponent(id)}/renew`, {
         method: "POST",
-        body: JSON.stringify({ expiresAt: isoInstant(renewExpiresAt) }),
+        body: JSON.stringify({ expiresAt: toOptionalIsoInstant(renewExpiresAt) }),
         idempotencyKey: crypto.randomUUID(),
       });
     },

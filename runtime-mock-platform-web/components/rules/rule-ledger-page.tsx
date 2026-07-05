@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Pencil, Plus, Power, PowerOff } from "lucide-react";
 import { toast } from "sonner";
 import { platformFetch } from "@/lib/api/client";
+import { recordValue as valueOf } from "@/lib/api/record";
 import type { PlatformRecord } from "@/lib/api/types";
 import { formatDate, humanize } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
@@ -24,12 +25,6 @@ type RuleDetailData = {
 };
 
 type InvokePhase = "BEFORE" | "RETURN" | "THROWS";
-
-function valueOf(record: PlatformRecord | undefined, key: string) {
-  if (!record) return undefined;
-  const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-  return record[key] ?? record[snake];
-}
 
 function statusVariant(status: string) {
   const value = status.toUpperCase();

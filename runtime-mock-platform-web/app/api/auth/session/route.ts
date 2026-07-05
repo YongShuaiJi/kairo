@@ -51,7 +51,7 @@ export async function POST(request: Request) {
   let identity: Identity = {
     subject: "demo-admin",
     displayName: "演示管理员",
-    roles: ["PlatformAdmin"],
+    roles: ["SUPER_ADMIN"],
     capabilities: ["ADMIN"],
     scopes: [{ resource_type: "GLOBAL", resource_id: "*" }],
     expiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),

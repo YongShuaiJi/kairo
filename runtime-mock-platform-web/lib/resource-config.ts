@@ -2,7 +2,6 @@ import type { LucideIcon } from "lucide-react";
 import {
   Box,
   Network,
-  Settings,
   SlidersHorizontal,
   Zap,
 } from "lucide-react";
@@ -63,17 +62,6 @@ export type ResourceConfig = {
   readOnly?: boolean;
 };
 
-const dateTime = (
-  key: string,
-  label: string,
-  defaultValue: string | (() => string) = "",
-  required = true,
-): ResourceField => ({
-  key, label, defaultValue, required, type: "date-time",
-});
-const text = (key: string, label: string, defaultValue = "", required = true): ResourceField => ({
-  key, label, defaultValue, required, type: "text",
-});
 const select = (key: string, label: string, options: string[], defaultValue = options[0]): ResourceField => ({
   key, label, options, defaultValue, required: true, type: "select",
 });
@@ -89,12 +77,6 @@ const rolloutScope = (form: Record<string, string>) => {
   const [applicationId = "", environmentId = ""] = (form.applicationEnvironment ?? "").split("|");
   return { applicationId, environmentId };
 };
-const isoInstant = (value: string) => {
-  if (!value.trim()) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-};
-
 export const resourceConfigs: Record<string, ResourceConfig> = {
   applications: {
     key: "applications",
@@ -222,32 +204,5 @@ export const resourceConfigs: Record<string, ResourceConfig> = {
         ],
       },
     ],
-  },
-  settings: {
-    key: "settings",
-    eyebrow: "Administration",
-    title: "平台设置",
-    singular: "访问 Token",
-    description: "管理本地身份 Token；明文 Token 只在签发成功时显示一次。",
-    icon: Settings,
-    endpoint: "tokens",
-    columns: [
-      { key: "subjectId", label: "用户名" },
-      { key: "status", label: "状态", kind: "status" },
-      { key: "expiresAt", label: "过期时间", kind: "date" },
-      { key: "lastUsedAt", label: "最后使用", kind: "date" },
-    ],
-    form: {
-      capability: "ADMIN",
-      createLabel: "签发 Token",
-      fields: [text("username", "用户名"), dateTime("expiresAt", "过期时间", "", false)],
-      buildEndpoint: () => "auth/tokens",
-      buildPayload: (form) => ({
-        username: form.username,
-        displayName: form.username,
-        expiresAt: isoInstant(form.expiresAt),
-      }),
-    },
-    createLabel: "签发 Token",
   },
 };

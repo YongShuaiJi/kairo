@@ -61,8 +61,8 @@ public final class AuthController {
     public Map<String, Object> updateMe(HttpServletRequest httpRequest,
                                         @RequestBody Map<String, Object> request) {
         var context = requestContextFactory.from(httpRequest);
-        Map<String, Object> updated = accessTokenService.updateSelfProfile(context, request);
-        return withTokenMetadata(rbacService.describe(String.valueOf(updated.get("subject"))), null);
+        accessTokenService.updateSelfProfile(context, request);
+        return withTokenMetadata(rbacService.describe(context.actor()), null);
     }
 
     @PostMapping("/me/token/replace")
@@ -70,7 +70,7 @@ public final class AuthController {
                                               @RequestBody Map<String, Object> request) {
         var context = requestContextFactory.from(httpRequest);
         Map<String, Object> token = accessTokenService.replaceSelfToken(context, bearerToken(httpRequest));
-        return withTokenMetadata(rbacService.describe(String.valueOf(token.get("subjectId"))), token);
+        return withTokenMetadata(rbacService.describe(context.actor()), token);
     }
 
     @GetMapping("/users")

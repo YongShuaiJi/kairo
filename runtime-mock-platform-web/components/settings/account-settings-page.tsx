@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { CalendarClock, Copy, KeyRound, RefreshCw, Settings, Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { platformFetch } from "@/lib/api/client";
+import { recordValue as valueOf, toOptionalIsoInstant } from "@/lib/api/record";
 import type { PlatformRecord, SessionUser } from "@/lib/api/types";
 import { formatDate } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
@@ -33,18 +34,6 @@ type TokenResult = SessionUser & {
   tokenId?: string;
   subjectId?: string;
 };
-
-function valueOf(record: PlatformRecord | undefined, key: string) {
-  if (!record) return undefined;
-  const snake = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-  return record[key] ?? record[snake];
-}
-
-function isoInstant(value: string) {
-  if (!value.trim()) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
 
 function roleLabel(user: UserRecord) {
   return valueOf(user, "superAdmin") ? "超级管理员" : "业务用户";
@@ -85,7 +74,7 @@ export function AccountSettingsPage() {
       body: JSON.stringify({
         username: newUsername.trim(),
         displayName: newUsername.trim(),
-        expiresAt: isoInstant(newUserExpiresAt),
+        expiresAt: toOptionalIsoInstant(newUserExpiresAt),
       }),
       idempotencyKey: crypto.randomUUID(),
     }),
@@ -116,7 +105,7 @@ export function AccountSettingsPage() {
   const renewUserTokenMutation = useMutation({
     mutationFn: (target: string) => platformFetch<PlatformRecord>(`auth/users/${encodeURIComponent(target)}/tokens/renew`, {
       method: "POST",
-      body: JSON.stringify({ expiresAt: isoInstant(renewUserExpiresAt) }),
+      body: JSON.stringify({ expiresAt: toOptionalIsoInstant(renewUserExpiresAt) }),
       idempotencyKey: crypto.randomUUID(),
     }),
     onSuccess: async (_result, target) => {

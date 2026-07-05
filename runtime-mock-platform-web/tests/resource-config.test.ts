@@ -78,38 +78,9 @@ describe("resource form relationships", () => {
     expect(humanize("RESET_CLASS")).toBe("恢复目标类原始字节码");
   });
 
-  it("keeps token issuing focused on username and explicit expiry time", () => {
-    const form = resourceConfigs.settings.form;
-    const fields = form?.fields ?? [];
-
-    expect(resourceConfigs.settings.columns.map((column) => [column.key, column.label])).toEqual([
-      ["subjectId", "用户名"],
-      ["status", "状态"],
-      ["expiresAt", "过期时间"],
-      ["lastUsedAt", "最后使用"],
-    ]);
-    expect(fields.map((field) => field.key)).toEqual(["username", "expiresAt"]);
-    expect(fields.find((field) => field.key === "username")).toMatchObject({
-      type: "text",
-      required: true,
-    });
-    expect(fields.find((field) => field.key === "expiresAt")).toMatchObject({ type: "date-time", required: false });
+  it("keeps user management out of the generic resource configuration", () => {
+    expect(resourceConfigs).not.toHaveProperty("settings");
     expect(humanize("VALID")).toBe("有效");
     expect(humanize("INVALID")).toBe("失效");
-
-    const payload = form?.buildPayload?.({
-      username: "system",
-      expiresAt: "2026-07-04T12:34:56",
-    }) ?? {};
-
-    expect(payload).toMatchObject({
-      username: "system",
-      displayName: "system",
-    });
-    expect(payload).not.toHaveProperty("subjectType");
-    expect(payload).not.toHaveProperty("subjectId");
-    expect(payload).not.toHaveProperty("ttlSeconds");
-    expect(typeof payload.expiresAt).toBe("string");
-    expect(form?.buildPayload?.({ username: "system", expiresAt: "" })?.expiresAt).toBeNull();
   });
 });
