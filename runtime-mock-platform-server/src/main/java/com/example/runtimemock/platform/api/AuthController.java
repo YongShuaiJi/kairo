@@ -96,11 +96,7 @@ public final class AuthController {
                                                @RequestBody Map<String, Object> request) {
         var context = requestContextFactory.from(httpRequest);
         rbacService.require(context, "USER_MANAGE");
-        String normalizedUsername = username == null ? "" : username.trim();
-        if (normalizedUsername.equals(context.actor())) {
-            throw PlatformException.badRequest("CANNOT_RENEW_SELF_TOKEN", "不能给自己续期，请更换自己的 Token");
-        }
-        return accessTokenService.renewUserTokens(normalizedUsername, request);
+        return accessTokenService.renewUserTokens(context, username, request);
     }
 
     @DeleteMapping("/users/{username}")

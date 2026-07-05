@@ -221,6 +221,11 @@ class PlatformLocalTokenIntegrationTest {
                         .header("Authorization", "Bearer " + userToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.subject").value("business-user-renamed"));
+        String storedSubjectIdAfterRename = testPlatformMapper.activeUserTokenSubjectId("business-user-renamed");
+        assertThat(storedSubjectIdAfterRename)
+                .startsWith("user-")
+                .isNotEqualTo("business-user")
+                .isNotEqualTo("business-user-renamed");
 
         JsonNode selfReplacement = postJson("/api/v1/auth/me/token/replace", Map.of(
                 "ttlSeconds", 7200

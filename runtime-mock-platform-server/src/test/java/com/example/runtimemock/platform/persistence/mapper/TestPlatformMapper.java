@@ -76,4 +76,6 @@ public interface TestPlatformMapper {
     String lowerEnvironmentType(@Param("environmentId") String environmentId);
 
     int countRulesByName(@Param("name") String name);
+
+    String activeUserTokenSubjectId(@Param("username") String username);
 }

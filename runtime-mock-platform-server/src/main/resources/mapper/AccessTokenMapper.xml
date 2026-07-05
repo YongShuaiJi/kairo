@@ -5,12 +5,15 @@
 <mapper namespace="com.example.runtimemock.platform.persistence.mapper.AccessTokenMapper">
 
     <sql id="TokenVisibleColumns">
-        id, subject_type, subject_id, display_name,
+        t.id,
+        t.subject_type,
+        case when t.subject_type = 'USER' then coalesce(u.username, t.subject_id) else t.subject_id end as subject_id,
+        t.display_name,
         case
-            when status = 'ACTIVE' and (expires_at is null or expires_at > current_timestamp) then 'VALID'
+            when t.status = 'ACTIVE' and (t.expires_at is null or t.expires_at > current_timestamp) then 'VALID'
             else 'INVALID'
         end as status,
-        created_by, created_at, expires_at, last_used_at, revoked_at
+        t.created_by, t.created_at, t.expires_at, t.last_used_at, t.revoked_at
     </sql>
 
     <select id="activeTokenByHash" resultType="map">
@@ -49,8 +52,11 @@
 
     <select id="listVisibleTokens" resultType="map">
         select <include refid="TokenVisibleColumns"/>
-          from platform_access_token
-         order by created_at desc, id
+          from platform_access_token t
+          left join user_account u
+            on t.subject_type = 'USER'
+           and u.id = t.subject_id
+         order by t.created_at desc, t.id
     </select>
 
     <select id="tokenSubject" resultType="map">
@@ -69,8 +75,11 @@
 
     <select id="visibleToken" resultType="map">
         select <include refid="TokenVisibleColumns"/>
-          from platform_access_token
-         where id = #{id}
+          from platform_access_token t
+          left join user_account u
+            on t.subject_type = 'USER'
+           and u.id = t.subject_id
+         where t.id = #{id}
     </select>
 
     <update id="revokeToken">
@@ -98,7 +107,7 @@
             id, token_hash, subject_type, subject_id, display_name, status,
             created_by, created_at, expires_at, last_used_at, revoked_at
         ) values (
-            'token-bootstrap', #{tokenHash}, 'USER', #{actor}, #{actor},
+            'token-bootstrap', #{tokenHash}, 'USER', #{actorId}, #{displayName},
             'ACTIVE', 'system', #{createdAt}, #{expiresAt}, null, null
         )
     </insert>
@@ -114,7 +123,7 @@
                    select count(*)
                      from platform_access_token t
                     where t.subject_type = 'USER'
-                      and t.subject_id = u.username
+                      and t.subject_id = u.id
                       and t.status = 'ACTIVE'
                       and (t.expires_at is null or t.expires_at > current_timestamp)
                ) as active_token_count
@@ -153,8 +162,8 @@
 
     <select id="countActiveUser" resultType="int">
         select count(*)
-          from user_account
-         where username = #{subjectId}
+         from user_account
+         where id = #{subjectId}
            and status = 'ACTIVE'
     </select>
 
@@ -174,16 +183,15 @@
         update user_account
            set username = #{newUsername},
                display_name = #{displayName}
-         where username = #{oldUsername}
+         where id = #{userId}
            and status = 'ACTIVE'
     </update>
 
-    <update id="updateUserTokenSubject">
+    <update id="updateUserTokenDisplayName">
         update platform_access_token
-           set subject_id = #{newUsername},
-               display_name = #{displayName}
+           set display_name = #{displayName}
          where subject_type = 'USER'
-           and subject_id = #{oldUsername}
+           and subject_id = #{userId}
     </update>
 
     <update id="revokeActiveUserTokens">
@@ -191,7 +199,7 @@
            set status = 'REVOKED',
                revoked_at = #{revokedAt}
          where subject_type = 'USER'
-           and subject_id = #{username}
+           and subject_id = #{userId}
            and status = 'ACTIVE'
     </update>
 
@@ -201,7 +209,7 @@
                expires_at = #{expiresAt},
                revoked_at = null
          where subject_type = 'USER'
-           and subject_id = #{username}
+           and subject_id = #{userId}
            and status = 'ACTIVE'
     </update>
 
@@ -218,7 +226,7 @@
     <delete id="deleteUserTokens">
         delete from platform_access_token
          where subject_type = 'USER'
-           and subject_id = #{username}
+           and subject_id = #{userId}
     </delete>
 
     <delete id="deleteUser">

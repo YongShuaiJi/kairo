@@ -90,8 +90,9 @@ public class AccessTokenService {
             displayName = subjectId;
         }
         if ("USER".equals(subjectType)) {
-            ensureLocalUser(subjectId, displayName);
-            accessTokenMapper.deleteUserTokens(subjectId);
+            Map<String, Object> user = ensureLocalUser(subjectId, displayName);
+            accessTokenMapper.deleteUserTokens(String.valueOf(user.get("id")));
+            return createUserToken(context.actor(), user, validatedExpiresAt(request, clock.instant()));
         } else {
             validateSubject(subjectType, subjectId);
         }
@@ -113,8 +114,9 @@ public class AccessTokenService {
 
     @Transactional
     public Map<String, Object> updateSelfProfile(RequestContext context, Map<String, Object> request) {
-        String oldUsername = context.actor();
-        Map<String, Object> existing = normalizeUser(oldUsername);
+        Map<String, Object> existing = normalizeUserById(context.actor());
+        String userId = String.valueOf(existing.get("id"));
+        String oldUsername = String.valueOf(existing.get("username"));
         String newUsername = optional(request, "username", oldUsername).trim();
         if (newUsername.isBlank()) {
             throw PlatformException.badRequest("MISSING_FIELD", "username is required");
@@ -125,7 +127,7 @@ public class AccessTokenService {
         }
 
         try {
-            int updated = accessTokenMapper.updateUserProfile(oldUsername, newUsername, displayName);
+            int updated = accessTokenMapper.updateUserProfile(userId, newUsername, displayName);
             if (updated == 0) {
                 throw PlatformException.notFound("user", oldUsername);
             }
@@ -133,7 +135,7 @@ public class AccessTokenService {
             throw PlatformException.conflict("USERNAME_CONFLICT",
                     "用户名已存在，请换一个用户名", Map.of("username", newUsername));
         }
-        accessTokenMapper.updateUserTokenSubject(oldUsername, newUsername, displayName);
+        accessTokenMapper.updateUserTokenDisplayName(userId, displayName);
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("subject", newUsername);
@@ -144,34 +146,28 @@ public class AccessTokenService {
 
     @Transactional
     public Map<String, Object> replaceSelfToken(RequestContext context, String rawToken) {
-        Map<String, Object> user = normalizeUser(context.actor());
+        Map<String, Object> user = normalizeUserById(context.actor());
         Instant expiresAt = instantValue(describe(rawToken).get("expires_at"));
-        return replaceUserTokenInternal(
-                context.actor(),
-                String.valueOf(user.get("display_name")),
-                context.actor(),
-                expiresAt
-        );
+        return replaceUserTokenInternal(user, context.actor(), expiresAt);
     }
 
     @Transactional
     public Map<String, Object> replaceUserToken(RequestContext context, String username, Map<String, Object> request) {
         String normalizedUsername = username == null ? "" : username.trim();
         Map<String, Object> user = normalizeUser(normalizedUsername);
-        return replaceUserTokenInternal(
-                normalizedUsername,
-                String.valueOf(user.get("display_name")),
-                context.actor(),
-                validatedExpiresAt(request, clock.instant())
-        );
+        return replaceUserTokenInternal(user, context.actor(), validatedExpiresAt(request, clock.instant()));
     }
 
     @Transactional
-    public Map<String, Object> renewUserTokens(String username, Map<String, Object> request) {
+    public Map<String, Object> renewUserTokens(RequestContext context, String username, Map<String, Object> request) {
         String normalizedUsername = username == null ? "" : username.trim();
-        normalizeUser(normalizedUsername);
+        Map<String, Object> user = normalizeUser(normalizedUsername);
+        String userId = String.valueOf(user.get("id"));
+        if (userId.equals(context.actor())) {
+            throw PlatformException.badRequest("CANNOT_RENEW_SELF_TOKEN", "不能给自己续期，请更换自己的 Token");
+        }
         Instant expiresAt = validatedExpiresAt(request, clock.instant());
-        int updated = accessTokenMapper.renewActiveUserTokens(normalizedUsername, timestamp(expiresAt));
+        int updated = accessTokenMapper.renewActiveUserTokens(userId, timestamp(expiresAt));
         if (updated == 0) {
             throw PlatformException.notFound("platform_access_token", normalizedUsername);
         }
@@ -189,7 +185,7 @@ public class AccessTokenService {
         if (SUPER_ADMIN_USER_ID.equals(String.valueOf(user.get("id")))) {
             throw PlatformException.badRequest("CANNOT_DELETE_SUPER_ADMIN", "不能删除超级管理员");
         }
-        accessTokenMapper.deleteUserTokens(normalizedUsername);
+        accessTokenMapper.deleteUserTokens(String.valueOf(user.get("id")));
         accessTokenMapper.deleteExternalIdentities(String.valueOf(user.get("id")));
         accessTokenMapper.deleteUserRoleBindings(String.valueOf(user.get("id")));
         int deleted = accessTokenMapper.deleteUser(normalizedUsername);
@@ -232,13 +228,16 @@ public class AccessTokenService {
         if (rawToken == null || rawToken.isBlank()) {
             return;
         }
-        String bootstrapActor = ensureBootstrapUser(actor);
+        Map<String, Object> bootstrapActor = ensureBootstrapUser(actor);
         Instant now = clock.instant();
         accessTokenMapper.deleteDifferentBootstrapToken(hash(rawToken));
         if (accessTokenMapper.countBootstrapToken() > 0) {
             return;
         }
-        accessTokenMapper.insertBootstrapToken(hash(rawToken), bootstrapActor, Timestamp.from(now),
+        accessTokenMapper.insertBootstrapToken(hash(rawToken),
+                String.valueOf(bootstrapActor.get("id")),
+                String.valueOf(bootstrapActor.get("display_name")),
+                Timestamp.from(now),
                 Timestamp.from(now.plus(ttlDays, ChronoUnit.DAYS)));
     }
 
@@ -251,35 +250,36 @@ public class AccessTokenService {
         }
     }
 
-    private void ensureLocalUser(String username, String displayName) {
+    private Map<String, Object> ensureLocalUser(String username, String displayName) {
         if (accessTokenMapper.activateUserForToken(username, displayName) > 0) {
-            return;
+            return normalizeUser(username);
         }
         try {
             accessTokenMapper.insertUserForToken("user-" + UUID.randomUUID(), username, displayName);
         } catch (DuplicateKeyException ignored) {
             accessTokenMapper.activateUserForToken(username, displayName);
         }
+        return normalizeUser(username);
     }
 
-    private String ensureBootstrapUser(String username) {
+    private Map<String, Object> ensureBootstrapUser(String username) {
         String normalized = username == null || username.isBlank() ? "system" : username.trim();
         Map<String, Object> existingBootstrap = accessTokenMapper.userById(SUPER_ADMIN_USER_ID);
         if (existingBootstrap != null) {
             Map<String, Object> normalizedBootstrap = normalize(existingBootstrap);
             if ("ACTIVE".equals(String.valueOf(normalizedBootstrap.get("status")))) {
-                return String.valueOf(normalizedBootstrap.get("username"));
+                return normalizedBootstrap;
             }
         }
         if (accessTokenMapper.activateBootstrapUser(SUPER_ADMIN_USER_ID, normalized, normalized) > 0) {
-            return normalized;
+            return normalizeUserById(SUPER_ADMIN_USER_ID);
         }
         try {
             accessTokenMapper.insertUserForToken(SUPER_ADMIN_USER_ID, normalized, normalized);
         } catch (DuplicateKeyException ignored) {
             accessTokenMapper.activateBootstrapUser(SUPER_ADMIN_USER_ID, normalized, normalized);
         }
-        return normalized;
+        return normalizeUserById(SUPER_ADMIN_USER_ID);
     }
 
     private Map<String, Object> normalizeUser(String username) {
@@ -297,10 +297,34 @@ public class AccessTokenService {
         return normalized;
     }
 
-    private Map<String, Object> replaceUserTokenInternal(String username, String displayName,
-                                                        String createdBy, Instant expiresAt) {
-        accessTokenMapper.deleteUserTokens(username);
-        return createToken(createdBy, "USER", username, displayName, expiresAt);
+    private Map<String, Object> normalizeUserById(String userId) {
+        if (userId == null || userId.isBlank()) {
+            throw PlatformException.badRequest("MISSING_FIELD", "userId is required");
+        }
+        Map<String, Object> user = accessTokenMapper.userById(userId.trim());
+        if (user == null) {
+            throw PlatformException.notFound("user", userId.trim());
+        }
+        Map<String, Object> normalized = normalize(user);
+        if (!"ACTIVE".equals(String.valueOf(normalized.get("status")))) {
+            throw PlatformException.notFound("user", userId.trim());
+        }
+        return normalized;
+    }
+
+    private Map<String, Object> replaceUserTokenInternal(Map<String, Object> user, String createdBy, Instant expiresAt) {
+        accessTokenMapper.deleteUserTokens(String.valueOf(user.get("id")));
+        return createUserToken(createdBy, user, expiresAt);
+    }
+
+    private Map<String, Object> createUserToken(String createdBy, Map<String, Object> user, Instant expiresAt) {
+        Map<String, Object> response = createToken(createdBy, "USER",
+                String.valueOf(user.get("id")),
+                String.valueOf(user.get("display_name")),
+                expiresAt);
+        response.put("subjectId", user.get("username"));
+        response.put("userId", user.get("id"));
+        return response;
     }
 
     private Map<String, Object> createToken(String createdBy, String subjectType, String subjectId,

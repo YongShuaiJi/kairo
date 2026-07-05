@@ -247,4 +247,16 @@
           from rule
          where name = #{name}
     </select>
+
+    <select id="activeUserTokenSubjectId" resultType="string">
+        select t.subject_id
+          from platform_access_token t
+          join user_account u on u.id = t.subject_id
+         where u.username = #{username}
+           and t.subject_type = 'USER'
+           and t.status = 'ACTIVE'
+           and (t.expires_at is null or t.expires_at &gt; current_timestamp)
+         order by t.created_at desc, t.id
+         limit 1
+    </select>
 </mapper>

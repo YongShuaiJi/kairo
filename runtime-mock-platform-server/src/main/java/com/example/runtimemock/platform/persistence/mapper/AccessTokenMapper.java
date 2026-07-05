@@ -38,7 +38,8 @@ public interface AccessTokenMapper {
     int countBootstrapToken();
 
     int insertBootstrapToken(@Param("tokenHash") String tokenHash,
-                             @Param("actor") String actor,
+                             @Param("actorId") String actorId,
+                             @Param("displayName") String displayName,
                              @Param("createdAt") Timestamp createdAt,
                              @Param("expiresAt") Timestamp expiresAt);
 
@@ -63,20 +64,19 @@ public interface AccessTokenMapper {
                            @Param("username") String username,
                            @Param("displayName") String displayName);
 
-    int updateUserProfile(@Param("oldUsername") String oldUsername,
+    int updateUserProfile(@Param("userId") String userId,
                           @Param("newUsername") String newUsername,
                           @Param("displayName") String displayName);
 
-    int updateUserTokenSubject(@Param("oldUsername") String oldUsername,
-                               @Param("newUsername") String newUsername,
-                               @Param("displayName") String displayName);
+    int updateUserTokenDisplayName(@Param("userId") String userId,
+                                   @Param("displayName") String displayName);
 
-    int revokeActiveUserTokens(@Param("username") String username,
+    int revokeActiveUserTokens(@Param("userId") String userId,
                                @Param("revokedAt") Timestamp revokedAt);
 
-    int deleteUserTokens(@Param("username") String username);
+    int deleteUserTokens(@Param("userId") String userId);
 
-    int renewActiveUserTokens(@Param("username") String username,
+    int renewActiveUserTokens(@Param("userId") String userId,
                               @Param("expiresAt") Timestamp expiresAt);
 
     int deleteUserRoleBindings(@Param("userId") String userId);

@@ -77,13 +77,18 @@
 
     <sql id="VisibleTokenTable">
         (
-            select id, subject_type, subject_id,
+            select t.id,
+                   t.subject_type,
+                   case when t.subject_type = 'USER' then coalesce(u.username, t.subject_id) else t.subject_id end as subject_id,
                    case
-                       when status = 'ACTIVE' and (expires_at is null or expires_at &gt; current_timestamp) then 'VALID'
+                       when t.status = 'ACTIVE' and (t.expires_at is null or t.expires_at &gt; current_timestamp) then 'VALID'
                        else 'INVALID'
                    end as status,
-                   created_by, created_at, expires_at, last_used_at, revoked_at
-              from platform_access_token
+                   t.created_by, t.created_at, t.expires_at, t.last_used_at, t.revoked_at
+              from platform_access_token t
+              left join user_account u
+                on t.subject_type = 'USER'
+               and u.id = t.subject_id
         ) platform_access_token
     </sql>
 
