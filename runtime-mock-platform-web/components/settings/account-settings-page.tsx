@@ -148,7 +148,6 @@ export function AccountSettingsPage() {
       <PageHeader
         eyebrow="Account"
         title="用户管理"
-        description="当前账户和个人 Token 已移到右上角用户菜单；超级管理员可在这里创建用户、续期用户 Token、强制更换 Token、删除用户。"
         actions={superAdmin ? (
           <Button variant="secondary" onClick={() => usersQuery.refetch()} disabled={usersQuery.isFetching}>
             <RefreshCw className={usersQuery.isFetching ? "animate-spin" : ""} />
@@ -166,10 +165,6 @@ export function AccountSettingsPage() {
       ) : superAdmin ? (
         <Card className="overflow-hidden">
           <div className="space-y-4 border-b p-5">
-            <div>
-              <p className="text-sm font-semibold text-[color:var(--foreground)]">用户管理</p>
-              <p className="mt-1 text-sm leading-6 text-[color:var(--muted)]">创建用户会同时签发首次 Token；普通用户只有业务操作权限，不能管理用户。</p>
-            </div>
             <div className="grid gap-2 md:grid-cols-[minmax(180px,1fr)_220px_auto]">
               <Input
                 value={newUsername}

@@ -238,13 +238,14 @@ const RESOURCE_COLUMN_WIDTHS: Record<string, string> = {
   rollbackType: "w-[200px] min-w-[200px] max-w-[200px]",
   reason: "w-[320px] min-w-[320px] max-w-[320px]",
   status: "w-[130px] min-w-[130px] max-w-[130px]",
+  terminalSource: "w-[180px] min-w-[180px] max-w-[180px]",
   updatedAt: "w-[150px] min-w-[150px] max-w-[150px]",
   finishedAt: "w-[150px] min-w-[150px] max-w-[150px]",
 };
 
 function resourceTableClass(configKey: string) {
   if (configKey === "rules") return "w-full min-w-[1720px] table-fixed text-left text-sm";
-  if (configKey === "rollouts") return "w-full min-w-[1560px] table-fixed text-left text-sm";
+  if (configKey === "rollouts") return "w-max min-w-[1040px] table-fixed text-left text-sm";
   return "w-full min-w-[1080px] table-fixed text-left text-sm";
 }
 
@@ -1519,7 +1520,7 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
                   const label = detailLabel(activeEndpoint, key);
                   const renderedText = detailText(activeEndpoint, key, renderedValue);
                   return (
-                  <div key={key} className="theme-muted-panel grid grid-cols-[130px_1fr] gap-4 rounded-lg border px-3 py-2.5 text-sm">
+                  <div key={key} className="theme-muted-panel grid grid-cols-[96px_minmax(0,1fr)] gap-2 rounded-lg border px-3 py-2.5 text-sm">
                     <span className="text-[color:var(--muted)]">{label}</span>
                     <span className={`break-all whitespace-pre-wrap text-[color:var(--foreground)] ${isRawId ? "font-mono text-xs" : ""}`}>
                       {renderedText}

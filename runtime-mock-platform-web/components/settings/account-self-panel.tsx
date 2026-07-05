@@ -6,7 +6,6 @@ import { Copy, KeyRound, Save } from "lucide-react";
 import { toast } from "sonner";
 import type { SessionUser } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -41,7 +40,6 @@ export function AccountSelfPanel({ user, onUserChange, className }: AccountSelfP
   const queryClient = useQueryClient();
   const [username, setUsername] = useState("");
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
-  const superAdmin = Boolean(user?.capabilities?.includes("ADMIN"));
 
   useEffect(() => {
     if (user?.subject) {
@@ -84,14 +82,6 @@ export function AccountSelfPanel({ user, onUserChange, className }: AccountSelfP
 
   return (
     <div className={cn("space-y-4", className)} onKeyDown={(event) => event.stopPropagation()}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-[color:var(--foreground)]">我的账户</p>
-          <p className="mt-1 text-xs leading-5 text-[color:var(--muted)]">修改自己的用户名，并更换自己的 Token；不能续期当前 Token。</p>
-        </div>
-        {user ? <Badge variant={superAdmin ? "success" : "info"}>{superAdmin ? "超级管理员" : "业务用户"}</Badge> : null}
-      </div>
-
       {!user ? (
         <div className="space-y-3">
           <Skeleton className="h-10 w-full" />

@@ -266,7 +266,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <DialogContent className="max-w-lg overflow-visible">
           <DialogHeader>
             <DialogTitle>账户与设置</DialogTitle>
-            <DialogDescription>修改自己的用户名，并更换自己的 Token；个人不能续期当前 Token。</DialogDescription>
+            <DialogDescription>修改自己的用户名或者更换自己的 Token。</DialogDescription>
           </DialogHeader>
           <AccountSelfPanel user={user} onUserChange={setUser} />
         </DialogContent>
