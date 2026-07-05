@@ -46,6 +46,8 @@ public interface AccessTokenMapper {
 
     Map<String, Object> userByUsername(@Param("username") String username);
 
+    Map<String, Object> userById(@Param("id") String id);
+
     int activateBootstrapUser(@Param("id") String id,
                               @Param("username") String username,
                               @Param("displayName") String displayName);

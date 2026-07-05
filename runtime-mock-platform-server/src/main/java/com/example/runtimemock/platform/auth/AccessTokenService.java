@@ -232,13 +232,13 @@ public class AccessTokenService {
         if (rawToken == null || rawToken.isBlank()) {
             return;
         }
-        ensureBootstrapUser(actor);
+        String bootstrapActor = ensureBootstrapUser(actor);
         Instant now = clock.instant();
         accessTokenMapper.deleteDifferentBootstrapToken(hash(rawToken));
         if (accessTokenMapper.countBootstrapToken() > 0) {
             return;
         }
-        accessTokenMapper.insertBootstrapToken(hash(rawToken), actor, Timestamp.from(now),
+        accessTokenMapper.insertBootstrapToken(hash(rawToken), bootstrapActor, Timestamp.from(now),
                 Timestamp.from(now.plus(ttlDays, ChronoUnit.DAYS)));
     }
 
@@ -262,19 +262,24 @@ public class AccessTokenService {
         }
     }
 
-    private void ensureBootstrapUser(String username) {
+    private String ensureBootstrapUser(String username) {
         String normalized = username == null || username.isBlank() ? "system" : username.trim();
-        if (accessTokenMapper.countActiveUser(normalized) > 0) {
-            return;
+        Map<String, Object> existingBootstrap = accessTokenMapper.userById(SUPER_ADMIN_USER_ID);
+        if (existingBootstrap != null) {
+            Map<String, Object> normalizedBootstrap = normalize(existingBootstrap);
+            if ("ACTIVE".equals(String.valueOf(normalizedBootstrap.get("status")))) {
+                return String.valueOf(normalizedBootstrap.get("username"));
+            }
         }
         if (accessTokenMapper.activateBootstrapUser(SUPER_ADMIN_USER_ID, normalized, normalized) > 0) {
-            return;
+            return normalized;
         }
         try {
             accessTokenMapper.insertUserForToken(SUPER_ADMIN_USER_ID, normalized, normalized);
         } catch (DuplicateKeyException ignored) {
             accessTokenMapper.activateBootstrapUser(SUPER_ADMIN_USER_ID, normalized, normalized);
         }
+        return normalized;
     }
 
     private Map<String, Object> normalizeUser(String username) {

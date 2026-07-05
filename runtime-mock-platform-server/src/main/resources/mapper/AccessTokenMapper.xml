@@ -130,6 +130,12 @@
          where username = #{username}
     </select>
 
+    <select id="userById" resultType="map">
+        select id, username, display_name, status, created_at
+          from user_account
+         where id = #{id}
+    </select>
+
     <update id="activateBootstrapUser">
         update user_account
            set username = #{username},

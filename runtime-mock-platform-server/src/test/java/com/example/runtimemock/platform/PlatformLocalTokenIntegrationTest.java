@@ -2,6 +2,7 @@ package com.example.runtimemock.platform;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.runtimemock.platform.auth.AccessTokenService;
 import com.example.runtimemock.platform.persistence.mapper.TestPlatformMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,6 +47,9 @@ class PlatformLocalTokenIntegrationTest {
 
     @Autowired
     TestPlatformMapper testPlatformMapper;
+
+    @Autowired
+    AccessTokenService accessTokenService;
 
     @BeforeEach
     void ensureDefaultTopology() {
@@ -261,6 +265,17 @@ class PlatformLocalTokenIntegrationTest {
                         .content(objectMapper.writeValueAsBytes(Map.of("ttlSeconds", 7200))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("CANNOT_RENEW_SELF_TOKEN"));
+
+        JsonNode renamedAdmin = patchJson("/api/v1/auth/me", Map.of(
+                "username", "bootstrap-admin-renamed"
+        ), "bootstrap-test-token");
+        assertThat(renamedAdmin.path("subject").asText()).isEqualTo("bootstrap-admin-renamed");
+        accessTokenService.installBootstrapToken("bootstrap-test-token", "system", 365);
+        mockMvc.perform(get("/api/v1/auth/me")
+                        .header("Authorization", "Bearer bootstrap-test-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.subject").value("bootstrap-admin-renamed"));
+        patchJson("/api/v1/auth/me", Map.of("username", "system"), "bootstrap-test-token");
 
         JsonNode adminRenewed = postJson("/api/v1/auth/users/business-user-renamed/tokens/renew", Map.of(
                 "ttlSeconds", 7200
