@@ -199,6 +199,8 @@ curl -X POST http://127.0.0.1:18082/demo/orders \
 
 ## 7. Groovy 脚本书写规则
 
+更完整的 API、限制、经典场景和复杂 Demo 见 [Runtime Mock Groovy 规则脚本编写手册](./rule-script-authoring-guide.md)。
+
 ### 7.1 脚本入口变量
 
 脚本中可以直接使用以下变量：
