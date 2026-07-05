@@ -262,7 +262,7 @@ docs/api/permission-matrix.md
 docs/api/error-codes.md
 docs/ops/production-readiness-checklist.md
 docs/ops/platform-docker.md
-docs/copyright/runtime-mock-software-copyright-application.md
+docs/copyright/kairo-software-copyright-application.md
 ```
 
 ## Current Product Behavior

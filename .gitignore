@@ -70,6 +70,10 @@ Desktop.ini
 coverage/
 *.exec
 
+# 软著
+docs/copyright
+tools/copyright
+
 # Node / Next.js output
 node_modules/
 .next/

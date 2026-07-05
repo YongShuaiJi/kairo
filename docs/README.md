@@ -27,4 +27,4 @@
 ## 需求与软著
 
 - [产品需求](./requirements/kairo-product-requirements.md)：当前产品需求和功能边界。
-- [软著申请材料草案](./copyright/runtime-mock-software-copyright-application.md)：申请表填报草案、软件说明、源程序和文档鉴别材料建议。
+- [软著申请材料草案](./copyright/kairo-software-copyright-application.md)：申请表填报草案、软件说明、源程序和文档鉴别材料建议。
