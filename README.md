@@ -1,26 +1,26 @@
-# Runtime Mock
+# Kairo
 
 Java runtime method mock and fault-injection MVP based on Java Instrumentation, Byte Buddy Advice, and precompiled Groovy scripts.
 
 ## Modules
 
-- `runtime-mock-bootstrap-api`: bootstrap-safe bridge API used by instrumented business methods.
-- `runtime-mock-api`: public domain model and script API.
-- `runtime-mock-object`: JSON conversion, property path access, object and throwable creation.
-- `runtime-mock-groovy`: save-time Groovy compilation, script class cache, and runtime script base class.
-- `runtime-mock-core`: immutable rule sets, atomic rule registry, dispatcher, validation, sampling, hit limits, fail-open, and reentry guard.
-- `runtime-mock-agent-core`: Byte Buddy transformer manager and value/void method advice.
-- `runtime-mock-agent-server`: local JDK `HttpServer` API, embedded local console, runtime lifecycle, and optional platform command polling.
-- `runtime-mock-agent-core-modern`: shaded modern core assembly loaded by the thin bootstrap agent on JDK 17/21.
-- `runtime-mock-agent-bootstrap`: thin `premain` and `agentmain` entrypoints that reflectively load an isolated core jar.
-- `runtime-mock-attach-cli`: dynamic attach command implemented through reflective JDK Attach API access.
-- `runtime-mock-ops`: local emergency operations CLI.
-- `runtime-mock-sidecar`: attach executor and runtime helper boundary used by the demo attach flow.
-- `runtime-mock-platform-server`: Spring Boot 3 / Java 21 platform image backed by PostgreSQL and Redis.
-- `runtime-mock-platform-web`: independent Next.js / React 19 central management UI with TypeScript,
-  Tailwind CSS, shadcn/ui, Lucide icons, Monaco Editor, and Runtime Mock domain components.
-- `runtime-mock-demo`: Spring Boot-compatible demo domain and `OrderService`.
-- `runtime-mock-integration-tests`: JVM integration tests using dynamic Byte Buddy attachment.
+- `kairo-bootstrap-api`: bootstrap-safe bridge API used by instrumented business methods.
+- `kairo-api`: public domain model and script API.
+- `kairo-object`: JSON conversion, property path access, object and throwable creation.
+- `kairo-groovy`: save-time Groovy compilation, script class cache, and runtime script base class.
+- `kairo-core`: immutable rule sets, atomic rule registry, dispatcher, validation, sampling, hit limits, fail-open, and reentry guard.
+- `kairo-agent-core`: Byte Buddy transformer manager and value/void method advice.
+- `kairo-agent-server`: local JDK `HttpServer` API, embedded local console, runtime lifecycle, and optional platform command polling.
+- `kairo-agent-core-modern`: shaded modern core assembly loaded by the thin bootstrap agent on JDK 17/21.
+- `kairo-agent-bootstrap`: thin `premain` and `agentmain` entrypoints that reflectively load an isolated core jar.
+- `kairo-attach-cli`: dynamic attach command implemented through reflective JDK Attach API access.
+- `kairo-ops`: local emergency operations CLI.
+- `kairo-sidecar`: attach executor and runtime helper boundary used by the demo attach flow.
+- `kairo-platform-server`: Spring Boot 3 / Java 21 platform image backed by PostgreSQL and Redis.
+- `kairo-platform-web`: independent Next.js / React 19 central management UI with TypeScript,
+  Tailwind CSS, shadcn/ui, Lucide icons, Monaco Editor, and Kairo domain components.
+- `kairo-demo`: Spring Boot-compatible demo domain and `OrderService`.
+- `kairo-integration-tests`: JVM integration tests using dynamic Byte Buddy attachment.
 
 ## Build And Test
 
@@ -32,18 +32,18 @@ mvn -DskipTests package
 The main runnable artifacts are generated at:
 
 ```text
-runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar
-runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar
-runtime-mock-attach-cli/target/runtime-mock-attach.jar
-runtime-mock-ops/target/runtime-mock-ops.jar
-runtime-mock-platform-server/target/runtime-mock-platform-server-0.1.0-SNAPSHOT.jar
+kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar
+kairo-agent-core-modern/target/kairo-agent-core-modern.jar
+kairo-attach-cli/target/kairo-attach.jar
+kairo-ops/target/kairo-ops.jar
+kairo-platform-server/target/kairo-platform-server-0.1.0-SNAPSHOT.jar
 ```
 
 ## Premain
 
 ```bash
 java \
-  -javaagent:runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar=coreJar=runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar,bootstrapJar=runtime-mock-bootstrap-api/target/runtime-mock-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev \
+  -javaagent:kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev \
   -jar your-application.jar
 ```
 
@@ -51,7 +51,7 @@ To let the Agent pull platform commands, add `platformUrl` and `platformAgentId`
 
 ```bash
 java \
-  -javaagent:runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar=coreJar=runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar,bootstrapJar=runtime-mock-bootstrap-api/target/runtime-mock-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformAgentId=agent-1 \
+  -javaagent:kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformAgentId=agent-1 \
   -jar your-application.jar
 ```
 
@@ -60,11 +60,11 @@ java \
 The agent jar declares `Agent-Class`, so it can be attached with the packaged CLI:
 
 ```bash
-java -jar runtime-mock-attach-cli/target/runtime-mock-attach.jar \
+java -jar kairo-attach-cli/target/kairo-attach.jar \
   --pid <pid> \
-  --agent runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar \
-  --core-jar runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar \
-  --bootstrap-jar runtime-mock-bootstrap-api/target/runtime-mock-bootstrap-api-0.1.0-SNAPSHOT.jar \
+  --agent kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar \
+  --core-jar kairo-agent-core-modern/target/kairo-agent-core-modern.jar \
+  --bootstrap-jar kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar \
   --port 18080 \
   --token dev
 ```
@@ -72,7 +72,7 @@ java -jar runtime-mock-attach-cli/target/runtime-mock-attach.jar \
 It can also be loaded through JDK tooling:
 
 ```bash
-jcmd <pid> JVMTI.agent_load runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar "attach=true,coreJar=runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar,bootstrapJar=runtime-mock-bootstrap-api/target/runtime-mock-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev"
+jcmd <pid> JVMTI.agent_load kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar "attach=true,coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev"
 ```
 
 For local development, integration tests use:
@@ -118,16 +118,16 @@ The old non-`/v1` paths remain available for MVP compatibility.
 ## Local Ops CLI
 
 ```bash
-java -jar runtime-mock-ops/target/runtime-mock-ops.jar status \
+java -jar kairo-ops/target/kairo-ops.jar status \
   --url http://127.0.0.1:18080 \
   --token dev
 
-java -jar runtime-mock-ops/target/runtime-mock-ops.jar disable-rule \
+java -jar kairo-ops/target/kairo-ops.jar disable-rule \
   --rule-id <ruleId> \
   --url http://127.0.0.1:18080 \
   --token dev
 
-java -jar runtime-mock-ops/target/runtime-mock-ops.jar reset-all \
+java -jar kairo-ops/target/kairo-ops.jar reset-all \
   --reason "break glass event INC-123" \
   --url http://127.0.0.1:18080 \
   --token dev
@@ -141,7 +141,7 @@ Open:
 http://127.0.0.1:18080/
 ```
 
-The console is served directly by `runtime-mock-agent-server`; there is no additional proxy or
+The console is served directly by `kairo-agent-server`; there is no additional proxy or
 in-memory control-plane process.
 
 ## Local demo target
@@ -150,8 +150,8 @@ For a quick end-to-end fault-injection exercise, start the bundled Spring Boot d
 
 ```bash
 java \
-  -javaagent:/Users/jiyongshuai/code/runtime-mock/runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar=coreJar=/Users/jiyongshuai/code/runtime-mock/runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar,bootstrapJar=/Users/jiyongshuai/code/runtime-mock/runtime-mock-bootstrap-api/target/runtime-mock-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformToken=runtime-mock-dev-admin-token-change-me,platformProjectName=runtime-mock,platformApplicationName=runtime-mock-demo \
-  -jar runtime-mock-demo/target/runtime-mock-demo-0.1.0-SNAPSHOT-exec.jar \
+  -javaagent:/Users/jiyongshuai/code/kairo/kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=/Users/jiyongshuai/code/kairo/kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=/Users/jiyongshuai/code/kairo/kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformToken=kairo-dev-admin-token-change-me,platformProjectName=kairo,platformApplicationName=kairo-demo \
+  -jar kairo-demo/target/kairo-demo-0.1.0-SNAPSHOT-exec.jar \
   --server.port=18090
 ```
 
@@ -169,16 +169,16 @@ curl -X POST http://127.0.0.1:18090/demo/orders \
 
 Then open the console, enter token `dev`, search `OrderService`, select a method such as
 `createOrder`, and publish a fault script. Persistent control-plane resources are available only
-from `runtime-mock-platform-server`.
+from `kairo-platform-server`.
 
 ## Production Platform Server
 
 The production control-plane module is the authoritative API for PostgreSQL-backed platform state:
 
 ```bash
-mvn -pl runtime-mock-platform-server -am test
-mvn -pl runtime-mock-platform-server -am -DskipTests package
-java -jar runtime-mock-platform-server/target/runtime-mock-platform-server-0.1.0-SNAPSHOT.jar
+mvn -pl kairo-platform-server -am test
+mvn -pl kairo-platform-server -am -DskipTests package
+java -jar kairo-platform-server/target/kairo-platform-server-0.1.0-SNAPSHOT.jar
 ```
 
 Docker-assisted local platform:
@@ -195,7 +195,7 @@ The central Web console is available at:
 http://127.0.0.1:18380/
 ```
 
-Use the Compose development token `runtime-mock-dev-admin-token-change-me`. The Web process is an
+Use the Compose development token `kairo-dev-admin-token-change-me`. The Web process is an
 independent Next.js deployment and connects to Platform API through its same-origin BFF.
 
 The default architecture deliberately does not require Kubernetes, Keycloak, Vault, Kafka, MinIO, or a cloud KMS.
@@ -206,9 +206,9 @@ Design and requirements:
 
 ```text
 docs/architecture/simplified-platform-architecture.md
-docs/architecture/runtime-mock-platform-web-design.md
+docs/architecture/kairo-platform-web-design.md
 docs/architecture/module-boundary-governance.md
-docs/requirements/runtime-mock-product-requirements.md
+docs/requirements/kairo-product-requirements.md
 ```
 
 Primary platform endpoints:
@@ -290,8 +290,8 @@ docs/copyright/runtime-mock-software-copyright-application.md
 - The agent now uses a thin Java 8 bootstrap jar and a shaded modern core jar. The legacy JDK 8/11 core packaging is still pending.
 - Groovy security combines AST restrictions and bounded runtime execution, but it is not process-level isolation. Only trusted administrators should be allowed to author production rules.
 - Dynamic attach can emit JDK warnings on modern Java; prefer `-javaagent` for stable environments.
-- The former local `runtime-mock-control-server` and single-consumer `runtime-mock-web` modules were removed. The Agent serves its local console directly, and all persistent control-plane state lives in `runtime-mock-platform-server`.
+- The former local `kairo-control-server` and single-consumer `kairo-web` modules were removed. The Agent serves its local console directly, and all persistent control-plane state lives in `kairo-platform-server`.
 - Platform authentication uses revocable opaque user/Agent Bearer Tokens. OIDC remains an optional future identity-provider adapter.
-- `runtime-mock-sidecar` is used by the local attach demo flow; it is not a separate production storage or replay subsystem.
+- `kairo-sidecar` is used by the local attach demo flow; it is not a separate production storage or replay subsystem.
 - Recording, dataset extraction, replay, approval workflow, outbox publishing, Kafka, and MinIO have been removed from the active product surface.
 - Kubernetes, enterprise SSO, performance certification, and multi-region operation are optional future integrations rather than dependencies of the current product.

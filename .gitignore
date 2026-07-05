@@ -20,7 +20,7 @@ logs/
 tmp/
 temp/
 data/
-.runtime-mock/
+.kairo/
 
 # Local environment and secrets
 .env

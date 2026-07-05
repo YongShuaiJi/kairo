@@ -1,6 +1,6 @@
-# Runtime Mock 主题设计语言
+# Kairo 主题设计语言
 
-Runtime Mock 支持三种外观模式：白天、夜晚、跟随系统。白天和夜晚是两套明确的视觉语言；跟随系统不定义第三套颜色，而是根据操作系统偏好自动落到白天或夜晚。
+Kairo 支持三种外观模式：白天、夜晚、跟随系统。白天和夜晚是两套明确的视觉语言；跟随系统不定义第三套颜色，而是根据操作系统偏好自动落到白天或夜晚。
 
 ## 白天模式
 
@@ -34,7 +34,7 @@ Runtime Mock 支持三种外观模式：白天、夜晚、跟随系统。白天�
 
 ## 实现约定
 
-- 主题状态存储在 `localStorage.runtime-mock-theme`，值为 `light`、`dark` 或 `system`。
+- 主题状态存储在 `localStorage.kairo-theme`，值为 `light`、`dark` 或 `system`。
 - HTML 根节点会写入 `data-theme-mode` 和 `data-theme`。
 - 白天有效主题类为 `theme-day`，夜晚有效主题类为 `theme-night`。
 - 新组件优先使用全局 token：`--background`、`--foreground`、`--surface`、`--border`、`--primary`。

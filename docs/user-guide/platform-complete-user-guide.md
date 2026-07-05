@@ -1,4 +1,4 @@
-# Runtime Mock 平台用户使用文档
+# Kairo 平台用户使用文档
 
 本文面向平台使用者，覆盖登录、账户设置、实例注册、Agent 注册、规则开发、规则发布、卸载恢复和 Groovy 脚本入门。阅读后应能完成一次完整的 V1 故障注入演练。
 
@@ -6,9 +6,9 @@
 
 ## 1. 基本概念
 
-- 实例：一个正在运行的 Java 进程，例如某台机器上的 `runtime-mock-demo`。
-- Agent：加载在实例 JVM 内的 Runtime Mock 探针，负责发现方法、应用规则和回执命令。
-- 应用：业务应用名称，例如 `runtime-mock-demo`。
+- 实例：一个正在运行的 Java 进程，例如某台机器上的 `kairo-demo`。
+- Agent：加载在实例 JVM 内的 Kairo 探针，负责发现方法、应用规则和回执命令。
+- 应用：业务应用名称，例如 `kairo-demo`。
 - 环境：实例所属环境，当前使用 `dev`、`sit`、`uat`。
 - 规则：一段 Groovy 脚本，绑定到目标 Java 方法。
 - 规则版本：规则每次保存后的确定版本。
@@ -24,7 +24,7 @@
 本地 Compose 默认 Token：
 
 ```text
-runtime-mock-dev-admin-token-change-me
+kairo-dev-admin-token-change-me
 ```
 
 Token 只在创建或更换时明文展示一次。生产或长期环境中不要使用默认开发 Token。
@@ -74,8 +74,8 @@ Token 只在创建或更换时明文展示一次。生产或长期环境中不�
 
 ```bash
 java \
-  -javaagent:runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar=coreJar=runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar,bootstrapJar=runtime-mock-bootstrap-api/target/runtime-mock-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformToken=runtime-mock-dev-admin-token-change-me,platformProjectName=runtime-mock,platformApplicationName=runtime-mock-demo,platformEnvironmentName=sit \
-  -jar runtime-mock-demo/target/runtime-mock-demo-0.1.0-SNAPSHOT-exec.jar \
+  -javaagent:kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformToken=kairo-dev-admin-token-change-me,platformProjectName=kairo,platformApplicationName=kairo-demo,platformEnvironmentName=sit \
+  -jar kairo-demo/target/kairo-demo-0.1.0-SNAPSHOT-exec.jar \
   --server.port=18090
 ```
 
@@ -234,14 +234,14 @@ curl -X POST http://127.0.0.1:18082/demo/orders \
 
 ## 8. Groovy 脚本入门
 
-更完整的 API、限制、经典场景和复杂 Demo 见 [Runtime Mock Groovy 规则脚本编写手册](./rule-script-authoring-guide.md)。
+更完整的 API、限制、经典场景和复杂 Demo 见 [Kairo Groovy 规则脚本编写手册](./rule-script-authoring-guide.md)。
 
 ### 8.1 不改变行为
 
 阶段：`BEFORE`
 
 ```groovy
-log.info("Runtime Mock rule hit")
+log.info("Kairo rule hit")
 return mock.proceed()
 ```
 
@@ -252,7 +252,7 @@ return mock.proceed()
 ```groovy
 return mock.throwException(
     "java.lang.IllegalStateException",
-    "Runtime Mock injected failure"
+    "Kairo injected failure"
 )
 ```
 
@@ -267,7 +267,7 @@ def userId = mock.get(request, "userId")
 if (userId == "u-001") {
     return mock.throwException(
         "java.lang.IllegalStateException",
-        "user u-001 blocked by Runtime Mock"
+        "user u-001 blocked by Kairo"
     )
 }
 
@@ -285,7 +285,7 @@ return mock.returnJson('''
   "userId": "u-001",
   "amount": 12.34,
   "status": "MOCKED",
-  "message": "returned by Runtime Mock"
+  "message": "returned by Kairo"
 }
 ''')
 ```
@@ -296,7 +296,7 @@ return mock.returnJson('''
 
 ```groovy
 mock.set(result, "status", "PROCESSING")
-mock.set(result, "message", "changed by Runtime Mock")
+mock.set(result, "message", "changed by Kairo")
 
 return mock.returnValue(result)
 ```
@@ -312,7 +312,7 @@ return mock.returnJson('''
 {
   "id": "fallback-order",
   "status": "FALLBACK",
-  "message": "fallback by Runtime Mock"
+  "message": "fallback by Kairo"
 }
 ''')
 ```

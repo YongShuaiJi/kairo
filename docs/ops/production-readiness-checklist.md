@@ -1,4 +1,4 @@
-# Runtime Mock 生产发布级检查清单
+# Kairo 生产发布级检查清单
 
 本文用于判断当前迭代是否具备阶段性发布条件。检查目标不是扩大功能范围，而是确认 V1 故障注入闭环在工程结构、权限、数据、发布、回滚和文档层面可以被内部团队稳定使用。
 
@@ -6,7 +6,7 @@
 
 当前 V1 发布范围：
 
-- Java 进程通过 premain、agentmain 或 attach 加载 Runtime Mock Agent。
+- Java 进程通过 premain、agentmain 或 attach 加载 Kairo Agent。
 - Agent 自动注册应用、环境、实例和自身能力。
 - Web 控制台查看实例、Agent、规则、发布计划和执行结果。
 - 用户编写 Groovy 故障注入脚本，完成校验、试运行、保存版本。
@@ -26,9 +26,9 @@
 每次发布前至少执行：
 
 ```bash
-mvn -pl runtime-mock-platform-server -am test -DskipITs
+mvn -pl kairo-platform-server -am test -DskipITs
 
-cd runtime-mock-platform-web
+cd kairo-platform-web
 npm run typecheck
 npm run lint
 npm run build

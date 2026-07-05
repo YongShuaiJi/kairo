@@ -1,13 +1,13 @@
-# Runtime Mock 简化平台架构
+# Kairo 简化平台架构
 
 ## 1. 决策摘要
 
-Runtime Mock V1 采用“独立 Platform Web + 模块化控制面 + JVM Agent”的结构。项目保留
+Kairo V1 采用“独立 Platform Web + 模块化控制面 + JVM Agent”的结构。项目保留
 PostgreSQL 和 Redis 作为当前运行依赖，但不把 Kubernetes、企业 SSO、Vault、云 KMS、Kafka
 或对象存储设为运行前提。
 
 这是当前已经实现并完成联调的架构。Platform API、Agent 和独立的
-`runtime-mock-platform-web` 前端工程共同构成产品运行面；脚本校验与试运行、详情查询、
+`kairo-platform-web` 前端工程共同构成产品运行面；脚本校验与试运行、详情查询、
 聚合仪表盘和统一分页查询均由真实 Platform API 提供。
 
 目标不是削弱生产安全，而是把必须能力与可选企业集成分开：
@@ -74,7 +74,7 @@ Kafka Outbox、MinIO、录制对象、数据集对象、提取产物和回放结
 - 明文只在创建时返回一次；
 - `header-dev` 只用于显式启用的 loopback 测试环境。
 
-首次启动通过 `RUNTIME_MOCK_BOOTSTRAP_TOKEN` 注入管理员 Token。管理员随后通过
+首次启动通过 `KAIRO_BOOTSTRAP_TOKEN` 注入管理员 Token。管理员随后通过
 `/api/v1/auth/tokens` 为用户或 Agent 签发独立 Token。
 
 未来接入 OIDC 时，应新增身份提供器适配器，不修改 RBAC 与业务服务。
@@ -92,17 +92,17 @@ V1 不处理大型对象加密。平台必须保证访问 Token 只保存哈希�
 - Public API、Core、Groovy：分别承担公共契约、规则引擎和可替换脚本实现；
 - Agent Core、Agent Server、Modern Assembly：分别承担字节码增强、运行时集成和发行打包；
 - Platform Server：模块化控制面，运行 API 和 V1 调度器。
-- `runtime-mock-platform-web`：Next.js + React 19 中央管理平台，独立构建和发布。
+- `kairo-platform-web`：Next.js + React 19 中央管理平台，独立构建和发布。
 
 现阶段不把平台领域代码拆成多个独立仓库。平台 API 和调度器共享代码和数据库 schema。
 
 Agent 的单消费者静态资源不再独立成模块，本地控制台已经并入 Agent Server。中央管理平台
-具有独立产品和工程边界，因此单独建设 `runtime-mock-platform-web`。早期内存
+具有独立产品和工程边界，因此单独建设 `kairo-platform-web`。早期内存
 `control-server` 与正式 Platform 职责重复，已经删除。完整判断规则见
 `module-boundary-governance.md`。
 
 Platform Web 的页面、会话、设计系统和 Monaco 编辑器方案见
-`runtime-mock-platform-web-design.md`。
+`kairo-platform-web-design.md`。
 
 ## 7. 明确不做
 

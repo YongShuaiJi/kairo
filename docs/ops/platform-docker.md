@@ -6,7 +6,7 @@
 ./scripts/platform-up.sh
 ```
 
-The script packages `runtime-mock-platform-server`, starts PostgreSQL and Redis, then starts the
+The script packages `kairo-platform-server`, starts PostgreSQL and Redis, then starts the
 Platform API, the independent Next.js Platform Web process, and the demo application.
 
 The compose profile enables:
@@ -40,7 +40,7 @@ in an encrypted HttpOnly session cookie and forwards authenticated requests to `
 The Compose development administrator token is:
 
 ```text
-runtime-mock-dev-admin-token-change-me
+kairo-dev-admin-token-change-me
 ```
 
 It is intentionally a local development value and must be replaced outside Compose.
@@ -50,10 +50,10 @@ Redis fencing check:
 ```bash
 curl -fsS -X POST http://127.0.0.1:18280/api/v1/fencing-tokens \
   -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer runtime-mock-dev-admin-token-change-me' \
+  -H 'Authorization: Bearer kairo-dev-admin-token-change-me' \
   -d '{"resourceType":"rule","resourceId":"docker-check-rule","purpose":"check","ttlSeconds":300,"reason":"check"}'
 
-docker exec runtime-mock-redis redis-cli keys 'runtime-mock:fencing:*'
+docker exec kairo-redis redis-cli keys 'kairo:fencing:*'
 ```
 
 ## Stop
@@ -66,20 +66,20 @@ docker exec runtime-mock-redis redis-cli keys 'runtime-mock:fencing:*'
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `RUNTIME_MOCK_DB_URL` | `jdbc:postgresql://127.0.0.1:5432/runtime_mock` | PostgreSQL JDBC URL |
-| `RUNTIME_MOCK_DB_USER` | `runtime_mock` | PostgreSQL user |
-| `RUNTIME_MOCK_DB_PASSWORD` | `runtime_mock` | PostgreSQL password |
-| `RUNTIME_MOCK_API_ENABLED` | `true` | Enables business API controllers |
-| `RUNTIME_MOCK_REDIS_HOST` | `127.0.0.1` | Redis host for fencing |
-| `RUNTIME_MOCK_REDIS_PORT` | `6379` | Redis port for fencing |
-| `RUNTIME_MOCK_FENCING_REDIS_ENABLED` | `false` | Enables Redis-backed fencing sequences |
-| `RUNTIME_MOCK_FENCING_KEY_PREFIX` | `runtime-mock:fencing:` | Redis fencing key prefix |
-| `RUNTIME_MOCK_AUTH_MODE` | `local-token` | `local-token` or loopback-only `header-dev` |
-| `RUNTIME_MOCK_BOOTSTRAP_TOKEN` | empty | Initial administrator token |
-| `RUNTIME_MOCK_ROLLOUT_SCHEDULER_ENABLED` | `true` | Enables rollout executor |
-| `RUNTIME_MOCK_PLATFORM_API_URL` | `http://127.0.0.1:18280` | Platform API used by Platform Web BFF |
-| `RUNTIME_MOCK_WEB_SESSION_KEY` | none | At least 32 characters; encrypts the Web session cookie |
-| `RUNTIME_MOCK_WEB_DEMO_MODE` | `false` | Enables explicit isolated frontend demo data |
+| `KAIRO_DB_URL` | `jdbc:postgresql://127.0.0.1:5432/kairo` | PostgreSQL JDBC URL |
+| `KAIRO_DB_USER` | `kairo` | PostgreSQL user |
+| `KAIRO_DB_PASSWORD` | `kairo` | PostgreSQL password |
+| `KAIRO_API_ENABLED` | `true` | Enables business API controllers |
+| `KAIRO_REDIS_HOST` | `127.0.0.1` | Redis host for fencing |
+| `KAIRO_REDIS_PORT` | `6379` | Redis port for fencing |
+| `KAIRO_FENCING_REDIS_ENABLED` | `false` | Enables Redis-backed fencing sequences |
+| `KAIRO_FENCING_KEY_PREFIX` | `kairo:fencing:` | Redis fencing key prefix |
+| `KAIRO_AUTH_MODE` | `local-token` | `local-token` or loopback-only `header-dev` |
+| `KAIRO_BOOTSTRAP_TOKEN` | empty | Initial administrator token |
+| `KAIRO_ROLLOUT_SCHEDULER_ENABLED` | `true` | Enables rollout executor |
+| `KAIRO_PLATFORM_API_URL` | `http://127.0.0.1:18280` | Platform API used by Platform Web BFF |
+| `KAIRO_WEB_SESSION_KEY` | none | At least 32 characters; encrypts the Web session cookie |
+| `KAIRO_WEB_DEMO_MODE` | `false` | Enables explicit isolated frontend demo data |
 
 The API writes authoritative state to PostgreSQL. Redis is only used for fencing-token sequence
 coordination; it is not the source of truth.

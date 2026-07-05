@@ -1,13 +1,13 @@
-# Runtime Mock 产品需求文档（PRD）
+# Kairo 产品需求文档（PRD）
 
 > 文档状态：产品与研发基线
 > 适用阶段：V1 故障注入闭环
 > 更新日期：2026-07-04
-> 配套设计：[`../architecture/runtime-mock-platform-web-design.md`](../architecture/runtime-mock-platform-web-design.md)
+> 配套设计：[`../architecture/kairo-platform-web-design.md`](../architecture/kairo-platform-web-design.md)
 
 ## 1. 产品定义
 
-Runtime Mock V1 是面向 Java 应用的运行时 Mock 与故障注入平台。系统通过 JVM Agent 在不修改
+Kairo V1 是面向 Java 应用的运行时 Mock 与故障注入平台。系统通过 JVM Agent 在不修改
 业务代码的前提下，对指定类和方法应用受控规则；通过中央平台完成 Agent 接入、目标发现、规则
 编写、版本管理、发布执行、运行观测和审计。
 
@@ -52,7 +52,7 @@ Runtime Mock V1 是面向 Java 应用的运行时 Mock 与故障注入平台。�
 
 ### 4.1 中央管理平台
 
-`runtime-mock-platform-web` 是独立的现代 Web 前端，采用：
+`kairo-platform-web` 是独立的现代 Web 前端，采用：
 
 - Next.js App Router；
 - React 19；
@@ -60,7 +60,7 @@ Runtime Mock V1 是面向 Java 应用的运行时 Mock 与故障注入平台。�
 - Tailwind CSS；
 - shadcn/ui；
 - Lucide 图标；
-- Runtime Mock 专属组件；
+- Kairo 专属组件；
 - Monaco Editor。
 
 它具有独立源码、构建、测试、Docker 镜像和发布周期，通过 Platform API 使用平台能力。
@@ -164,7 +164,7 @@ Agent 详情至少展示：
 规则编辑器必须支持：
 
 - Groovy 语法高亮、行号、括号匹配、缩进、搜索和撤销；
-- Runtime Mock 上下文变量、方法和模板自动补全；
+- Kairo 上下文变量、方法和模板自动补全；
 - 悬浮帮助、代码片段和快捷键说明；
 - 服务端语法、安全策略和类型/上下文诊断；
 - 错误和警告定位到行列；
@@ -348,11 +348,11 @@ Web 会话密钥只能由部署环境注入，不得进入镜像、日志或前�
 
 ### MOD-2
 
-`runtime-mock-platform-web` 具有独立技术栈、用户入口、构建、测试和发布边界，应作为独立模块保留。
+`kairo-platform-web` 具有独立技术栈、用户入口、构建、测试和发布边界，应作为独立模块保留。
 
 ### MOD-3
 
-Agent 本地静态控制台只有 Agent Server 一个消费者，继续内嵌在 `runtime-mock-agent-server`，
+Agent 本地静态控制台只有 Agent Server 一个消费者，继续内嵌在 `kairo-agent-server`，
 不得与中央 Platform Web 混为一套产品。
 
 ### MOD-4

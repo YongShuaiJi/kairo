@@ -1,6 +1,6 @@
-# Runtime Mock Groovy 规则脚本编写手册
+# Kairo Groovy 规则脚本编写手册
 
-本文面向规则开发者，说明 Runtime Mock Groovy 脚本的执行模型、入口变量、Mock API、类型约束、安全限制、经典场景和复杂 Demo。脚本运行在被测 JVM 的业务线程内，必须短小、明确、可回滚，只对当前一次方法调用做决策。
+本文面向规则开发者，说明 Kairo Groovy 脚本的执行模型、入口变量、Mock API、类型约束、安全限制、经典场景和复杂 Demo。脚本运行在被测 JVM 的业务线程内，必须短小、明确、可回滚，只对当前一次方法调用做决策。
 
 ## 1. 核心原则
 
@@ -25,7 +25,7 @@ def userId = mock.get(request, "userId")
 if (userId == "u-001") {
     return mock.throwException(
         "java.lang.IllegalStateException",
-        "user u-001 blocked by Runtime Mock"
+        "user u-001 blocked by Kairo"
     )
 }
 
@@ -118,7 +118,7 @@ return mock.returnJson('''
 {
   "id": "mock-order-001",
   "status": "MOCKED",
-  "message": "created by Runtime Mock"
+  "message": "created by Kairo"
 }
 ''')
 ```
@@ -132,14 +132,14 @@ return mock.returnJson('''
 ```groovy
 return mock.throwException(
     "java.lang.IllegalStateException",
-    "Runtime Mock injected failure"
+    "Kairo injected failure"
 )
 ```
 
 用异常对象：
 
 ```groovy
-return mock.throwException(new IllegalStateException("Runtime Mock injected failure"))
+return mock.throwException(new IllegalStateException("Kairo injected failure"))
 ```
 
 异常类型规则：
@@ -238,7 +238,7 @@ log.error("script branch failed", throwable)
 阶段：`BEFORE`
 
 ```groovy
-log.info("Runtime Mock rule hit: " + method.name())
+log.info("Kairo rule hit: " + method.name())
 return mock.proceed()
 ```
 
@@ -269,7 +269,7 @@ if (userId == "u-001") {
     log.warn("inject failure for userId=" + userId)
     return mock.throwException(
         "java.lang.IllegalStateException",
-        "user u-001 blocked by Runtime Mock"
+        "user u-001 blocked by Kairo"
     )
 }
 
@@ -288,7 +288,7 @@ def amount = mock.get(args[0], "amount")
 if (amount != null && amount > 1000) {
     return mock.throwException(
         "java.lang.IllegalStateException",
-        "large amount blocked by Runtime Mock"
+        "large amount blocked by Kairo"
     )
 }
 
@@ -300,7 +300,7 @@ return mock.proceed()
 阶段：`BEFORE`
 
 ```groovy
-log.warn("skip notification method by Runtime Mock")
+log.warn("skip notification method by Kairo")
 return mock.returnValue(null)
 ```
 
@@ -337,7 +337,7 @@ return mock.returnJson('''
   "userId": "u-001",
   "amount": 12.34,
   "status": "MOCKED",
-  "message": "returned by Runtime Mock"
+  "message": "returned by Kairo"
 }
 ''')
 ```
@@ -398,7 +398,7 @@ return mock.returnJson('''
 {
   "id": "fallback-order",
   "status": "FALLBACK",
-  "message": "fallback by Runtime Mock"
+  "message": "fallback by Kairo"
 }
 ''')
 ```
@@ -412,7 +412,7 @@ log.warn("replace exception: " + throwable.getMessage())
 
 return mock.throwException(
     "java.lang.IllegalStateException",
-    "exception replaced by Runtime Mock"
+    "exception replaced by Kairo"
 )
 ```
 
@@ -491,7 +491,7 @@ def originalCity = mock.get(request, "address.city")
 
 if (originalCity == "Shanghai") {
     mock.set(request, "address.city", "Hangzhou")
-    mock.set(request, "audit.remark", "city rewritten by Runtime Mock")
+    mock.set(request, "audit.remark", "city rewritten by Kairo")
     log.info("rewrite city from Shanghai to Hangzhou")
     return mock.proceed(args)
 }
@@ -546,7 +546,7 @@ def provider = mock.get(result, "provider")
 
 if (status == "SUCCESS" && provider == "inventory") {
     mock.set(result, "status", "PARTIAL_FAILED")
-    mock.set(result, "message", "inventory branch failed by Runtime Mock")
+    mock.set(result, "message", "inventory branch failed by Kairo")
     return mock.returnValue(result)
 }
 

@@ -1,11 +1,11 @@
-# Runtime Mock 文档索引
+# Kairo 文档索引
 
 ## 开发者文档
 
 - [平台技术使用文档](./developer/platform-technical-guide.md)：环境搭建、模块边界、产品设计、代码设计、实例注册、Agent 设计和规则发布设计。
 - [简化平台架构](./architecture/simplified-platform-architecture.md)：当前 V1 控制面和 Agent 架构。
 - [模块边界治理](./architecture/module-boundary-governance.md)：模块职责和保留理由。
-- [Web 设计说明](./architecture/runtime-mock-platform-web-design.md)：前端结构和交互设计。
+- [Web 设计说明](./architecture/kairo-platform-web-design.md)：前端结构和交互设计。
 
 ## 用户文档
 
@@ -26,5 +26,5 @@
 
 ## 需求与软著
 
-- [产品需求](./requirements/runtime-mock-product-requirements.md)：当前产品需求和功能边界。
+- [产品需求](./requirements/kairo-product-requirements.md)：当前产品需求和功能边界。
 - [软著申请材料草案](./copyright/runtime-mock-software-copyright-application.md)：申请表填报草案、软件说明、源程序和文档鉴别材料建议。

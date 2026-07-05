@@ -1,6 +1,6 @@
-# Runtime Mock 平台使用手册
+# Kairo 平台使用手册
 
-Runtime Mock 是面向 Java 应用的运行时故障注入平台。当前版本只聚焦故障注入闭环：在线 Agent 发现目标方法、控制台创建规则、发布到 DEV/SIT/UAT 环境、需要恢复时卸载规则。
+Kairo 是面向 Java 应用的运行时故障注入平台。当前版本只聚焦故障注入闭环：在线 Agent 发现目标方法、控制台创建规则、发布到 DEV/SIT/UAT 环境、需要恢复时卸载规则。
 
 ## 适用场景
 
@@ -11,7 +11,7 @@ Runtime Mock 是面向 Java 应用的运行时故障注入平台。当前版本�
 
 ## 核心对象
 
-- 应用：业务应用，例如 `runtime-mock-demo`。
+- 应用：业务应用，例如 `kairo-demo`。
 - 环境：固定为 `DEV`、`SIT`、`UAT`。
 - Agent：挂载在 Java 进程中的运行时探针，负责上报实例、目标方法，并执行发布/卸载命令。
 - 规则：一段 Groovy 脚本，绑定到一个 Java 方法和执行阶段。
@@ -24,7 +24,7 @@ Runtime Mock 是面向 Java 应用的运行时故障注入平台。当前版本�
    打开 Web 控制台，使用 Platform Token 登录。Token 只提交给服务端会话，不写入浏览器本地存储。
 
 2. 确认 Agent 在线。
-   进入“Agent 管理”，确认目标应用实例状态为已启用或在线。实例详情中应能看到真实应用名和环境，例如 `runtime-mock-demo / SIT`。
+   进入“Agent 管理”，确认目标应用实例状态为已启用或在线。实例详情中应能看到真实应用名和环境，例如 `kairo-demo / SIT`。
 
 3. 创建规则。
    进入“规则中心”，点击创建规则。选择应用、环境和目标方法，填写规则名称，选择执行阶段，然后编写 Groovy 脚本。
@@ -59,7 +59,7 @@ Runtime Mock 是面向 Java 应用的运行时故障注入平台。当前版本�
 
 - 规则名称：`SIT 下单接口故障注入试用规则`
 - 规则 ID：`rule-96bdae0b-11e7-4bfd-99dd-3a2c8d08b8e0`
-- 应用：`runtime-mock-demo`
+- 应用：`kairo-demo`
 - 环境：`SIT`
 - 目标方法：`com.example.demo.OrderService#createOrder(Lcom/example/demo/CreateOrderRequest;)Lcom/example/demo/Order;`
 - 脚本效果：调用前抛出 `IllegalStateException`

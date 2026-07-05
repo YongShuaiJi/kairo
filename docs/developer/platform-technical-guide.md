@@ -1,6 +1,6 @@
-# Runtime Mock 平台技术使用文档
+# Kairo 平台技术使用文档
 
-本文面向需要接入、二次开发或本地排查 Runtime Mock 的开发者。目标是让开发者能快速搭建环境、理解平台功能、看懂主要代码边界，并完成一个从实例注册到规则发布的最小闭环。
+本文面向需要接入、二次开发或本地排查 Kairo 的开发者。目标是让开发者能快速搭建环境、理解平台功能、看懂主要代码边界，并完成一个从实例注册到规则发布的最小闭环。
 
 当前迭代是 V1 故障注入闭环，不包含录制、数据集、提取、回放、审批流、Kafka Outbox、MinIO 对象存储或独立 worker。
 
@@ -10,7 +10,7 @@
 
 - JDK 21，用于构建 Platform Server 和运行示例容器。
 - Maven 3.9+，用于构建 Java 多模块工程。
-- Node.js 20+，用于本地构建 `runtime-mock-platform-web`。
+- Node.js 20+，用于本地构建 `kairo-platform-web`。
 - Docker 和 Docker Compose，用于启动 PostgreSQL、Redis、Platform、Web、Demo 和 attach-executor。
 
 ### 1.2 构建与测试
@@ -19,7 +19,7 @@
 mvn test
 mvn -DskipTests package
 
-cd runtime-mock-platform-web
+cd kairo-platform-web
 npm install
 npm run typecheck
 npm run lint
@@ -43,7 +43,7 @@ npm run build
 本地 Compose 管理 Token：
 
 ```text
-runtime-mock-dev-admin-token-change-me
+kairo-dev-admin-token-change-me
 ```
 
 本地 Demo 的 attach-executor 与被测程序 demo 放在一起运行。attach-executor 的职责是贴近 demo JVM，执行 attach、deactivate、reload 等 JVM 操作；Platform 只负责生成命令、记录状态和接收回执。
@@ -58,7 +58,7 @@ runtime-mock-dev-admin-token-change-me
 
 ### 2.1 Platform Server
 
-`runtime-mock-platform-server` 是 V1 权威控制面，主要负责：
+`kairo-platform-server` 是 V1 权威控制面，主要负责：
 
 - 认证：校验 Bearer Token，维护本地 Token 元数据。
 - 资源管理：应用实例、环境、Agent、sidecar、attach-executor、规则和规则版本。
@@ -102,7 +102,7 @@ GET  /api/v1/rollout-executions
 
 ### 2.2 Platform Web
 
-`runtime-mock-platform-web` 是独立 Next.js 控制台。它通过同源 BFF 访问 Platform API，不保存权威业务数据。
+`kairo-platform-web` 是独立 Next.js 控制台。它通过同源 BFF 访问 Platform API，不保存权威业务数据。
 
 主要页面：
 
@@ -119,13 +119,13 @@ GET  /api/v1/rollout-executions
 前端关键代码：
 
 ```text
-runtime-mock-platform-web/app/(platform)        页面路由
-runtime-mock-platform-web/components/layout     应用框架和导航
-runtime-mock-platform-web/components/resource   通用资源列表/表单
-runtime-mock-platform-web/components/editor     规则脚本工作台
-runtime-mock-platform-web/components/overview   总览看板
-runtime-mock-platform-web/lib/api               BFF API client 和类型
-runtime-mock-platform-web/lib/resource-config.ts 资源页面配置
+kairo-platform-web/app/(platform)        页面路由
+kairo-platform-web/components/layout     应用框架和导航
+kairo-platform-web/components/resource   通用资源列表/表单
+kairo-platform-web/components/editor     规则脚本工作台
+kairo-platform-web/components/overview   总览看板
+kairo-platform-web/lib/api               BFF API client 和类型
+kairo-platform-web/lib/resource-config.ts 资源页面配置
 ```
 
 ### 2.3 Agent Runtime
@@ -156,32 +156,32 @@ Agent 运行在被测 Java 进程内，负责：
 
 ### 3.1 Java 核心模块
 
-- `runtime-mock-bootstrap-api`：被增强业务方法可访问的 bootstrap-safe 桥接 API。
-- `runtime-mock-api`：规则脚本公共 API，包括 `MockApi`、`MockDecision`、`InvocationContext`。
-- `runtime-mock-object`：JSON 转对象、属性路径读写、返回对象和异常对象构造。
-- `runtime-mock-groovy`：Groovy 编译、脚本缓存、脚本安全策略和脚本基类。
-- `runtime-mock-core`：规则注册表、规则调度、采样、命中限制、fail-open、重入保护。
-- `runtime-mock-agent-core`：Byte Buddy transformer 和方法 Advice。
-- `runtime-mock-agent-server`：Agent 本地 HTTP API、嵌入式本地控制台、Platform 命令轮询。
-- `runtime-mock-agent-core-modern`：面向 JDK 17/21 的 shaded Agent Core 发行包。
-- `runtime-mock-agent-bootstrap`：轻量 `premain` / `agentmain` 入口，隔离加载 core jar。
-- `runtime-mock-attach-cli`：基于 JDK Attach API 的动态 attach 命令。
-- `runtime-mock-ops`：本地应急运维 CLI。
-- `runtime-mock-sidecar`：attach executor 与运行时辅助边界。
-- `runtime-mock-demo`：本地 Spring Boot demo。
-- `runtime-mock-integration-tests`：JVM 动态 attach 集成测试。
+- `kairo-bootstrap-api`：被增强业务方法可访问的 bootstrap-safe 桥接 API。
+- `kairo-api`：规则脚本公共 API，包括 `MockApi`、`MockDecision`、`InvocationContext`。
+- `kairo-object`：JSON 转对象、属性路径读写、返回对象和异常对象构造。
+- `kairo-groovy`：Groovy 编译、脚本缓存、脚本安全策略和脚本基类。
+- `kairo-core`：规则注册表、规则调度、采样、命中限制、fail-open、重入保护。
+- `kairo-agent-core`：Byte Buddy transformer 和方法 Advice。
+- `kairo-agent-server`：Agent 本地 HTTP API、嵌入式本地控制台、Platform 命令轮询。
+- `kairo-agent-core-modern`：面向 JDK 17/21 的 shaded Agent Core 发行包。
+- `kairo-agent-bootstrap`：轻量 `premain` / `agentmain` 入口，隔离加载 core jar。
+- `kairo-attach-cli`：基于 JDK Attach API 的动态 attach 命令。
+- `kairo-ops`：本地应急运维 CLI。
+- `kairo-sidecar`：attach executor 与运行时辅助边界。
+- `kairo-demo`：本地 Spring Boot demo。
+- `kairo-integration-tests`：JVM 动态 attach 集成测试。
 
 ### 3.2 平台模块
 
-- `runtime-mock-platform-server`：Spring Boot 3 / Java 21 控制面，依赖 PostgreSQL 和 Redis。
-- `runtime-mock-platform-web`：Next.js / React 19 前端控制台。
+- `kairo-platform-server`：Spring Boot 3 / Java 21 控制面，依赖 PostgreSQL 和 Redis。
+- `kairo-platform-web`：Next.js / React 19 前端控制台。
 
 ### 3.3 数据库迁移
 
 迁移脚本位于：
 
 ```text
-runtime-mock-platform-server/src/main/resources/db/migration
+kairo-platform-server/src/main/resources/db/migration
 ```
 
 开发时新增表结构必须通过 Flyway 迁移提交，不能只改本地数据库。当前 V1 使用中的核心表覆盖应用、环境、实例、Agent、规则、规则版本、发布计划、执行记录、命令、Token 和审计。
@@ -296,8 +296,8 @@ Token 规则：
 
 Agent 注册时必须上报真实业务标识：
 
-- `projectName`：项目名，例如 `runtime-mock`。
-- `applicationName`：应用名，例如 `runtime-mock-demo`。
+- `projectName`：项目名，例如 `kairo`。
+- `applicationName`：应用名，例如 `kairo-demo`。
 - `environmentName`：环境名，例如 `dev`、`sit`、`uat`。
 - `hostname`：运行主机名。
 - `processId`：进程 ID。
@@ -311,8 +311,8 @@ Platform 根据项目名、应用名和环境名复用或创建资源，并生�
 
 ```json
 {
-  "projectName": "runtime-mock",
-  "applicationName": "runtime-mock-demo",
+  "projectName": "kairo",
+  "applicationName": "kairo-demo",
   "environmentName": "sit",
   "hostname": "demo-host",
   "processId": "12345",
@@ -353,8 +353,8 @@ premain 在业务 JVM 启动时加载，适合可改启动参数的应用：
 
 ```bash
 java \
-  -javaagent:runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar=coreJar=runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar,bootstrapJar=runtime-mock-bootstrap-api/target/runtime-mock-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformToken=runtime-mock-dev-admin-token-change-me,platformProjectName=runtime-mock,platformApplicationName=runtime-mock-demo,platformEnvironmentName=sit \
-  -jar runtime-mock-demo/target/runtime-mock-demo-0.1.0-SNAPSHOT-exec.jar \
+  -javaagent:kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformToken=kairo-dev-admin-token-change-me,platformProjectName=kairo,platformApplicationName=kairo-demo,platformEnvironmentName=sit \
+  -jar kairo-demo/target/kairo-demo-0.1.0-SNAPSHOT-exec.jar \
   --server.port=18090
 ```
 
@@ -363,11 +363,11 @@ java \
 attach 模式适合已经运行的 JVM。可以通过 attach CLI 或 attach-executor 触发。
 
 ```bash
-java -jar runtime-mock-attach-cli/target/runtime-mock-attach.jar \
+java -jar kairo-attach-cli/target/kairo-attach.jar \
   --pid <pid> \
-  --agent runtime-mock-agent-bootstrap/target/runtime-mock-agent-bootstrap.jar \
-  --core-jar runtime-mock-agent-core-modern/target/runtime-mock-agent-core-modern.jar \
-  --bootstrap-jar runtime-mock-bootstrap-api/target/runtime-mock-bootstrap-api-0.1.0-SNAPSHOT.jar \
+  --agent kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar \
+  --core-jar kairo-agent-core-modern/target/kairo-agent-core-modern.jar \
+  --bootstrap-jar kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar \
   --port 18080 \
   --token dev
 ```
@@ -462,7 +462,7 @@ Platform 发布链路优先通过 Agent 轮询命令执行，不建议人工直�
 ```bash
 mvn test
 
-cd runtime-mock-platform-web
+cd kairo-platform-web
 npm run typecheck
 npm run lint
 npm run build

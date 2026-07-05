@@ -1,8 +1,8 @@
-# Runtime Mock Platform Web 产品与工程设计
+# Kairo Platform Web 产品与工程设计
 
 > 文档状态：实施基线
 > 更新日期：2026-06-18
-> 对应 PRD：[`../requirements/runtime-mock-product-requirements.md`](../requirements/runtime-mock-product-requirements.md)
+> 对应 PRD：[`../requirements/kairo-product-requirements.md`](../requirements/kairo-product-requirements.md)
 
 > 实施状态：独立 Next.js 工程、同源 BFF、Token 会话、平台导航、各领域资源页、总览、
 > Monaco 规则工作台、Docker 和测试骨架已落地。后端尚缺接口继续按第 12.4 节管理，
@@ -10,7 +10,7 @@
 
 ## 1. 设计结论
 
-新增独立模块 `runtime-mock-platform-web`，作为 Runtime Mock 中央管理平台的唯一完整 Web
+新增独立模块 `kairo-platform-web`，作为 Kairo 中央管理平台的唯一完整 Web
 入口。技术栈固定为：
 
 - Next.js App Router；
@@ -20,14 +20,14 @@
 - shadcn/ui；
 - Lucide Icons；
 - Monaco Editor；
-- Runtime Mock 专属组件。
+- Kairo 专属组件。
 
 纪年堂项目提供 Next.js、React、Tailwind、Lucide、动效和交互实现经验，但不直接复制其
-家族档案业务组件、暖色主题或页面结构。Runtime Mock 建立独立的运维工具设计语言。
+家族档案业务组件、暖色主题或页面结构。Kairo 建立独立的运维工具设计语言。
 
 ## 2. 为什么独立成模块
 
-`runtime-mock-platform-web` 满足多个真实边界：
+`kairo-platform-web` 满足多个真实边界：
 
 - 与 Java 后端不同的语言、依赖和构建工具；
 - 独立的 UI 设计系统、测试体系和浏览器兼容要求；
@@ -109,7 +109,7 @@ Bearer Token 调用，避免把平台 Token 暴露给浏览器 JavaScript，并�
 ## 6. 前端工程结构
 
 ```text
-runtime-mock-platform-web/
+kairo-platform-web/
 ├── app/
 │   ├── (auth)/
 │   │   └── login/
@@ -219,7 +219,7 @@ shadcn/ui 是源码组件方案，不作为不可修改的黑盒依赖。首批�
 - 尺寸和密度；
 - 危险操作样式。
 
-### 7.4 Runtime Mock 专属组件
+### 7.4 Kairo 专属组件
 
 | 组件 | 作用 |
 | --- | --- |
@@ -314,7 +314,7 @@ flowchart LR
 Monaco 动态加载，避免影响普通页面首屏。Groovy 支持通过以下组合实现：
 
 - Monarch tokenizer 提供语法高亮；
-- Completion Provider 提供 Runtime Mock 变量、方法和代码片段；
+- Completion Provider 提供 Kairo 变量、方法和代码片段；
 - Hover Provider 提供类型和使用说明；
 - Marker API 展示服务端返回的行列诊断；
 - Diff Editor 展示历史版本差异；
@@ -543,10 +543,10 @@ requirePermission(...)
 ### 17.1 环境变量
 
 ```text
-RUNTIME_MOCK_PLATFORM_API_URL=http://runtime-mock-platform-api:18280
-RUNTIME_MOCK_WEB_SESSION_KEY=<32-byte-or-stronger-secret>
-RUNTIME_MOCK_WEB_PUBLIC_BASE_URL=http://localhost:18380
-RUNTIME_MOCK_WEB_ENVIRONMENT=local
+KAIRO_PLATFORM_API_URL=http://kairo-platform-api:18280
+KAIRO_WEB_SESSION_KEY=<32-byte-or-stronger-secret>
+KAIRO_WEB_PUBLIC_BASE_URL=http://localhost:18380
+KAIRO_WEB_ENVIRONMENT=local
 ```
 
 服务端 API URL 不暴露为浏览器公共变量。公开变量不得包含凭据。
