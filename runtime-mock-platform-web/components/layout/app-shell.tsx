@@ -89,15 +89,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   const visibleNavigation = useMemo(
-    () => navigation.map((group) => ({
-      ...group,
-      items: group.items.filter((item) => {
-        const capability = "capability" in item && typeof item.capability === "string" ? item.capability : undefined;
-        return capability === undefined
-          || user?.capabilities?.includes("ADMIN")
-          || user?.capabilities?.includes(capability);
-      }),
-    })),
+    () => navigation
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((item) => {
+          const capability = "capability" in item && typeof item.capability === "string" ? item.capability : undefined;
+          return capability === undefined
+            || user?.capabilities?.includes("ADMIN")
+            || user?.capabilities?.includes(capability);
+        }),
+      }))
+      .filter((group) => group.items.length > 0),
     [user],
   );
 
