@@ -91,6 +91,7 @@ public class AccessTokenService {
         }
         if ("USER".equals(subjectType)) {
             ensureLocalUser(subjectId, displayName);
+            accessTokenMapper.deleteUserTokens(subjectId);
         } else {
             validateSubject(subjectType, subjectId);
         }
@@ -293,7 +294,7 @@ public class AccessTokenService {
 
     private Map<String, Object> replaceUserTokenInternal(String username, String displayName,
                                                         String createdBy, Instant expiresAt) {
-        accessTokenMapper.revokeActiveUserTokens(username, Timestamp.from(clock.instant()));
+        accessTokenMapper.deleteUserTokens(username);
         return createToken(createdBy, "USER", username, displayName, expiresAt);
     }
 

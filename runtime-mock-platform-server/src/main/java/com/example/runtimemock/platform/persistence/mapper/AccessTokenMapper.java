@@ -72,14 +72,14 @@ public interface AccessTokenMapper {
     int revokeActiveUserTokens(@Param("username") String username,
                                @Param("revokedAt") Timestamp revokedAt);
 
+    int deleteUserTokens(@Param("username") String username);
+
     int renewActiveUserTokens(@Param("username") String username,
                               @Param("expiresAt") Timestamp expiresAt);
 
     int deleteUserRoleBindings(@Param("userId") String userId);
 
     int deleteExternalIdentities(@Param("userId") String userId);
-
-    int deleteUserTokens(@Param("username") String username);
 
     int deleteUser(@Param("username") String username);
 }

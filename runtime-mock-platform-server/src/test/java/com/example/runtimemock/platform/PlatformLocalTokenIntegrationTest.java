@@ -91,12 +91,13 @@ class PlatformLocalTokenIntegrationTest {
                 .andExpect(status().isOk());
 
         JsonNode permanent = postJson("/api/v1/auth/tokens", Map.of(
-                "username", "system"
+                "username", "permanent-user"
         ), "bootstrap-test-token");
         assertThat(permanent.path("expiresAt").isNull()).isTrue();
         mockMvc.perform(get("/api/v1/auth/me")
                         .header("Authorization", "Bearer " + permanent.path("token").asText()))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.subject").value("permanent-user"));
 
         JsonNode newUser = postJson("/api/v1/auth/tokens", Map.of(
                 "username", " 测试 ",
@@ -226,6 +227,7 @@ class PlatformLocalTokenIntegrationTest {
         assertThat(Duration.between(originalUserTokenExpiresAt, selfReplacementExpiresAt).abs())
                 .isLessThan(Duration.ofSeconds(5));
         assertThat(selfReplacementExpiresAt).isBefore(Instant.now().plus(Duration.ofMinutes(90)));
+        assertThat(countUserTokens("business-user-renamed", "bootstrap-test-token")).isEqualTo(1);
 
         mockMvc.perform(get("/api/v1/auth/me")
                         .header("Authorization", "Bearer " + userToken))
@@ -277,6 +279,7 @@ class PlatformLocalTokenIntegrationTest {
         JsonNode adminReplacement = objectMapper.readTree(adminReplacementResponse);
         String adminReplacementToken = adminReplacement.path("token").asText();
         assertThat(adminReplacementToken).isNotBlank();
+        assertThat(countUserTokens("business-user-renamed", "bootstrap-test-token")).isEqualTo(1);
 
         mockMvc.perform(get("/api/v1/auth/me")
                         .header("Authorization", "Bearer " + selfReplacementToken))
@@ -337,6 +340,17 @@ class PlatformLocalTokenIntegrationTest {
                 .andExpect(status().is2xxSuccessful())
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         return objectMapper.readTree(response);
+    }
+
+    private long countUserTokens(String username, String token) throws Exception {
+        JsonNode tokens = getJson("/api/v1/auth/tokens", token);
+        long count = 0;
+        for (JsonNode item : tokens) {
+            if (username.equals(item.path("subject_id").asText(item.path("subjectId").asText()))) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private JsonNode patchJson(String path, Object body, String token) throws Exception {
