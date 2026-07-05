@@ -1,6 +1,6 @@
 # Runtime Mock 平台用户使用文档
 
-本文面向平台使用者，覆盖实例注册、Agent 注册、规则开发、规则发布、卸载恢复和 Groovy 脚本编写。阅读后应能完成一次完整的 V1 故障注入演练。
+本文面向平台使用者，覆盖登录、账户设置、实例注册、Agent 注册、规则开发、规则发布、卸载恢复和 Groovy 脚本入门。阅读后应能完成一次完整的 V1 故障注入演练。
 
 当前版本只聚焦 DEV、SIT、UAT 环境的故障注入，不包含录制、数据集、提取、回放和审批流。
 
@@ -27,11 +27,46 @@
 runtime-mock-dev-admin-token-change-me
 ```
 
-Token 只在创建时明文展示。生产或长期环境中不要使用默认开发 Token。
+Token 只在创建或更换时明文展示一次。生产或长期环境中不要使用默认开发 Token。
 
-## 3. 实例注册
+## 3. 账户、用户和 Token
 
-### 3.1 自动注册方式
+### 3.1 账户与设置
+
+所有用户都从右上角用户菜单进入“账户与设置”。这里可以做两件事：
+
+- 修改自己的用户名。
+- 更换自己的 Token。
+
+更换自己的 Token 会生成新的明文 Token，同时旧 Token 立即失效。新 Token 只展示一次，复制后再关闭弹窗。
+
+用户不能给自己的 Token 续期。续期只能由超级管理员在“用户管理”中对其他用户操作。
+
+### 3.2 用户管理
+
+只有超级管理员可以看到“用户管理”菜单。超级管理员可以：
+
+- 创建用户并签发首个 Token。
+- 为其他用户续期当前有效 Token。
+- 强制更换其他用户 Token，更换后旧 Token 失效。
+- 删除业务用户，删除后该用户无法继续登录。
+
+业务用户不能看到用户管理菜单，也不能调用用户管理 API。
+
+### 3.3 Token 有效性
+
+一个用户有且只能有一个有效 Token。以下场景会导致原 Token 不再有效：
+
+- 用户自己更换 Token。
+- 超级管理员强制更换该用户 Token。
+- 超级管理员删除该用户。
+- Token 到达过期时间。
+
+续期只更新当前有效 Token 的过期时间，不会生成新的明文 Token。
+
+## 4. 实例注册
+
+### 4.1 自动注册方式
 
 正常情况下不需要在页面手工创建实例。Java 应用加载 Agent 后，Agent 会自动调用 Platform 的自注册接口，上报项目名、应用名、环境名、主机、进程、Java 版本和监听端口。
 
@@ -55,7 +90,7 @@ java \
 
 不要把新应用写成 `app-default`，也不要依赖固定的默认拓扑。平台会根据真实项目名、应用名和环境名创建或复用资源。
 
-### 3.2 页面确认
+### 4.2 页面确认
 
 进入“应用实例”页面，确认目标实例出现。重点检查：
 
@@ -66,9 +101,9 @@ java \
 - 最近心跳是否持续刷新。
 - 加载方式是 `premain`、`agentmain`、`attach` 或本地演示模式。
 
-## 4. Agent 注册与诊断
+## 5. Agent 注册与诊断
 
-### 4.1 Agent 自动注册
+### 5.1 Agent 自动注册
 
 Agent 成功注册后，平台会分配 `agentId`。后续心跳、命令轮询和命令回执都围绕这个 `agentId` 执行。
 
@@ -80,7 +115,7 @@ Agent 会周期性完成以下动作：
 4. 执行发布或卸载命令。
 5. 回写执行结果。
 
-### 4.2 Agent 诊断页面
+### 5.2 Agent 诊断页面
 
 进入“Agent 诊断”页面，检查：
 
@@ -93,15 +128,15 @@ Agent 会周期性完成以下动作：
 
 如果 Agent 不在线，规则无法发布到该实例。已经离线的实例也无法立即卸载规则，需要等实例恢复在线后再执行卸载。
 
-### 4.3 attach-executor
+### 5.3 attach-executor
 
 本地演示环境中，attach-executor 与 demo 被测程序在一起。它用于操作 demo 的 JVM，例如动态 attach、停用 Agent 或重新加载 Agent。
 
 使用者通常不需要直接操作 attach-executor，只需要在平台页面或 API 上触发对应动作。Platform 会创建命令，attach-executor 拉取命令后对 demo JVM 执行，并把结果回执给 Platform。
 
-## 5. 规则开发流程
+## 6. 规则开发流程
 
-### 5.1 选择目标方法
+### 6.1 选择目标方法
 
 进入“规则中心”，点击“创建规则”。选择应用、环境和目标方法。
 
@@ -112,7 +147,7 @@ Agent 会周期性完成以下动作：
 - 尽量选择入参和返回值结构清晰的方法。
 - 目标方法必须来自在线 Agent 的发现结果，不建议手工猜类名和描述符。
 
-### 5.2 选择执行阶段
+### 6.2 选择执行阶段
 
 规则脚本支持三个阶段：
 
@@ -126,7 +161,7 @@ Agent 会周期性完成以下动作：
 - 要模拟返回数据异常：选 `RETURN`。
 - 要验证异常降级逻辑：选 `THROWS`。
 
-### 5.3 编写脚本
+### 6.3 编写脚本
 
 脚本必须返回一个决策：
 
@@ -137,10 +172,10 @@ return mock.proceed()
 合法决策只有三类：
 
 - `mock.proceed()`：继续执行原方法。
-- `mock.returnValue(value)`：返回指定值。
+- `mock.returnValue(value)` 或 `mock.returnJson(json)`：返回指定值。
 - `mock.throwException(...)`：抛出指定异常。
 
-### 5.4 校验和试运行
+### 6.4 校验和试运行
 
 保存前先点击“校验”。校验通过只能说明脚本语法和安全规则通过，不代表业务类型一定正确。
 
@@ -151,13 +186,13 @@ return mock.proceed()
 - 返回 JSON 是否能转换为目标类型。
 - 异常类是否能被目标应用加载。
 
-### 5.5 保存规则版本
+### 6.5 保存规则版本
 
 保存后会生成规则版本。保存不会立刻影响业务流量，只有发布计划成功后才会生效。
 
-## 6. 规则发布步骤
+## 7. 规则发布步骤
 
-### 6.1 创建发布计划
+### 7.1 创建发布计划
 
 进入“发布管理”，点击创建发布计划，选择：
 
@@ -170,11 +205,11 @@ return mock.proceed()
 
 创建后发布计划处于草稿状态。
 
-### 6.2 启动发布
+### 7.2 启动发布
 
 在发布计划详情中推进状态。平台调度器会为目标在线 Agent 创建发布命令。Agent 拉取命令并应用规则后，发布计划会根据实例执行结果进入成功或失败状态。
 
-### 6.3 验证效果
+### 7.3 验证效果
 
 以本地 demo 下单接口为例：
 
@@ -191,113 +226,17 @@ curl -X POST http://127.0.0.1:18082/demo/orders \
 3. 查看发布管理里的实例执行状态。
 4. 查看应用日志或 Agent 事件，确认规则命中。
 
-### 6.4 卸载恢复
+### 7.4 卸载恢复
 
 发布完成后，如果要恢复业务行为，在发布计划详情中点击卸载。卸载会向对应 Agent 下发恢复命令。
 
 卸载后再次调用业务接口，应恢复到发布前行为。
 
-## 7. Groovy 脚本书写规则
+## 8. Groovy 脚本入门
 
 更完整的 API、限制、经典场景和复杂 Demo 见 [Runtime Mock Groovy 规则脚本编写手册](./rule-script-authoring-guide.md)。
 
-### 7.1 脚本入口变量
-
-脚本中可以直接使用以下变量：
-
-- `args`：当前方法参数数组。
-- `target`：当前实例方法的目标对象；静态方法可能为空。
-- `result`：原始返回值，仅 `RETURN` 阶段有意义。
-- `throwable`：原始异常，仅 `THROWS` 阶段有意义。
-- `method`：目标方法元数据。
-- `ctx`：调用上下文。
-- `mock`：Mock API。
-- `log`：脚本日志。
-
-常用上下文访问：
-
-```groovy
-log.info("method=" + method.name())
-log.info("phase=" + ctx.phase())
-log.info("arg count=" + args.length)
-```
-
-### 7.2 Mock API
-
-继续执行：
-
-```groovy
-return mock.proceed()
-```
-
-使用改写后的参数继续执行：
-
-```groovy
-return mock.proceed(args)
-```
-
-返回指定值：
-
-```groovy
-return mock.returnValue("mocked")
-```
-
-按目标返回类型从 JSON 构造返回对象：
-
-```groovy
-return mock.returnJson('{"status":"MOCKED"}')
-```
-
-抛出异常：
-
-```groovy
-return mock.throwException("java.lang.IllegalStateException", "injected failure")
-```
-
-使用异常对象抛出：
-
-```groovy
-return mock.throwException(new IllegalStateException("injected failure"))
-```
-
-读取对象属性：
-
-```groovy
-def userId = mock.get(args[0], "userId")
-```
-
-写入对象属性：
-
-```groovy
-mock.set(args[0], "userId", "mock-user")
-```
-
-判断类型：
-
-```groovy
-if (mock.isType(args[0], "com.example.demo.CreateOrderRequest")) {
-    return mock.proceed()
-}
-```
-
-创建目标返回对象：
-
-```groovy
-def value = mock.newReturnObject()
-mock.set(value, "status", "MOCKED")
-return mock.returnValue(value)
-```
-
-从 JSON 构造指定类型：
-
-```groovy
-def value = mock.fromJson('{"status":"MOCKED"}', method.returnType())
-return mock.returnValue(value)
-```
-
-### 7.3 最小脚本：不改变行为
-
-用于验证规则能保存、发布和命中。
+### 8.1 不改变行为
 
 阶段：`BEFORE`
 
@@ -306,11 +245,7 @@ log.info("Runtime Mock rule hit")
 return mock.proceed()
 ```
 
-效果：方法继续执行，业务行为不变。
-
-### 7.4 简单故障：调用前直接抛异常
-
-用于模拟下游不可用、业务依赖失败。
+### 8.2 调用前直接抛异常
 
 阶段：`BEFORE`
 
@@ -321,36 +256,7 @@ return mock.throwException(
 )
 ```
 
-注意：异常类型应是目标应用 ClassLoader 能加载的类型。通用场景优先使用 `java.lang.IllegalStateException`、`java.lang.RuntimeException`。
-
-### 7.5 简单返回：跳过原方法
-
-目标方法返回 `String` 时：
-
-阶段：`BEFORE`
-
-```groovy
-return mock.returnValue("MOCKED")
-```
-
-目标方法返回数字时：
-
-```groovy
-return mock.returnValue(503)
-```
-
-目标方法返回 `void` 时：
-
-```groovy
-log.warn("skip original void method")
-return mock.returnValue(null)
-```
-
-注意：返回值类型必须能被目标方法接收。`int` 不要返回字符串，对象方法不要返回无关 Map，除非底层转换明确支持。
-
-### 7.6 条件故障：按参数注入
-
-目标：只有指定用户触发异常，其他用户正常。
+### 8.3 按参数条件注入
 
 阶段：`BEFORE`
 
@@ -368,100 +274,7 @@ if (userId == "u-001") {
 return mock.proceed()
 ```
 
-写法要点：
-
-- 先取 `args[0]`。
-- 用 `mock.get` 读取属性，避免在脚本中写反射。
-- 条件不命中必须 `return mock.proceed()`。
-
-### 7.7 多条件故障：金额和渠道组合
-
-目标：只让高金额订单或指定渠道失败。
-
-阶段：`BEFORE`
-
-```groovy
-def request = args[0]
-def amount = mock.get(request, "amount")
-def channel = mock.get(request, "channel")
-
-if (amount != null && amount > 1000) {
-    return mock.throwException(
-        "java.lang.IllegalStateException",
-        "large amount blocked by Runtime Mock"
-    )
-}
-
-if (channel == "risk-test") {
-    return mock.throwException(
-        "java.lang.IllegalStateException",
-        "risk-test channel blocked by Runtime Mock"
-    )
-}
-
-return mock.proceed()
-```
-
-建议每个条件都写清楚错误信息，便于日志排查。
-
-### 7.8 改写参数后继续执行
-
-目标：把请求中的用户 ID 改成测试用户，然后继续执行原业务方法。
-
-阶段：`BEFORE`
-
-```groovy
-def request = args[0]
-mock.set(request, "userId", "mock-user")
-
-log.info("rewrite userId to mock-user")
-return mock.proceed(args)
-```
-
-注意：
-
-- 改写参数有副作用，只建议在测试环境使用。
-- 如果参数对象会被上游复用，可能影响调用方看到的对象状态。
-- 改写后应使用 `mock.proceed(args)`，让决策明确携带当前参数。
-
-### 7.9 正常返回后修改字段
-
-目标：原方法正常创建订单，但把订单状态改成 `PROCESSING`。
-
-阶段：`RETURN`
-
-```groovy
-mock.set(result, "status", "PROCESSING")
-mock.set(result, "message", "changed by Runtime Mock")
-
-return mock.returnValue(result)
-```
-
-适合验证下游系统收到特殊状态时的处理逻辑。
-
-### 7.10 正常返回后按结果条件处理
-
-目标：只有原始结果金额大于 1000 时改写状态。
-
-阶段：`RETURN`
-
-```groovy
-def amount = mock.get(result, "amount")
-
-if (amount != null && amount > 1000) {
-    mock.set(result, "status", "REVIEWING")
-    mock.set(result, "message", "large order changed by Runtime Mock")
-    return mock.returnValue(result)
-}
-
-return mock.proceed()
-```
-
-在 `RETURN` 阶段，`mock.proceed()` 表示保留原始返回值。
-
-### 7.11 返回 JSON 对象
-
-目标方法返回 DTO 时，可以用 JSON 描述返回对象。
+### 8.4 返回 DTO JSON
 
 阶段：`BEFORE`
 
@@ -472,25 +285,28 @@ return mock.returnJson('''
   "userId": "u-001",
   "amount": 12.34,
   "status": "MOCKED",
-  "message": "created by Runtime Mock"
+  "message": "returned by Runtime Mock"
 }
 ''')
 ```
 
-注意：
+### 8.5 正常返回后修改字段
 
-- JSON 字段名应与目标返回类型字段匹配。
-- 数字、布尔值不要写成字符串，除非目标字段就是字符串。
-- 对象层级较深时，优先先试运行再发布。
+阶段：`RETURN`
 
-### 7.12 异常降级为正常返回
+```groovy
+mock.set(result, "status", "PROCESSING")
+mock.set(result, "message", "changed by Runtime Mock")
 
-目标：原方法抛异常时，返回兜底对象。
+return mock.returnValue(result)
+```
+
+### 8.6 异常降级为正常返回
 
 阶段：`THROWS`
 
 ```groovy
-log.warn("original exception: " + throwable.getClass().getName() + ": " + throwable.getMessage())
+log.warn("original exception: " + throwable.getMessage())
 
 return mock.returnJson('''
 {
@@ -501,69 +317,7 @@ return mock.returnJson('''
 ''')
 ```
 
-适合验证上游是否能接受降级结果。不要长期用这种脚本掩盖真实异常。
-
-### 7.13 替换异常
-
-目标：把原始异常替换成业务更容易识别的异常。
-
-阶段：`THROWS`
-
-```groovy
-log.warn("replace original exception: " + throwable.getMessage())
-
-return mock.throwException(
-    "java.lang.IllegalStateException",
-    "replaced by Runtime Mock"
-)
-```
-
-### 7.14 复杂示例：组合参数、日志、返回对象
-
-目标：
-
-- `userId = u-vip` 时正常执行。
-- `amount > 5000` 时返回审核中订单。
-- 其他 `risk-test` 渠道抛异常。
-- 其余请求继续执行。
-
-阶段：`BEFORE`
-
-```groovy
-def request = args[0]
-def userId = mock.get(request, "userId")
-def amount = mock.get(request, "amount")
-def channel = mock.get(request, "channel")
-
-log.info("Runtime Mock check userId=" + userId + ", amount=" + amount + ", channel=" + channel)
-
-if (userId == "u-vip") {
-    return mock.proceed()
-}
-
-if (amount != null && amount > 5000) {
-    return mock.returnJson('''
-    {
-      "id": "review-order",
-      "status": "REVIEWING",
-      "message": "large order requires review"
-    }
-    ''')
-}
-
-if (channel == "risk-test") {
-    return mock.throwException(
-        "java.lang.IllegalStateException",
-        "risk-test channel rejected"
-    )
-}
-
-return mock.proceed()
-```
-
-复杂脚本建议控制在 30 行左右。如果场景继续膨胀，应拆成多条规则或缩小测试目标。
-
-## 8. Groovy 安全与规范
+## 9. Groovy 安全与规范
 
 必须遵守：
 
@@ -593,7 +347,7 @@ return mock.proceed()
 - 先在 DEV 发布，确认后再到 SIT/UAT。
 - 发布完成后及时卸载。
 
-## 9. 常见故障排查
+## 10. 常见故障排查
 
 实例看不到：
 
@@ -618,22 +372,21 @@ Agent 不在线：
 
 脚本校验失败：
 
-- 确认有 `return mock.proceed()`、`return mock.returnValue(...)` 或 `return mock.throwException(...)`。
-- 检查字符串引号是否闭合。
-- 检查 JSON 是否合法。
-- 移除线程、文件、网络、系统属性等禁用操作。
+- 确认所有分支都有 `return mock.*`。
+- 确认没有使用禁用的 import、循环、反射、线程、文件、网络或进程操作。
+- 确认 JSON 字符串合法。
+- 确认 checked exception 是目标方法声明过的异常。
 
 发布后无效果：
 
-- 确认发布计划状态成功。
-- 确认实例执行记录成功。
-- 确认请求打到同一个环境和同一个实例。
-- 确认目标方法是实际被调用的方法。
-- 确认脚本阶段正确。
+- 确认发布计划已经进入成功状态。
+- 确认业务流量打到同一个实例和同一个环境。
+- 确认目标方法签名来自 Agent 发现结果，而不是手写猜测。
+- 确认脚本阶段和返回类型匹配。
 
-卸载失败：
+卸载后仍生效：
 
-- 确认 Agent 在线。
-- 确认发布计划曾经成功发布。
-- 查看卸载记录的失败原因。
-- 实例离线时，恢复在线后重新卸载。
+- 确认卸载记录成功。
+- 确认目标 Agent 在线。
+- 如果实例曾离线，等待恢复在线后重新卸载。
+- 确认没有另一条规则仍绑定同一目标方法。

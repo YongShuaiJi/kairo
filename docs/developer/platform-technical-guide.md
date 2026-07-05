@@ -113,7 +113,8 @@ GET  /api/v1/rollout-executions
 - 规则中心：创建规则、查看规则版本、启停版本、进入脚本工作台。
 - 规则工作台：选择目标方法、填写元数据、编辑 Groovy、服务端校验、试运行和保存版本。
 - 发布管理：创建规则发布计划、查看实例执行、执行卸载恢复。
-- 平台设置：管理 Token 等管理员能力。
+- 用户管理：超级管理员创建用户、续期用户 Token、强制更换用户 Token、删除用户。
+- 账户与设置：所有用户从右上角用户菜单修改自己的用户名，并更换自己的 Token。
 
 前端关键代码：
 
@@ -258,7 +259,25 @@ Agent 由 bootstrap、core、server 三个主要边界组成：
 - Core 持有 Byte Buddy transformer、规则注册表、规则调度器和脚本执行入口。
 - Server 暴露本地 HTTP API，处理类/方法发现、规则 CRUD、本地控制台和 Platform 命令轮询。
 
-### 5.4 规则执行链路
+### 5.4 用户权限和 Token 设计
+
+当前 V1 保留两类用户：
+
+- 超级管理员：拥有 `ADMIN`、`USER_MANAGE`、`INSTANCE_MANAGE`、`AGENT_MANAGE`、`RULE_MANAGE`、`ROLLOUT_MANAGE`。
+- 业务用户：拥有 `INSTANCE_MANAGE`、`AGENT_MANAGE`、`RULE_MANAGE`、`ROLLOUT_MANAGE`，不能管理用户。
+
+用户身份使用稳定 `user_account.id` 作为 Token subject 和权限判断键。用户名只是展示名和输入名，允许用户修改，不能作为权限判断键。
+
+Token 规则：
+
+- 一个用户有且只能有一个有效 Token。
+- 创建用户时同步签发首个 Token。
+- 用户可以更换自己的 Token，更换后旧 Token 立即失效。
+- 用户不能给自己续期 Token。
+- 超级管理员可以为其他用户续期当前有效 Token，也可以强制更换其他用户 Token。
+- 超级管理员可以删除业务用户，删除时清理该用户 Token、外部身份和角色绑定。
+
+### 5.5 规则执行链路
 
 规则执行时，目标方法被 Advice 包裹：
 

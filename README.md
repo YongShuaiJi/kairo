@@ -253,12 +253,16 @@ GET  /api/v1/rollout-executions
 Supporting documents:
 
 ```text
+docs/README.md
 docs/developer/platform-technical-guide.md
 docs/user-guide/platform-complete-user-guide.md
+docs/user-guide/rule-script-authoring-guide.md
 docs/api/platform-openapi.yaml
 docs/api/permission-matrix.md
 docs/api/error-codes.md
+docs/ops/production-readiness-checklist.md
 docs/ops/platform-docker.md
+docs/copyright/runtime-mock-software-copyright-application.md
 ```
 
 ## Current Product Behavior

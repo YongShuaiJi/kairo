@@ -1,16 +1,31 @@
-# Permission Matrix
+# Runtime Mock 权限矩阵
 
-| Capability | Main Resources | Default Roles |
-| --- | --- | --- |
-| `OBSERVE` | health, list APIs, audit read | PlatformAdmin, Operator, Auditor |
-| `INSTANCE_MANAGE` | instances and labels | PlatformAdmin, Operator |
-| `AGENT_MANAGE` | sidecars, agents, heartbeats, manual agent commands | PlatformAdmin |
-| `RULE_MANAGE` | rules, rule versions, rollout-bound rule metadata | PlatformAdmin, Operator |
-| `ROLLOUT_MANAGE` | operation plans, rollout executions, unload executions | PlatformAdmin, Operator |
-| `ADMIN` | all capabilities | PlatformAdmin |
+当前 V1 是内部系统，权限模型只保留两类用户：
 
-Fencing-token issuance is authorized by the target resource type: rule tokens require `RULE_MANAGE`, operation tokens require `ROLLOUT_MANAGE`, Agent tokens require `AGENT_MANAGE`, and unknown resource types require `ADMIN`.
+- 超级管理员：系统最高权限，可以做所有业务操作和用户管理操作。
+- 业务用户：可以做实例、Agent、规则、发布等业务操作，不能管理用户。
 
-Agent command poll/ack accepts either an actor matching the agent id with `X-Identity-Source: agent`, or a platform actor with `AGENT_MANAGE`.
+| Capability | 主要资源 | 超级管理员 | 业务用户 |
+| --- | --- | --- | --- |
+| `ADMIN` | 系统管理、Token 管理、维护接口 | 是 | 否 |
+| `USER_MANAGE` | 创建用户、续期用户 Token、强制更换用户 Token、删除用户 | 是 | 否 |
+| `INSTANCE_MANAGE` | 实例、环境、实例标签 | 是 | 是 |
+| `AGENT_MANAGE` | Agent、attach-executor、心跳、手工 Agent 命令 | 是 | 是 |
+| `RULE_MANAGE` | 规则、规则版本、脚本工作台 | 是 | 是 |
+| `ROLLOUT_MANAGE` | 发布计划、实例执行、卸载恢复 | 是 | 是 |
 
-All write APIs create hash-chained audit records. Publishing is controlled by operation-plan state transitions and fencing tokens.
+账户与 Token 规则：
+
+- 所有用户都可以修改自己的用户名。
+- 所有用户都可以更换自己的 Token，更换后旧 Token 立即失效。
+- 用户不能给自己的 Token 续期。
+- 只有超级管理员可以给其他用户续期 Token。
+- 一个用户有且只能有一个有效 Token；创建或更换 Token 时会删除旧 Token。
+- 权限判断使用稳定用户 ID，不使用可变用户名作为判断键。
+
+Agent 命令轮询和回执接受两类身份：
+
+- `identitySource = agent` 且 actor 与 agent id 匹配。
+- 平台用户拥有 `AGENT_MANAGE` 能力。
+
+所有写 API 应创建审计记录。发布由 operation-plan 状态和 fencing token 控制。

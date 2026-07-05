@@ -1,0 +1,30 @@
+# Runtime Mock 文档索引
+
+## 开发者文档
+
+- [平台技术使用文档](./developer/platform-technical-guide.md)：环境搭建、模块边界、产品设计、代码设计、实例注册、Agent 设计和规则发布设计。
+- [简化平台架构](./architecture/simplified-platform-architecture.md)：当前 V1 控制面和 Agent 架构。
+- [模块边界治理](./architecture/module-boundary-governance.md)：模块职责和保留理由。
+- [Web 设计说明](./architecture/runtime-mock-platform-web-design.md)：前端结构和交互设计。
+
+## 用户文档
+
+- [平台用户使用文档](./user-guide/platform-complete-user-guide.md)：登录、账户、实例、Agent、规则开发、发布和卸载。
+- [Groovy 规则脚本编写手册](./user-guide/rule-script-authoring-guide.md)：脚本 API、安全限制、经典场景和复杂 Demo。
+- [故障注入指南](./user-guide/platform-fault-injection-guide.md)：故障注入操作说明。
+
+## 运维与发布
+
+- [Docker 本地平台文档](./ops/platform-docker.md)：Compose 启停和本地演示。
+- [生产发布级检查清单](./ops/production-readiness-checklist.md)：发布前质量、权限、Token、Agent、脚本和文档检查项。
+
+## API 文档
+
+- [OpenAPI](./api/platform-openapi.yaml)：Platform API 描述。
+- [权限矩阵](./api/permission-matrix.md)：超级管理员和业务用户能力边界。
+- [错误码](./api/error-codes.md)：API 错误码说明。
+
+## 需求与软著
+
+- [产品需求](./requirements/runtime-mock-product-requirements.md)：当前产品需求和功能边界。
+- [软著申请材料草案](./copyright/runtime-mock-software-copyright-application.md)：申请表填报草案、软件说明、源程序和文档鉴别材料建议。

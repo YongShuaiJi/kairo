@@ -1,18 +1,14 @@
 # Runtime Mock Groovy 规则脚本编写手册
 
-本文面向规则开发者，说明 Runtime Mock Groovy 脚本的执行模型、可用变量、Mock API、类型约束、安全限制和典型脚本写法。脚本运行在被测 JVM 内，因此规则必须短小、明确、可回滚，只做当前方法调用的一次性决策。
+本文面向规则开发者，说明 Runtime Mock Groovy 脚本的执行模型、入口变量、Mock API、类型约束、安全限制、经典场景和复杂 Demo。脚本运行在被测 JVM 的业务线程内，必须短小、明确、可回滚，只对当前一次方法调用做决策。
 
-## 1. 脚本必须返回决策
+## 1. 核心原则
 
-每个脚本必须显式 `return` 一个 `MockDecision`。合法决策只有三类：
-
-| 决策 | 含义 | 常用阶段 |
-| --- | --- | --- |
-| `mock.proceed()` | 继续原方法或保留原结果 | `BEFORE`、`RETURN`、`THROWS` |
-| `mock.proceed(args)` | 使用当前参数数组继续执行原方法 | `BEFORE` |
-| `mock.returnValue(value)` | 跳过原方法或替换返回值 | `BEFORE`、`RETURN`、`THROWS` |
-| `mock.returnJson(json)` | 按目标方法返回类型把 JSON 转成对象并返回 | `BEFORE`、`RETURN`、`THROWS` |
-| `mock.throwException(...)` | 抛出指定异常 | `BEFORE`、`RETURN`、`THROWS` |
+- 每个脚本必须显式 `return` 一个 `MockDecision`。
+- 所有分支都要有明确返回，条件不命中时返回 `mock.proceed()`。
+- 脚本只做故障注入、返回改写、参数改写或异常替换，不承载复杂业务逻辑。
+- 脚本发布前必须先校验，再试运行，再发布到目标环境。
+- 规则命中条件要足够窄，优先按用户、租户、订单号、渠道、金额、测试标记等业务字段限定范围。
 
 最小脚本：
 
@@ -20,11 +16,17 @@
 return mock.proceed()
 ```
 
-不要只写表达式，也不要遗漏默认分支。条件不命中时也要明确返回：
+条件脚本的标准结构：
 
 ```groovy
-if (someCondition) {
-    return mock.throwException("java.lang.IllegalStateException", "injected failure")
+def request = args[0]
+def userId = mock.get(request, "userId")
+
+if (userId == "u-001") {
+    return mock.throwException(
+        "java.lang.IllegalStateException",
+        "user u-001 blocked by Runtime Mock"
+    )
 }
 
 return mock.proceed()
@@ -35,41 +37,41 @@ return mock.proceed()
 | 阶段 | 进入时机 | 可用数据 | 典型用途 |
 | --- | --- | --- | --- |
 | `BEFORE` | 目标方法执行前 | `args`、`target`、`method`、`ctx`、`mock`、`log` | 直接抛异常、短路返回、按参数条件注入、改写参数后继续 |
-| `RETURN` | 目标方法正常返回后 | `args`、`target`、`result`、`method`、`ctx`、`mock`、`log` | 修改返回字段、按原返回值判断、把成功改成异常 |
-| `THROWS` | 目标方法抛异常后 | `args`、`target`、`throwable`、`method`、`ctx`、`mock`、`log` | 替换异常、异常降级为正常返回 |
+| `RETURN` | 目标方法正常返回后 | `args`、`target`、`result`、`method`、`ctx`、`mock`、`log` | 修改返回字段、按原返回值判断、把成功结果改成异常 |
+| `THROWS` | 目标方法抛出异常后 | `args`、`target`、`throwable`、`method`、`ctx`、`mock`、`log` | 替换异常、把异常降级为正常返回 |
 
 阶段选择建议：
 
-- 模拟依赖不可用：选 `BEFORE`。
-- 模拟返回数据异常：选 `RETURN`。
-- 验证异常降级：选 `THROWS`。
-- 需要跳过真实副作用，例如发短信、扣库存：选 `BEFORE` 并返回目标方法可接受的值。
+- 模拟下游不可用、接口超时、库存失败：优先 `BEFORE`。
+- 模拟返回数据异常、状态错乱、字段缺失：优先 `RETURN`。
+- 验证异常降级、异常类型替换：优先 `THROWS`。
+- 要跳过真实副作用，例如发短信、扣库存、调用外部接口：选 `BEFORE` 并返回目标方法能接收的结果。
 
 ## 3. 入口变量
 
 脚本中可以直接使用以下变量：
 
-| 变量 | 类型或含义 | 说明 |
-| --- | --- | --- |
-| `args` | `Object[]` | 当前方法参数数组，等价于 `ctx.arguments()` |
-| `target` | `Object` | 实例方法的目标对象，静态方法可能为空 |
-| `result` | `Object` | 原始返回值，仅 `RETURN` 阶段有意义 |
-| `throwable` | `Throwable` | 原始异常，仅 `THROWS` 阶段有意义 |
-| `method` | `MethodMetadata` | 目标方法元数据 |
-| `ctx` | `InvocationContext` | 调用上下文 |
-| `mock` | `MockApi` | 决策和对象操作 API |
-| `log` | `ScriptLog` | 脚本日志 |
+| 变量 | 含义 |
+| --- | --- |
+| `args` | 当前方法参数数组，等价于 `ctx.arguments()` |
+| `target` | 实例方法的目标对象，静态方法可能为空 |
+| `result` | 原始返回值，仅 `RETURN` 阶段有意义 |
+| `throwable` | 原始异常，仅 `THROWS` 阶段有意义 |
+| `method` | 目标方法元数据 |
+| `ctx` | 调用上下文 |
+| `mock` | Mock API |
+| `log` | 脚本日志 |
 
 常用上下文：
 
 ```groovy
 log.info("phase=" + ctx.phase())
-log.info("method=" + method.name())
+log.info("method=" + method.declaringClass() + "#" + method.name())
 log.info("descriptor=" + method.descriptor())
 log.info("arg count=" + args.length)
 ```
 
-`method` 可读信息：
+`method` 常用信息：
 
 - `method.declaringClass()`：目标类。
 - `method.name()`：方法名。
@@ -121,7 +123,7 @@ return mock.returnJson('''
 ''')
 ```
 
-`mock.returnJson(json)` 会按目标方法返回类型转换 JSON。字段名应和目标 DTO 字段匹配，数字和布尔值应保持 JSON 原生类型。
+`mock.returnJson(json)` 会按目标方法返回类型转换 JSON。字段名应和目标 DTO 字段匹配，数字、布尔值应保持 JSON 原生类型。
 
 ### 4.4 抛异常
 
@@ -203,11 +205,9 @@ log.error("script branch failed", throwable)
 
 `log.error` 需要传入 `String` 和 `Throwable`。如果没有异常对象，使用 `log.warn(...)` 或 `log.info(...)`。
 
-## 5. 安全限制和写法约束
+## 5. 安全限制
 
-脚本运行在被测 JVM 内，不是独立沙箱进程。以下限制用于防止脚本卡死业务线程、泄漏数据、破坏宿主环境或绕过平台卸载。
-
-当前限制包括：
+当前限制：
 
 - 脚本最大 16 KB。
 - 脚本最多 400 行。
@@ -222,17 +222,18 @@ log.error("script branch failed", throwable)
 - 禁止危险方法，例如 `exec`、`exit`、`sleep`、`start`、`wait`、`notify`、`forName`、`getClassLoader`、`setAccessible`、`invoke`。
 - 禁止访问危险属性，例如 `class`、`classLoader`、`metaClass`、`module`、`protectionDomain`。
 
-不建议写法：
+限制原因：
 
-- 不要保存全局状态。
-- 不要依赖随机数作为核心判断。
-- 不要选择日志、序列化、集合、线程池、JDK 内部类等高频公共方法。
-- 不要在脚本中吞掉所有异常后返回假成功，除非这正是要验证的降级场景。
-- 不要把复杂业务逻辑搬进脚本。脚本超过 30 行时优先拆场景。
+- 脚本在业务线程内执行，循环、线程、锁和 sleep 会拖垮业务请求。
+- 脚本与被测 JVM 共享进程，文件、网络、进程和系统属性操作可能破坏宿主环境。
+- 反射、ClassLoader、metaClass 可以绕过平台对象 API，导致审计、卸载和类型校验失效。
+- import 放开后很容易把脚本从“故障注入规则”变成“任意代码执行入口”，内部系统也不应默认允许。
+
+技术上可以放开这些限制，但不建议在当前 V1 生产级实现中放开。需要放开时应先做隔离执行、超时中断、权限白名单、审计和灰度开关，而不是直接允许任意 Groovy。
 
 ## 6. 经典场景 Demo
 
-### 6.1 验证规则命中但不改变行为
+### 6.1 验证命中但不改变行为
 
 阶段：`BEFORE`
 
@@ -294,9 +295,7 @@ if (amount != null && amount > 1000) {
 return mock.proceed()
 ```
 
-用途：验证金额、库存、额度等边界逻辑。
-
-### 6.5 跳过真实发送短信或通知
+### 6.5 跳过真实短信或通知
 
 阶段：`BEFORE`
 
@@ -343,8 +342,6 @@ return mock.returnJson('''
 ''')
 ```
 
-用途：模拟下游返回特殊对象。
-
 ### 6.9 修改原返回值字段
 
 阶段：`RETURN`
@@ -355,8 +352,6 @@ mock.set(result, "message", "changed after original method returned")
 
 return mock.returnValue(result)
 ```
-
-用途：原业务逻辑正常执行，但篡改返回状态验证上游处理。
 
 ### 6.10 按原返回值条件改写
 
@@ -392,14 +387,12 @@ if (status == "SUCCESS") {
 return mock.proceed()
 ```
 
-用途：验证调用方对“后置处理失败”的容错。
-
 ### 6.12 异常降级为正常返回
 
 阶段：`THROWS`
 
 ```groovy
-log.warn("original exception: " + throwable.getMessage())
+log.warn("original exception: " + throwable.getClass().getName() + ": " + throwable.getMessage())
 
 return mock.returnJson('''
 {
@@ -409,8 +402,6 @@ return mock.returnJson('''
 }
 ''')
 ```
-
-用途：验证异常降级链路。
 
 ### 6.13 替换原始异常
 
@@ -425,11 +416,16 @@ return mock.throwException(
 )
 ```
 
-用途：隐藏底层异常类型，验证调用方对统一异常的处理。
-
 ## 7. 复杂场景 Demo
 
-### 7.1 多条件组合：VIP 放行，高金额审核，风险渠道失败
+### 7.1 多条件组合
+
+目标：
+
+- `userId = u-vip` 时正常执行。
+- `amount > 5000` 时返回审核中订单。
+- `channel = risk-test` 时抛异常。
+- 其他请求继续执行。
 
 阶段：`BEFORE`
 
@@ -465,7 +461,7 @@ if (channel == "risk-test") {
 return mock.proceed()
 ```
 
-### 7.2 租户灰度：只影响指定租户和环境标记
+### 7.2 租户灰度
 
 阶段：`BEFORE`
 
@@ -484,8 +480,6 @@ if (tenantId == "tenant-a" && experiment == "fault-drill") {
 
 return mock.proceed()
 ```
-
-适合内部演练。条件必须足够窄，避免影响普通测试流量。
 
 ### 7.3 改写嵌套入参后继续执行
 
@@ -523,7 +517,7 @@ return mock.returnValue(value)
 
 目标返回类型需要有可用的无参构造和可写字段或 setter。
 
-### 7.5 从 JSON 构造指定嵌套类型
+### 7.5 从 JSON 构造嵌套对象
 
 阶段：`BEFORE`
 
@@ -541,8 +535,6 @@ def response = mock.fromJson('''
 
 return mock.returnValue(response)
 ```
-
-适合返回对象结构较深的场景。
 
 ### 7.6 返回后把成功对象改成部分失败
 
@@ -595,6 +587,39 @@ return mock.throwException(
 
 只有当目标方法声明了 `throws IOException` 或其父类型时才允许。否则校验或运行时会拒绝该决策。通常建议优先使用运行时异常。
 
+### 7.9 先改参数再按返回值二次处理
+
+规则可以拆成两条版本分别发布，也可以用同一目标方法的不同阶段配合：
+
+`BEFORE` 阶段：
+
+```groovy
+def request = args[0]
+def trace = mock.get(request, "traceId")
+
+if (trace == "drill-001") {
+    mock.set(request, "userId", "mock-user")
+    return mock.proceed(args)
+}
+
+return mock.proceed()
+```
+
+`RETURN` 阶段：
+
+```groovy
+def trace = mock.get(args[0], "traceId")
+
+if (trace == "drill-001") {
+    mock.set(result, "message", "result changed after parameter rewrite")
+    return mock.returnValue(result)
+}
+
+return mock.proceed()
+```
+
+建议优先拆成明确的两条规则，便于发布、卸载和定位。
+
 ## 8. 类型和阶段检查清单
 
 保存和发布前逐项检查：
@@ -602,7 +627,7 @@ return mock.throwException(
 - 脚本是否所有分支都 `return mock.*`。
 - 所选阶段是否正确。
 - `BEFORE` 阶段不要读取 `result` 或 `throwable`。
-- `RETURN` 阶段读取 `result` 前先确认目标方法不是 `void`。
+- `RETURN` 阶段读取 `result` 前确认目标方法不是 `void`。
 - `THROWS` 阶段读取 `throwable` 前确认要处理原始异常。
 - `mock.proceed(args)` 的参数数量是否和目标方法一致。
 - `mock.returnValue(...)` 的值是否能赋给目标返回类型。
