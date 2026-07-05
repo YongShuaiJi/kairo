@@ -218,7 +218,6 @@ export function AccountSettingsPage() {
                         <td className="px-4 py-3.5">
                           <div className="min-w-0">
                             <p className="truncate font-medium text-[color:var(--foreground)]">{target}</p>
-                            <p className="truncate text-xs text-[color:var(--muted)]">{String(valueOf(user, "displayName") ?? valueOf(user, "display_name") ?? target)}</p>
                           </div>
                         </td>
                         <td className="px-4 py-3.5">
