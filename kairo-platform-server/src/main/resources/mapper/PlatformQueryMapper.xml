@@ -1,0 +1,322 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.kairo.platform.persistence.mapper.PlatformQueryMapper">
+
+    <sql id="CurrentInstanceTable">
+        (select *
+           from instance
+          where status not in ('OFFLINE', 'STOPPED', 'ARCHIVED')) instance
+    </sql>
+
+    <sql id="InstanceColumns">
+        id, nickname, hostname, process_id, runtime, status, application_id, environment_id,
+        (select a.name from application a where a.id = instance.application_id) as application_name,
+        (select p.name from project p
+          join application a on a.project_id = p.id
+         where a.id = instance.application_id) as project_name,
+        (select lower(coalesce(e.type, e.name)) from environment e where e.id = instance.environment_id) as environment_name,
+        coalesce(
+            (select ai.status
+               from agent_instance ai
+              where ai.instance_id = instance.id
+              order by ai.last_heartbeat_at desc nulls last, ai.updated_at desc, ai.id
+              limit 1),
+            (select aet.status
+               from attach_executor_target aet
+               join attach_executor ae on ae.id = aet.executor_id
+              where aet.instance_id = instance.id
+              order by aet.last_seen_at desc nulls last, ae.last_heartbeat_at desc nulls last,
+                       aet.updated_at desc, ae.updated_at desc, aet.executor_id
+              limit 1)
+        ) as agent_status,
+        labels_json, last_seen_at, created_at, updated_at, process_start_id,
+        jvm_started_at, java_version, load_mode, agent_version, capabilities_json,
+        lease_expires_at, registration_status
+    </sql>
+
+    <sql id="RolloutEnvironmentTable">
+        (
+            select lower(coalesce(e.type, e.name)) as id,
+                   lower(coalesce(e.type, e.name)) as name,
+                   lower(coalesce(e.type, e.name)) as type,
+                   max(r.updated_at) as updated_at
+              from environment e
+              join rule r on r.environment_id = e.id
+              join rule_version rv on rv.rule_id = r.id
+             where rv.status = 'ENABLED'
+             group by lower(coalesce(e.type, e.name))
+        ) rollout_environment
+    </sql>
+
+    <sql id="RolloutApplicationTable">
+        (
+            select a.id,
+                   a.name,
+                   a.project_id,
+                   e.id as environment_id,
+                   lower(coalesce(e.type, e.name)) as environment_key,
+                   max(r.updated_at) as updated_at
+              from application a
+              join rule r on r.application_id = a.id
+              join environment e on e.id = r.environment_id
+              join rule_version rv on rv.rule_id = r.id
+             where rv.status = 'ENABLED'
+             group by a.id, a.name, a.project_id, e.id, lower(coalesce(e.type, e.name))
+        ) rollout_application
+    </sql>
+
+    <sql id="EnabledRuleVersionTable">
+        (
+            select *
+              from rule_version
+             where status = 'ENABLED'
+        ) rule_version
+    </sql>
+
+    <sql id="VisibleTokenTable">
+        (
+            select t.id,
+                   t.subject_type,
+                   case when t.subject_type = 'USER' then coalesce(u.username, t.subject_id) else t.subject_id end as subject_id,
+                   case
+                       when t.status = 'ACTIVE' and (t.expires_at is null or t.expires_at &gt; current_timestamp) then 'VALID'
+                       else 'INVALID'
+                   end as status,
+                   t.created_by, t.created_at, t.expires_at, t.last_used_at, t.revoked_at
+              from platform_access_token t
+              left join user_account u
+                on t.subject_type = 'USER'
+               and u.id = t.subject_id
+        ) platform_access_token
+    </sql>
+
+    <select id="page" resultType="map">
+        <choose>
+            <when test="resource == 'applications'">
+                select * from application
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(name, '')) like #{like} or lower(coalesce(project_id, '')) like #{like})</if></where>
+                order by created_at desc, id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'rollout-environments'">
+                select id, name, type, updated_at from <include refid="RolloutEnvironmentTable"/>
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(name, '')) like #{like} or lower(coalesce(type, '')) like #{like})</if></where>
+                order by case type when 'dev' then 1 when 'sit' then 2 when 'uat' then 3 when 'prod' then 4 else 99 end, id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'rollout-applications'">
+                select id, name, project_id, environment_id, environment_key, updated_at from <include refid="RolloutApplicationTable"/>
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(name, '')) like #{like} or lower(coalesce(project_id, '')) like #{like} or lower(coalesce(environment_key, '')) like #{like})</if></where>
+                order by updated_at desc, id, environment_id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'environments'">
+                select * from environment
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(name, '')) like #{like} or lower(coalesce(type, '')) like #{like} or lower(coalesce(application_id, '')) like #{like})</if></where>
+                order by created_at desc, id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'instances'">
+                select <include refid="InstanceColumns"/> from <include refid="CurrentInstanceTable"/>
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(nickname, '')) like #{like} or lower(coalesce(hostname, '')) like #{like} or lower(coalesce((select a.name from application a where a.id = instance.application_id), '')) like #{like} or lower(coalesce((select lower(coalesce(e.type, e.name)) from environment e where e.id = instance.environment_id), '')) like #{like} or lower(coalesce(application_id, '')) like #{like} or lower(coalesce(environment_id, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where>
+                order by updated_at desc, id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'sidecars'">
+                select * from sidecar_instance
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(endpoint, '')) like #{like} or lower(coalesce(status, '')) like #{like} or lower(coalesce(sidecar_version, '')) like #{like})</if></where>
+                order by updated_at desc, id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'attach-executors'">
+                select * from attach_executor
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(executor_type, '')) like #{like} or lower(coalesce(hostname, '')) like #{like} or lower(coalesce(endpoint, '')) like #{like} or lower(coalesce(status, '')) like #{like} or lower(coalesce(executor_version, '')) like #{like})</if></where>
+                order by updated_at desc, id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'attach-targets'">
+                select executor_id, instance_id, process_id, agent_jar, runtime, java_version, status, last_seen_at, created_at, updated_at from attach_executor_target
+                <where><if test="search != ''">(lower(coalesce(executor_id, '')) like #{like} or lower(coalesce(instance_id, '')) like #{like} or lower(coalesce(process_id, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where>
+                order by updated_at desc, executor_id, instance_id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'attach-executor-commands'">
+                select id, executor_id, instance_id, command_type, status, process_id, agent_jar, attempt, max_attempts, lease_owner, lease_expires_at, error_message, created_at, updated_at, started_at, finished_at from attach_executor_command
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(executor_id, '')) like #{like} or lower(coalesce(instance_id, '')) like #{like} or lower(coalesce(command_type, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where>
+                order by updated_at desc, id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'agents'">
+                select id, instance_id, sidecar_id, status, agent_version, bootstrap_version, listen_host, listen_port, capabilities_json, last_heartbeat_at, created_at, updated_at from agent_instance
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(listen_host, '')) like #{like} or lower(coalesce(status, '')) like #{like} or lower(coalesce(agent_version, '')) like #{like})</if></where>
+                order by updated_at desc, id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'agent-commands'">
+                select * from agent_command
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(agent_id, '')) like #{like} or lower(coalesce(command_type, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where>
+                order by updated_at desc, id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'rule-versions'">
+                select * from <include refid="EnabledRuleVersionTable"/>
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(rule_id, '')) like #{like} or lower(coalesce(status, '')) like #{like} or lower(coalesce(risk_level, '')) like #{like})</if></where>
+                order by created_at desc, id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'operation-plans'">
+                select * from operation_plan
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(resource_type, '')) like #{like} or lower(coalesce(resource_id, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where>
+                order by updated_at desc, id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'rollout-executions'">
+                select id, operation_plan_id, instance_id, status, expected_agent_version, expected_rule_version, command_id, error_message, started_at, finished_at, updated_at, instance_nickname, application_name, environment_name, java_version, agent_version, load_mode, process_start_id, instance_last_seen_at, attach_executor_id from rollout_instance_execution
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(operation_plan_id, '')) like #{like} or lower(coalesce(instance_id, '')) like #{like} or lower(coalesce(instance_nickname, '')) like #{like} or lower(coalesce(application_name, '')) like #{like} or lower(coalesce(environment_name, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where>
+                order by updated_at desc, id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'rollout-targets'">
+                select id, operation_plan_id, instance_id, labels_json, agent_status, captured_at, instance_nickname, application_name, environment_name, java_version, agent_version, load_mode, process_start_id, instance_last_seen_at, attach_executor_id from rollout_target_snapshot
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(operation_plan_id, '')) like #{like} or lower(coalesce(instance_id, '')) like #{like} or lower(coalesce(instance_nickname, '')) like #{like} or lower(coalesce(application_name, '')) like #{like} or lower(coalesce(environment_name, '')) like #{like} or lower(coalesce(agent_status, '')) like #{like})</if></where>
+                order by captured_at desc, id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'rollback-executions'">
+                select * from rollback_execution
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(operation_plan_id, '')) like #{like} or lower(coalesce(rollback_type, '')) like #{like} or lower(coalesce(status, '')) like #{like} or lower(coalesce(reason, '')) like #{like})</if></where>
+                order by created_at desc, id limit #{limit} offset #{offset}
+            </when>
+            <when test="resource == 'tokens'">
+                select id, subject_type, subject_id, status, created_by, created_at, expires_at, last_used_at, revoked_at from <include refid="VisibleTokenTable"/>
+                <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(subject_id, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where>
+                order by created_at desc, id limit #{limit} offset #{offset}
+            </when>
+            <otherwise>
+                select * from rule where 1 = 0
+            </otherwise>
+        </choose>
+    </select>
+
+    <select id="count" resultType="long">
+        <choose>
+            <when test="resource == 'applications'">select count(*) from application <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(name, '')) like #{like} or lower(coalesce(project_id, '')) like #{like})</if></where></when>
+            <when test="resource == 'rollout-environments'">select count(*) from <include refid="RolloutEnvironmentTable"/> <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(name, '')) like #{like} or lower(coalesce(type, '')) like #{like})</if></where></when>
+            <when test="resource == 'rollout-applications'">select count(*) from <include refid="RolloutApplicationTable"/> <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(name, '')) like #{like} or lower(coalesce(project_id, '')) like #{like} or lower(coalesce(environment_key, '')) like #{like})</if></where></when>
+            <when test="resource == 'environments'">select count(*) from environment <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(name, '')) like #{like} or lower(coalesce(type, '')) like #{like} or lower(coalesce(application_id, '')) like #{like})</if></where></when>
+            <when test="resource == 'instances'">select count(*) from <include refid="CurrentInstanceTable"/> <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(nickname, '')) like #{like} or lower(coalesce(hostname, '')) like #{like} or lower(coalesce((select a.name from application a where a.id = instance.application_id), '')) like #{like} or lower(coalesce((select lower(coalesce(e.type, e.name)) from environment e where e.id = instance.environment_id), '')) like #{like} or lower(coalesce(application_id, '')) like #{like} or lower(coalesce(environment_id, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where></when>
+            <when test="resource == 'sidecars'">select count(*) from sidecar_instance <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(endpoint, '')) like #{like} or lower(coalesce(status, '')) like #{like} or lower(coalesce(sidecar_version, '')) like #{like})</if></where></when>
+            <when test="resource == 'attach-executors'">select count(*) from attach_executor <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(executor_type, '')) like #{like} or lower(coalesce(hostname, '')) like #{like} or lower(coalesce(endpoint, '')) like #{like} or lower(coalesce(status, '')) like #{like} or lower(coalesce(executor_version, '')) like #{like})</if></where></when>
+            <when test="resource == 'attach-targets'">select count(*) from attach_executor_target <where><if test="search != ''">(lower(coalesce(executor_id, '')) like #{like} or lower(coalesce(instance_id, '')) like #{like} or lower(coalesce(process_id, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where></when>
+            <when test="resource == 'attach-executor-commands'">select count(*) from attach_executor_command <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(executor_id, '')) like #{like} or lower(coalesce(instance_id, '')) like #{like} or lower(coalesce(command_type, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where></when>
+            <when test="resource == 'agents'">select count(*) from agent_instance <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(listen_host, '')) like #{like} or lower(coalesce(status, '')) like #{like} or lower(coalesce(agent_version, '')) like #{like})</if></where></when>
+            <when test="resource == 'agent-commands'">select count(*) from agent_command <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(agent_id, '')) like #{like} or lower(coalesce(command_type, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where></when>
+            <when test="resource == 'rule-versions'">select count(*) from <include refid="EnabledRuleVersionTable"/> <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(rule_id, '')) like #{like} or lower(coalesce(status, '')) like #{like} or lower(coalesce(risk_level, '')) like #{like})</if></where></when>
+            <when test="resource == 'operation-plans'">select count(*) from operation_plan <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(resource_type, '')) like #{like} or lower(coalesce(resource_id, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where></when>
+            <when test="resource == 'rollout-executions'">select count(*) from rollout_instance_execution <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(operation_plan_id, '')) like #{like} or lower(coalesce(instance_id, '')) like #{like} or lower(coalesce(instance_nickname, '')) like #{like} or lower(coalesce(application_name, '')) like #{like} or lower(coalesce(environment_name, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where></when>
+            <when test="resource == 'rollout-targets'">select count(*) from rollout_target_snapshot <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(operation_plan_id, '')) like #{like} or lower(coalesce(instance_id, '')) like #{like} or lower(coalesce(instance_nickname, '')) like #{like} or lower(coalesce(application_name, '')) like #{like} or lower(coalesce(environment_name, '')) like #{like} or lower(coalesce(agent_status, '')) like #{like})</if></where></when>
+            <when test="resource == 'rollback-executions'">select count(*) from rollback_execution <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(operation_plan_id, '')) like #{like} or lower(coalesce(rollback_type, '')) like #{like} or lower(coalesce(status, '')) like #{like} or lower(coalesce(reason, '')) like #{like})</if></where></when>
+            <when test="resource == 'tokens'">select count(*) from <include refid="VisibleTokenTable"/> <where><if test="search != ''">(lower(coalesce(id, '')) like #{like} or lower(coalesce(subject_id, '')) like #{like} or lower(coalesce(status, '')) like #{like})</if></where></when>
+            <otherwise>select 0</otherwise>
+        </choose>
+    </select>
+
+    <select id="detail" resultType="map">
+        <choose>
+            <when test="resource == 'applications'">select * from application where id = #{id}</when>
+            <when test="resource == 'rollout-environments'">select id, name, type, updated_at from <include refid="RolloutEnvironmentTable"/> where id = #{id}</when>
+            <when test="resource == 'rollout-applications'">select id, name, project_id, environment_id, environment_key, updated_at from <include refid="RolloutApplicationTable"/> where id = #{id}</when>
+            <when test="resource == 'environments'">select * from environment where id = #{id}</when>
+            <when test="resource == 'instances'">select <include refid="InstanceColumns"/> from <include refid="CurrentInstanceTable"/> where id = #{id}</when>
+            <when test="resource == 'sidecars'">select * from sidecar_instance where id = #{id}</when>
+            <when test="resource == 'attach-executors'">select * from attach_executor where id = #{id}</when>
+            <when test="resource == 'attach-executor-commands'">select id, executor_id, instance_id, command_type, status, process_id, agent_jar, attempt, max_attempts, lease_owner, lease_expires_at, error_message, created_at, updated_at, started_at, finished_at from attach_executor_command where id = #{id}</when>
+            <when test="resource == 'agents'">select id, instance_id, sidecar_id, status, agent_version, bootstrap_version, listen_host, listen_port, capabilities_json, last_heartbeat_at, created_at, updated_at from agent_instance where id = #{id}</when>
+            <when test="resource == 'agent-commands'">select * from agent_command where id = #{id}</when>
+            <when test="resource == 'rule-versions'">select * from <include refid="EnabledRuleVersionTable"/> where id = #{id}</when>
+            <when test="resource == 'operation-plans'">select * from operation_plan where id = #{id}</when>
+            <when test="resource == 'rollout-executions'">select id, operation_plan_id, instance_id, status, expected_agent_version, expected_rule_version, command_id, error_message, started_at, finished_at, updated_at, instance_nickname, application_name, environment_name, java_version, agent_version, load_mode, process_start_id, instance_last_seen_at, attach_executor_id from rollout_instance_execution where id = #{id}</when>
+            <when test="resource == 'rollout-targets'">select id, operation_plan_id, instance_id, labels_json, agent_status, captured_at, instance_nickname, application_name, environment_name, java_version, agent_version, load_mode, process_start_id, instance_last_seen_at, attach_executor_id from rollout_target_snapshot where id = #{id}</when>
+            <when test="resource == 'rollback-executions'">select * from rollback_execution where id = #{id}</when>
+            <when test="resource == 'tokens'">select id, subject_type, subject_id, status, created_by, created_at, expires_at, last_used_at, revoked_at from <include refid="VisibleTokenTable"/> where id = #{id}</when>
+            <otherwise>select * from rule where 1 = 0</otherwise>
+        </choose>
+    </select>
+
+    <select id="latestAgentForInstance" resultType="map">
+        select id, instance_id, sidecar_id, status, agent_version, bootstrap_version,
+               listen_host, listen_port, capabilities_json, last_heartbeat_at,
+               lease_expires_at, created_at, updated_at
+          from agent_instance
+         where instance_id = #{instanceId}
+         order by last_heartbeat_at desc nulls last, updated_at desc, id
+         limit 1
+    </select>
+
+    <select id="latestAttachExecutorForInstance" resultType="map">
+        select ae.id,
+               ae.executor_type,
+               ae.hostname,
+               ae.endpoint,
+               ae.status,
+               ae.executor_version,
+               aet.process_id,
+               aet.agent_jar,
+               aet.status as target_status,
+               aet.last_seen_at
+          from attach_executor_target aet
+          join attach_executor ae on ae.id = aet.executor_id
+         where aet.instance_id = #{instanceId}
+         order by ae.last_heartbeat_at desc nulls last, ae.updated_at desc, ae.id
+         limit 1
+    </select>
+
+    <select id="recentAudits" resultType="map">
+        select *
+          from audit_record
+         order by sequence desc
+         limit 8
+    </select>
+
+    <select id="allAudits" resultType="map">
+        select *
+          from audit_record
+    </select>
+
+    <select id="countAgentsTotal" resultType="long">select count(*) from agent_instance</select>
+    <select id="countAgentsOnline" resultType="long">select count(*) from agent_instance where status in ('ACTIVE', 'ONLINE')</select>
+    <select id="countInstancesTotal" resultType="long">select count(*) from instance</select>
+    <select id="countRulesTotal" resultType="long">select count(*) from rule</select>
+    <select id="countRulesActive" resultType="long">select count(*) from rule where status = 'ENABLED'</select>
+    <select id="countRolloutsRunning" resultType="long">select count(*) from operation_plan where status = 'RUNNING'</select>
+
+    <select id="countInjectableInstancesOnline" resultType="long">
+        select count(*)
+          from instance i
+         where i.status in ('ACTIVE', 'ONLINE')
+           and (
+               exists (
+                   select 1
+                     from agent_instance a
+                    where a.instance_id = i.id
+                      and a.status in ('ACTIVE', 'ONLINE')
+                      and (a.lease_expires_at is null or a.lease_expires_at &gt; now())
+               )
+               or exists (
+                   select 1
+                     from attach_executor_target t
+                     join attach_executor e on e.id = t.executor_id
+                    where t.instance_id = i.id
+                      and t.status in ('ACTIVE', 'ONLINE')
+                      and e.status in ('ACTIVE', 'ONLINE')
+                      and (e.lease_expires_at is null or e.lease_expires_at &gt; now())
+               )
+           )
+    </select>
+
+    <select id="searchTargets" resultType="map">
+        select rt.class_name, rt.method_name, rt.protocol, count(*) as version_count
+          from rule_target rt
+          join rule_version rv on rv.id = rt.rule_version_id
+          join rule r on r.id = rv.rule_id
+         where rv.status = 'ENABLED'
+           and (lower(rt.class_name) like #{like} or lower(rt.method_name) like #{like})
+           <if test="applicationId != ''">
+           and r.application_id = #{applicationId}
+           </if>
+           <if test="environmentId != ''">
+           and r.environment_id = #{environmentId}
+           </if>
+         group by rt.class_name, rt.method_name, rt.protocol
+         order by rt.class_name, rt.method_name
+         limit 100
+    </select>
+
+</mapper>

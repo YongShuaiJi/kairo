@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.kairo.platform.persistence.mapper.PlatformCoreMapper">
+    <select id="ping" resultType="int">select 1</select>
+    <select id="list" resultType="map">select * from ${table} order by ${orderBy} limit 1000</select>
+    <select id="listFencingTokens" resultType="map">select id, resource_type, resource_id, purpose, sequence, owner, status, lease_expires_at, created_at, consumed_at, correlation_id from fencing_token order by created_at desc, id limit 1000</select>
+    <select id="listAgents" resultType="map">select id, instance_id, sidecar_id, status, agent_version, bootstrap_version, listen_host, listen_port, capabilities_json, last_heartbeat_at, created_at, updated_at from agent_instance order by created_at, id limit 1000</select>
+    <select id="count" resultType="long">select count(*) from ${table}</select>
+    <select id="findById" resultType="map">select * from ${table} where id = #{id}</select>
+    <select id="countById" resultType="int">select count(*) from ${table} where id = #{id}</select>
+
+    <insert id="insertInstance">insert into instance(id, application_id, environment_id, nickname, hostname, process_id, runtime, status, labels_json, last_seen_at, created_at, updated_at) values (#{id}, #{applicationId}, #{environmentId}, #{nickname}, #{hostname}, #{processId}, #{runtime}, #{status}, #{labelsJson}, #{now}, #{now}, #{now})</insert>
+    <update id="updateInstanceNickname">update instance set nickname = #{nickname}, updated_at = #{updatedAt} where id = #{id}</update>
+    <select id="findInstanceForRegistration" resultType="map">
+        <choose>
+            <when test="instanceId != null">select * from instance where id = #{instanceId}</when>
+            <otherwise>select * from instance where process_start_id = #{processStartId}</otherwise>
+        </choose>
+    </select>
+    <insert id="insertRuntimeInstance">
+        insert into instance(id, application_id, environment_id, nickname, hostname, process_id, runtime, status, labels_json, last_seen_at, created_at, updated_at, process_start_id, jvm_started_at, java_version, load_mode, agent_version, capabilities_json, lease_expires_at, registration_status)
+        values (#{id}, #{applicationId}, #{environmentId}, #{nickname}, #{hostname}, #{processId}, #{runtime}, #{status}, #{labelsJson}, #{now}, #{now}, #{now}, #{processStartId}, #{jvmStartedAt}, #{javaVersion}, #{loadMode}, #{agentVersion}, #{capabilitiesJson}, #{leaseExpiresAt}, #{registrationStatus})
+    </insert>
+    <update id="updateRuntimeInstance">
+        update instance
+           set application_id = #{applicationId},
+               environment_id = coalesce(#{environmentId}, environment_id),
+               hostname = #{hostname},
+               process_id = #{processId},
+               runtime = #{runtime},
+               status = case when coalesce(#{environmentId}, environment_id) is null then 'PENDING_ASSIGNMENT' else 'ACTIVE' end,
+               last_seen_at = #{now},
+               updated_at = #{now},
+               process_start_id = #{processStartId},
+               jvm_started_at = #{jvmStartedAt},
+               java_version = #{javaVersion},
+               load_mode = #{loadMode},
+               agent_version = #{agentVersion},
+               capabilities_json = #{capabilitiesJson},
+               lease_expires_at = #{leaseExpiresAt},
+               registration_status = case when coalesce(#{environmentId}, environment_id) is null then 'PENDING_ASSIGNMENT' else 'ASSIGNED' end
+         where id = #{id}
+    </update>
+    <select id="firstAgentByInstance" resultType="map">select * from agent_instance where instance_id = #{instanceId} order by created_at limit 1</select>
+    <insert id="insertRuntimeAgent">insert into agent_instance(id, instance_id, sidecar_id, status, agent_version, bootstrap_version, listen_host, listen_port, token_hash, capabilities_json, last_heartbeat_at, created_at, updated_at, lease_expires_at) values (#{id}, #{instanceId}, #{sidecarId}, #{status}, #{agentVersion}, #{bootstrapVersion}, #{listenHost}, #{listenPort}, #{tokenHash}, #{capabilitiesJson}, #{now}, #{now}, #{now}, #{leaseExpiresAt})</insert>
+    <update id="updateRuntimeAgent">update agent_instance set status = 'ACTIVE', sidecar_id = coalesce(#{sidecarId}, sidecar_id), agent_version = #{agentVersion}, bootstrap_version = #{bootstrapVersion}, listen_host = #{listenHost}, listen_port = #{listenPort}, capabilities_json = #{capabilitiesJson}, last_heartbeat_at = #{now}, updated_at = #{now}, lease_expires_at = #{leaseExpiresAt} where id = #{id}</update>
+    <delete id="deleteAgentCapabilities">delete from agent_capability where agent_id = #{agentId}</delete>
+
+    <select id="findProjectId" resultType="string">select id from project where organization_id = 'org-default' and name = #{projectName} order by created_at limit 1</select>
+    <insert id="insertProject">insert into project(id, organization_id, name, created_at) values (#{id}, 'org-default', #{name}, #{createdAt})</insert>
+    <select id="findApplicationId" resultType="string">select id from application where project_id = #{projectId} and name = #{name} order by created_at limit 1</select>
+    <insert id="insertApplication">insert into application(id, project_id, name, created_at) values (#{id}, #{projectId}, #{name}, #{createdAt})</insert>
+    <select id="countEnvironmentType" resultType="int">select count(*) from environment where application_id = #{applicationId} and lower(type) = #{type}</select>
+    <insert id="insertEnvironment">insert into environment(id, application_id, name, type, created_at) values (#{id}, #{applicationId}, #{name}, #{type}, #{createdAt})</insert>
+    <update id="assignInstanceEnvironment">update instance set environment_id = #{environmentId}, status = 'ACTIVE', registration_status = 'ASSIGNED', updated_at = #{updatedAt} where id = #{id}</update>
+    <insert id="insertSidecar">insert into sidecar_instance(id, instance_id, status, sidecar_version, endpoint, capabilities_json, last_heartbeat_at, created_at, updated_at) values (#{id}, #{instanceId}, #{status}, #{sidecarVersion}, #{endpoint}, #{capabilitiesJson}, #{now}, #{now}, #{now})</insert>
+
+    <delete id="deleteInstanceRuleRuntimeStatus">delete from rule_runtime_status where instance_id = #{instanceId}</delete>
+    <delete id="deleteInstanceRuleBindings">delete from rule_instance_binding where instance_id = #{instanceId}</delete>
+    <delete id="deleteInstanceLabels">delete from instance_label where instance_id = #{instanceId}</delete>
+    <delete id="deleteInstanceAssetClaims">delete from asset_claim where instance_id = #{instanceId}</delete>
+    <delete id="deleteInstanceAttachTargets">delete from attach_executor_target where instance_id = #{instanceId}</delete>
+    <delete id="deleteInstanceSidecarsWithoutAgents">delete from sidecar_instance s where s.instance_id = #{instanceId} and not exists (select 1 from agent_instance a where a.sidecar_id = s.id)</delete>
+    <update id="archiveInstance">update instance set status = 'ARCHIVED', updated_at = #{updatedAt} where id = #{instanceId}</update>
+    <update id="abandonExecutionsForInstance">update rollout_instance_execution set status = 'ABANDONED', error_message = '目标实例已被运行时清理', finished_at = coalesce(finished_at, #{now}), updated_at = #{now} where instance_id = #{instanceId} and status &lt;&gt; 'ABANDONED'</update>
+    <update id="abandonPlansForInstanceWithoutLiveTargets">
+        update operation_plan op set status = 'ABANDONED', version = version + 1, terminal_source = 'INSTANCE_GONE', terminal_reason = '目标实例已被运行时清理，计划仅保留历史痕迹', updated_by = 'runtime-maintenance', updated_at = #{now}
+         where op.status &lt;&gt; 'ABANDONED'
+           and exists (select 1 from rollout_instance_execution rie where rie.operation_plan_id = op.id and rie.instance_id = #{instanceId})
+           and not exists (select 1 from rollout_instance_execution rie join instance i on i.id = rie.instance_id where rie.operation_plan_id = op.id and rie.instance_id &lt;&gt; #{instanceId} and i.status not in ('OFFLINE', 'ARCHIVED'))
+    </update>
+
+    <insert id="insertManualAgent">insert into agent_instance(id, instance_id, sidecar_id, status, agent_version, bootstrap_version, listen_host, listen_port, token_hash, capabilities_json, last_heartbeat_at, created_at, updated_at) values (#{id}, #{instanceId}, #{sidecarId}, #{status}, #{agentVersion}, #{bootstrapVersion}, #{listenHost}, #{listenPort}, #{tokenHash}, #{capabilitiesJson}, #{now}, #{now}, #{now})</insert>
+    <update id="updateAgentHeartbeat">update agent_instance set status = #{status}, last_heartbeat_at = #{now}, updated_at = #{now}, lease_expires_at = #{leaseExpiresAt} where id = #{id}</update>
+    <update id="updateInstanceHeartbeatByAgent">update instance set status = case when environment_id is null then 'PENDING_ASSIGNMENT' else 'ACTIVE' end, last_seen_at = #{now}, updated_at = #{now}, lease_expires_at = #{leaseExpiresAt} where id = (select instance_id from agent_instance where id = #{agentId})</update>
+    <select id="instanceIdByAgent" resultType="string">select instance_id from agent_instance where id = #{agentId}</select>
+    <insert id="insertAgentHeartbeat">insert into agent_heartbeat(id, agent_id, status, metrics_json, received_at) values (#{id}, #{agentId}, #{status}, #{metricsJson}, #{receivedAt})</insert>
+    <select id="agentGoneOperations" resultType="map">
+        select distinct op.* from operation_plan op join rollout_instance_execution rie on rie.operation_plan_id = op.id join rule_version rv on rv.rule_id = op.resource_id and rv.version = op.resource_version
+         where rie.instance_id = #{instanceId} and op.status = 'UNLOADED' and op.terminal_source = 'AGENT_GONE' and op.resource_type = 'rule' and rv.status = 'ENABLED'
+         order by op.updated_at, op.id
+    </select>
+    <update id="restoreAgentGoneOperation">update operation_plan set status = 'RUNNING', version = version + 1, terminal_source = '', terminal_reason = '', updated_by = #{updatedBy}, updated_at = #{updatedAt} where id = #{id} and status = 'UNLOADED' and terminal_source = 'AGENT_GONE' and version = #{version}</update>
+    <update id="resetRestoredExecution">update rollout_instance_execution set status = 'PENDING', command_id = null, error_message = 'Agent 重新注册，等待自动恢复发布', started_at = null, finished_at = null, version = version + 1, updated_by = #{updatedBy}, updated_at = #{updatedAt} where operation_plan_id = #{operationPlanId} and instance_id = #{instanceId}</update>
+
+    <insert id="insertRule">insert into rule(id, application_id, environment_id, name, status, current_draft_version, latest_version, created_by, created_at, updated_by, updated_at) values (#{id}, #{applicationId}, #{environmentId}, #{name}, #{status}, 1, 1, #{actor}, #{now}, #{actor}, #{now})</insert>
+    <update id="updateRuleAfterVersion">update rule set current_draft_version = #{version}, latest_version = #{version}, status = 'ENABLED', updated_by = #{actor}, updated_at = #{updatedAt} where id = #{id}</update>
+    <select id="countRuleVersions" resultType="int">select count(*) from rule_version where rule_id = #{ruleId}</select>
+    <select id="countRuleVersionsIn" resultType="int">select count(*) from rule_version where rule_id = #{ruleId} and version in <foreach collection="versions" item="version" open="(" separator="," close=")">#{version}</foreach></select>
+    <delete id="deleteRuleCapabilities">delete from rule_capability where rule_version_id in (select id from rule_version where rule_id = #{ruleId})</delete>
+    <delete id="deleteRuleTargets">delete from rule_target where rule_version_id in (select id from rule_version where rule_id = #{ruleId})</delete>
+    <delete id="deleteRuleRuntimeStatuses">delete from rule_runtime_status where rule_id = #{ruleId}</delete>
+    <delete id="deleteRuleBindings">delete from rule_instance_binding where rule_id = #{ruleId}</delete>
+    <delete id="deleteRuleLocks">delete from rule_lock where rule_id = #{ruleId}</delete>
+    <delete id="deleteRuleVersions">delete from rule_version where rule_id = #{ruleId}</delete>
+    <delete id="deleteRule">delete from rule where id = #{ruleId}</delete>
+    <delete id="deleteRuleCapabilitiesByVersions">delete from rule_capability where rule_version_id in (select id from rule_version where rule_id = #{ruleId} and version in <foreach collection="versions" item="version" open="(" separator="," close=")">#{version}</foreach>)</delete>
+    <delete id="deleteRuleTargetsByVersions">delete from rule_target where rule_version_id in (select id from rule_version where rule_id = #{ruleId} and version in <foreach collection="versions" item="version" open="(" separator="," close=")">#{version}</foreach>)</delete>
+    <delete id="deleteRuleRuntimeStatusesByVersions">delete from rule_runtime_status where rule_id = #{ruleId} and rule_version in <foreach collection="versions" item="version" open="(" separator="," close=")">#{version}</foreach></delete>
+    <delete id="deleteRuleBindingsByVersions">delete from rule_instance_binding where rule_id = #{ruleId} and rule_version in <foreach collection="versions" item="version" open="(" separator="," close=")">#{version}</foreach></delete>
+    <delete id="deleteRuleVersionsByVersions">delete from rule_version where rule_id = #{ruleId} and version in <foreach collection="versions" item="version" open="(" separator="," close=")">#{version}</foreach></delete>
+
+    <insert id="insertOperationPlan">insert into operation_plan(id, application_id, environment_id, plan_type, resource_type, resource_id, resource_version, status, version, strategy_json, created_by, created_at, updated_by, updated_at) values (#{id}, #{applicationId}, #{environmentId}, #{planType}, #{resourceType}, #{resourceId}, #{resourceVersion}, #{status}, #{version}, #{strategyJson}, #{actor}, #{now}, #{actor}, #{now})</insert>
+    <select id="ruleName" resultType="string">select name from rule where id = #{id}</select>
+    <update id="transitionOperationPlan">update operation_plan set status = #{status}, version = #{version}, updated_by = #{updatedBy}, updated_at = #{updatedAt} where id = #{id} and status = #{expectedStatus} and version = #{expectedVersion}</update>
+
+    <insert id="insertLabel">insert into instance_label(id, instance_id, label_key, label_value, created_at) values (#{id}, #{instanceId}, #{labelKey}, #{labelValue}, #{createdAt})</insert>
+    <insert id="insertAgentCapability">insert into agent_capability(id, agent_id, capability, metadata_json, created_at) values (#{id}, #{agentId}, #{capability}, #{metadataJson}, #{createdAt})</insert>
+    <insert id="insertRuleVersion">insert into rule_version(id, rule_id, version, status, risk_level, matcher_json, script_hash, script_json, governance_json, created_by, created_at) values (#{id}, #{ruleId}, #{version}, #{status}, #{riskLevel}, #{matcherJson}, #{scriptHash}, #{scriptJson}, #{governanceJson}, #{createdBy}, #{createdAt})</insert>
+    <insert id="insertRuleTarget">insert into rule_target(id, rule_version_id, protocol, class_name, method_name, matcher_json, created_at) values (#{id}, #{ruleVersionId}, #{protocol}, #{className}, #{methodName}, #{matcherJson}, #{createdAt})</insert>
+    <insert id="insertRuleCapability">insert into rule_capability(id, rule_version_id, capability, created_at) values (#{id}, #{ruleVersionId}, #{capability}, #{createdAt})</insert>
+
+    <select id="maxRuleVersion" resultType="long">select coalesce(max(version), 0) from rule_version where rule_id = #{ruleId}</select>
+    <update id="incrementScopedCounter">update scoped_counter set current_value = current_value + 1, updated_at = #{updatedAt} where counter_key = #{counterKey}</update>
+    <insert id="insertScopedCounter">insert into scoped_counter(counter_key, current_value, updated_at) values (#{counterKey}, #{currentValue}, #{updatedAt})</insert>
+    <select id="scopedCounterValue" resultType="long">select current_value from scoped_counter where counter_key = #{counterKey}</select>
+
+    <select id="validateEnvironment" resultType="map">select * from environment where id = #{environmentId} and application_id = #{applicationId}</select>
+    <select id="latestSidecar" resultType="map">select id from sidecar_instance where instance_id = #{instanceId} and status in ('ACTIVE', 'ONLINE') order by last_heartbeat_at desc nulls last, updated_at desc, id limit 1</select>
+    <select id="environmentByName" resultType="map">select * from environment where application_id = #{applicationId} and (upper(type) = #{environmentName} or upper(name) = #{environmentName}) order by created_at limit 1</select>
+    <select id="countInstanceNickname" resultType="int">select count(*) from instance where nickname = #{nickname}</select>
+
+    <insert id="insertAudit">insert into audit_record(id, occurred_at, actor, identity_source, action, resource_type, resource_id, resource_version, before_hash, after_hash, previous_record_hash, record_hash, correlation_id, ip_address, device, result, reason, details_json) values (#{id}, #{occurredAt}, #{actor}, #{identitySource}, #{action}, #{resourceType}, #{resourceId}, #{resourceVersion}, #{beforeHash}, #{afterHash}, #{previousRecordHash}, #{recordHash}, #{correlationId}, #{ipAddress}, #{device}, #{result}, #{reason}, #{detailsJson})</insert>
+    <select id="auditHashes" resultType="string">select record_hash from audit_record order by sequence desc limit 1</select>
+</mapper>

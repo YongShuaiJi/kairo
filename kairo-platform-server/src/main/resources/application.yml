@@ -1,0 +1,62 @@
+server:
+  port: 18280
+
+spring:
+  application:
+    name: kairo-platform-server
+  datasource:
+    url: ${KAIRO_DB_URL:jdbc:postgresql://127.0.0.1:5432/kairo}
+    username: ${KAIRO_DB_USER:kairo}
+    password: ${KAIRO_DB_PASSWORD:kairo}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  data:
+    redis:
+      host: ${KAIRO_REDIS_HOST:127.0.0.1}
+      port: ${KAIRO_REDIS_PORT:6379}
+
+mybatis-plus:
+  mapper-locations: classpath*:mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: false
+    call-setters-on-nulls: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+kairo:
+  platform:
+    api:
+      enabled: ${KAIRO_API_ENABLED:true}
+    fencing:
+      redis-enabled: ${KAIRO_FENCING_REDIS_ENABLED:false}
+      key-prefix: ${KAIRO_FENCING_KEY_PREFIX:kairo:fencing:}
+      default-ttl-seconds: ${KAIRO_FENCING_DEFAULT_TTL_SECONDS:300}
+    rollout:
+      scheduler:
+        enabled: ${KAIRO_ROLLOUT_SCHEDULER_ENABLED:true}
+        fixed-delay-ms: ${KAIRO_ROLLOUT_SCHEDULER_FIXED_DELAY_MS:3000}
+        command-lease-seconds: ${KAIRO_AGENT_COMMAND_LEASE_SECONDS:60}
+    attach:
+      agent-jar: ${KAIRO_ATTACH_AGENT_JAR:/app/kairo-agent-bootstrap.jar}
+      core-jar: ${KAIRO_ATTACH_CORE_JAR:/app/kairo-agent-core-modern.jar}
+      bootstrap-jar: ${KAIRO_ATTACH_BOOTSTRAP_JAR:/app/kairo-bootstrap-api.jar}
+      agent-host: ${KAIRO_ATTACH_AGENT_HOST:127.0.0.1}
+      agent-port: ${KAIRO_ATTACH_AGENT_PORT:0}
+      platform-url: ${KAIRO_ATTACH_PLATFORM_URL:http://127.0.0.1:18280}
+      platform-token: ${KAIRO_ATTACH_PLATFORM_TOKEN:}
+      sidecar-token: ${KAIRO_ATTACH_SIDECAR_TOKEN:}
+      command-max-attempts: ${KAIRO_ATTACH_COMMAND_MAX_ATTEMPTS:3}
+    runtime-cleanup:
+      retention-ms: ${KAIRO_RUNTIME_CLEANUP_RETENTION_MS:1800000}
+      initial-delay-ms: ${KAIRO_RUNTIME_CLEANUP_INITIAL_DELAY_MS:60000}
+      fixed-delay-ms: ${KAIRO_RUNTIME_CLEANUP_FIXED_DELAY_MS:60000}
+    auth:
+      mode: ${KAIRO_AUTH_MODE:local-token}
+      bootstrap-token: ${KAIRO_BOOTSTRAP_TOKEN:}
+      bootstrap-actor: ${KAIRO_BOOTSTRAP_ACTOR:system}
+      bootstrap-ttl-days: ${KAIRO_BOOTSTRAP_TTL_DAYS:365}

@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.kairo.platform.persistence.mapper.RolloutExecutionMapper">
+
+    <select id="runningOperations" resultType="map">
+        select *
+          from operation_plan
+         where status = 'RUNNING'
+         order by updated_at, id
+         limit 50
+    </select>
+
+    <select id="executions" resultType="map">
+        select *
+          from rollout_instance_execution
+         where operation_plan_id = #{operationPlanId}
+         order by updated_at, id
+    </select>
+
+    <select id="activeTargetInstances" resultType="map">
+        select i.*,
+               a.name as application_name,
+               lower(coalesce(e.type, e.name)) as environment_name,
+               (
+                   select t.executor_id
+                     from attach_executor_target t
+                    where t.instance_id = i.id
+                    order by t.last_seen_at desc nulls last, t.updated_at desc, t.executor_id
+                    limit 1
+               ) as attach_executor_id
+          from instance i
+          join application a on a.id = i.application_id
+          left join environment e on e.id = i.environment_id
+         where i.application_id = #{applicationId}
+           and i.environment_id = #{environmentId}
+           and i.status = 'ACTIVE'
+           and i.registration_status = 'ASSIGNED'
+           and (i.lease_expires_at is null or i.lease_expires_at &gt; current_timestamp)
+         order by i.created_at, i.id
+    </select>
+
+    <insert id="insertTargetSnapshot">
+        insert into rollout_target_snapshot(
+            id, operation_plan_id, instance_id, labels_json, agent_status, captured_at,
+            instance_nickname, application_name, environment_name, java_version,
+            agent_version, load_mode, process_start_id, instance_last_seen_at,
+            attach_executor_id
+        ) values (
+            #{id}, #{operationPlanId}, #{instanceId}, #{labelsJson}, 'UNKNOWN', #{capturedAt},
+            #{instanceNickname}, #{applicationName}, #{environmentName}, #{javaVersion},
+            #{agentVersion}, #{loadMode}, #{processStartId}, #{instanceLastSeenAt},
+            #{attachExecutorId}
+        )
+    </insert>
+
+    <insert id="insertExecution">
+        insert into rollout_instance_execution(
+            id, rollout_batch_id, operation_plan_id, instance_id, status,
+            expected_agent_version, expected_rule_version, command_id, error_message,
+            started_at, finished_at, version, updated_by, updated_at,
+            instance_nickname, application_name, environment_name, java_version,
+            agent_version, load_mode, process_start_id, instance_last_seen_at,
+            attach_executor_id
+        ) values (
+            #{id}, null, #{operationPlanId}, #{instanceId}, 'PENDING',
+            'unknown', #{expectedRuleVersion}, null, null,
+            null, null, 1, #{updatedBy}, #{updatedAt},
+            #{instanceNickname}, #{applicationName}, #{environmentName}, #{javaVersion},
+            #{agentVersion}, #{loadMode}, #{processStartId}, #{instanceLastSeenAt},
+            #{attachExecutorId}
+        )
+    </insert>
+
+    <select id="activeAgentsByInstance" resultType="map">
+        select *
+          from agent_instance
+         where instance_id = #{instanceId}
+           and status = 'ACTIVE'
+           and (lease_expires_at is null or lease_expires_at &gt; current_timestamp)
+         order by last_heartbeat_at desc nulls last, updated_at desc, id
+         limit 1
+    </select>
+
+    <update id="markExecutionWaitingAgent">
+        update rollout_instance_execution
+           set status = 'WAITING_AGENT',
+               command_id = #{commandId},
+               error_message = null,
+               started_at = coalesce(started_at, #{startedAt}),
+               version = version + 1,
+               updated_by = #{updatedBy},
+               updated_at = #{updatedAt}
+         where id = #{id}
+           and command_id is null
+           and status in ('PENDING', 'WAITING_AGENT')
+    </update>
+
+    <select id="execution" resultType="map">
+        select *
+          from rollout_instance_execution
+         where id = #{id}
+    </select>
+
+    <select id="ruleVersion" resultType="map">
+        select *
+          from rule_version
+         where rule_id = #{ruleId}
+           and version = #{version}
+    </select>
+
+    <select id="firstRuleTarget" resultType="map">
+        select *
+          from rule_target
+         where rule_version_id = #{ruleVersionId}
+         order by created_at, id
+         limit 1
+    </select>
+
+    <update id="waitForAgent">
+        update rollout_instance_execution
+           set status = 'WAITING_AGENT',
+               error_message = #{reason},
+               version = version + 1,
+               updated_by = 'rollout-scheduler',
+               updated_at = #{updatedAt}
+         where id = #{id}
+           and command_id is null
+           and status in ('PENDING', 'WAITING_AGENT')
+    </update>
+
+    <update id="failOperationWithoutTargets">
+        update operation_plan
+           set status = 'FAILED',
+               version = version + 1,
+               updated_by = #{updatedBy},
+               updated_at = #{updatedAt}
+         where id = #{id}
+           and status = 'RUNNING'
+           and version = #{version}
+    </update>
+
+    <select id="operation" resultType="map">
+        select *
+          from operation_plan
+         where id = #{id}
+    </select>
+</mapper>

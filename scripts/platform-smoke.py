@@ -6,9 +6,9 @@ import urllib.error
 import urllib.request
 
 
-BASE_URL = os.environ.get("RUNTIME_MOCK_API", "http://127.0.0.1:18280/api/v1").rstrip("/")
-TOKEN = os.environ.get("RUNTIME_MOCK_TOKEN", "runtime-mock-dev-admin-token-change-me")
-ACTOR = os.environ.get("RUNTIME_MOCK_ACTOR", "system")
+BASE_URL = os.environ.get("KAIRO_API", "http://127.0.0.1:18280/api/v1").rstrip("/")
+TOKEN = os.environ.get("KAIRO_TOKEN", "kairo-dev-admin-token-change-me")
+ACTOR = os.environ.get("KAIRO_ACTOR", "system")
 RUN_ID = str(int(time.time()))
 
 
@@ -65,7 +65,7 @@ def main():
     suffix = RUN_ID[-6:]
     print("[2/7] register runtime agent")
     registration = post("/agent-registrations/self", {
-        "projectName": "runtime-mock",
+        "projectName": "kairo",
         "applicationName": f"smoke-demo-{suffix}",
         "environmentName": "sit",
         "hostname": "smoke-host",

@@ -1,29 +1,29 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: runtime-mock-postgres
+    container_name: kairo-postgres
     environment:
-      POSTGRES_DB: runtime_mock
-      POSTGRES_USER: runtime_mock
-      POSTGRES_PASSWORD: runtime_mock
+      POSTGRES_DB: kairo
+      POSTGRES_USER: kairo
+      POSTGRES_PASSWORD: kairo
     ports:
       - "5432:5432"
     volumes:
-      - runtime-mock-postgres-data:/var/lib/postgresql/data
+      - kairo-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U runtime_mock -d runtime_mock"]
+      test: ["CMD-SHELL", "pg_isready -U kairo -d kairo"]
       interval: 5s
       timeout: 3s
       retries: 20
 
   redis:
     image: redis:7-alpine
-    container_name: runtime-mock-redis
+    container_name: kairo-redis
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
     volumes:
-      - runtime-mock-redis-data:/data
+      - kairo-redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -31,29 +31,29 @@ services:
       retries: 20
 
   platform:
-    image: runtime-mock-platform-server:0.1.0-SNAPSHOT
+    image: kairo-platform-server:0.1.0-SNAPSHOT
     build:
       context: .
-      dockerfile: runtime-mock-platform-server/Dockerfile
-    container_name: runtime-mock-platform
+      dockerfile: kairo-platform-server/Dockerfile
+    container_name: kairo-platform
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment:
-      RUNTIME_MOCK_DB_URL: jdbc:postgresql://postgres:5432/runtime_mock
-      RUNTIME_MOCK_DB_USER: runtime_mock
-      RUNTIME_MOCK_DB_PASSWORD: runtime_mock
-      RUNTIME_MOCK_REDIS_HOST: redis
-      RUNTIME_MOCK_REDIS_PORT: "6379"
-      RUNTIME_MOCK_FENCING_REDIS_ENABLED: "true"
-      RUNTIME_MOCK_API_ENABLED: "true"
-      RUNTIME_MOCK_ROLLOUT_SCHEDULER_ENABLED: "true"
-      RUNTIME_MOCK_AUTH_MODE: local-token
-      RUNTIME_MOCK_BOOTSTRAP_TOKEN: runtime-mock-dev-admin-token-change-me
-      RUNTIME_MOCK_ATTACH_PLATFORM_URL: http://platform:18280
-      RUNTIME_MOCK_ATTACH_PLATFORM_TOKEN: runtime-mock-dev-admin-token-change-me
+      KAIRO_DB_URL: jdbc:postgresql://postgres:5432/kairo
+      KAIRO_DB_USER: kairo
+      KAIRO_DB_PASSWORD: kairo
+      KAIRO_REDIS_HOST: redis
+      KAIRO_REDIS_PORT: "6379"
+      KAIRO_FENCING_REDIS_ENABLED: "true"
+      KAIRO_API_ENABLED: "true"
+      KAIRO_ROLLOUT_SCHEDULER_ENABLED: "true"
+      KAIRO_AUTH_MODE: local-token
+      KAIRO_BOOTSTRAP_TOKEN: kairo-dev-admin-token-change-me
+      KAIRO_ATTACH_PLATFORM_URL: http://platform:18280
+      KAIRO_ATTACH_PLATFORM_TOKEN: kairo-dev-admin-token-change-me
     ports:
       - "18280:18280"
     healthcheck:
@@ -63,18 +63,18 @@ services:
       retries: 30
 
   platform-web:
-    image: runtime-mock-platform-web:0.1.0
+    image: kairo-platform-web:0.1.0
     build:
-      context: ./runtime-mock-platform-web
+      context: ./kairo-platform-web
       dockerfile: Dockerfile
-    container_name: runtime-mock-platform-web
+    container_name: kairo-platform-web
     depends_on:
       platform:
         condition: service_healthy
     environment:
-      RUNTIME_MOCK_PLATFORM_API_URL: http://platform:18280
-      RUNTIME_MOCK_WEB_SESSION_KEY: runtime-mock-compose-session-key-change-me
-      RUNTIME_MOCK_WEB_DEMO_MODE: "false"
+      KAIRO_PLATFORM_API_URL: http://platform:18280
+      KAIRO_WEB_SESSION_KEY: kairo-compose-session-key-change-me
+      KAIRO_WEB_DEMO_MODE: "false"
     ports:
       - "18380:3000"
     healthcheck:
@@ -84,16 +84,16 @@ services:
       retries: 30
 
   demo-app:
-    image: runtime-mock-demo:0.1.0-SNAPSHOT
+    image: kairo-demo:0.1.0-SNAPSHOT
     build:
       context: .
-      dockerfile: runtime-mock-demo/Dockerfile
-    container_name: runtime-mock-demo
+      dockerfile: kairo-demo/Dockerfile
+    container_name: kairo-demo
     depends_on:
       platform:
         condition: service_healthy
     volumes:
-      - runtime-mock-demo-tmp:/tmp
+      - kairo-demo-tmp:/tmp
     ports:
       - "18082:18080"
       - "18092:18090"
@@ -104,6 +104,6 @@ services:
       retries: 30
 
 volumes:
-  runtime-mock-postgres-data:
-  runtime-mock-redis-data:
-  runtime-mock-demo-tmp:
+  kairo-postgres-data:
+  kairo-redis-data:
+  kairo-demo-tmp:

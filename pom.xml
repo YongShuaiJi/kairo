@@ -4,30 +4,30 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.example.runtimemock</groupId>
-    <artifactId>runtime-mock-parent</artifactId>
+    <groupId>com.example.kairo</groupId>
+    <artifactId>kairo-parent</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
-    <name>Runtime Mock Parent</name>
+    <name>Kairo Parent</name>
     <description>Java runtime method mocking and fault injection system.</description>
 
     <modules>
-        <module>runtime-mock-bootstrap-api</module>
-        <module>runtime-mock-api</module>
-        <module>runtime-mock-object</module>
-        <module>runtime-mock-groovy</module>
-        <module>runtime-mock-core</module>
-        <module>runtime-mock-agent-core</module>
-        <module>runtime-mock-agent-server</module>
-        <module>runtime-mock-agent-core-modern</module>
-        <module>runtime-mock-agent-bootstrap</module>
-        <module>runtime-mock-attach-cli</module>
-        <module>runtime-mock-ops</module>
-        <module>runtime-mock-sidecar</module>
-        <module>runtime-mock-platform-server</module>
-        <module>runtime-mock-demo</module>
-        <module>runtime-mock-integration-tests</module>
+        <module>kairo-bootstrap-api</module>
+        <module>kairo-api</module>
+        <module>kairo-object</module>
+        <module>kairo-groovy</module>
+        <module>kairo-core</module>
+        <module>kairo-agent-core</module>
+        <module>kairo-agent-server</module>
+        <module>kairo-agent-core-modern</module>
+        <module>kairo-agent-bootstrap</module>
+        <module>kairo-attach-cli</module>
+        <module>kairo-ops</module>
+        <module>kairo-sidecar</module>
+        <module>kairo-platform-server</module>
+        <module>kairo-demo</module>
+        <module>kairo-integration-tests</module>
     </modules>
 
     <properties>

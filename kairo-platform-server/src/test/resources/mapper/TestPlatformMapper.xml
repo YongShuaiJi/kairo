@@ -1,0 +1,262 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.kairo.platform.persistence.mapper.TestPlatformMapper">
+
+    <insert id="ensureDefaultProject">
+        insert into project(id, organization_id, name, created_at)
+        select 'proj-default', 'org-default', 'Default Project', current_timestamp
+         where not exists (select 1 from project where id = 'proj-default')
+    </insert>
+
+    <insert id="ensureDefaultApplication">
+        insert into application(id, project_id, name, created_at)
+        select 'app-default', 'proj-default', 'Default Application', current_timestamp
+         where not exists (select 1 from application where id = 'app-default')
+    </insert>
+
+    <insert id="ensureDefaultEnvironment">
+        insert into environment(id, application_id, name, type, created_at)
+        select 'env-dev', 'app-default', 'dev', 'dev', current_timestamp
+         where not exists (select 1 from environment where id = 'env-dev')
+    </insert>
+
+    <insert id="insertSucceededRolloutExecution">
+        insert into rollout_instance_execution(
+            id, rollout_batch_id, operation_plan_id, instance_id, status,
+            expected_agent_version, expected_rule_version, command_id, error_message,
+            started_at, finished_at, version, updated_by, updated_at
+        ) values (
+            #{id}, null, #{operationId}, #{instanceId}, 'SUCCEEDED',
+            '0.1.0', 1, null, null,
+            current_timestamp, current_timestamp, 1, 'system', current_timestamp
+        )
+    </insert>
+
+    <update id="markOperationSucceeded">
+        update operation_plan
+           set status = 'SUCCEEDED',
+               version = 2
+         where id = #{operationId}
+    </update>
+
+    <update id="enableRuleVersion">
+        update rule_version
+           set status = 'ENABLED'
+         where rule_id = #{ruleId}
+           and version = 1
+    </update>
+
+    <insert id="insertActiveRuleRuntimeStatus">
+        insert into rule_runtime_status(
+            id, rule_id, rule_version, instance_id, status,
+            hit_count, error_count, last_error, updated_at
+        ) values (
+            #{id}, #{ruleId}, 1, #{instanceId}, 'ACTIVE', 0, 0, null, current_timestamp
+        )
+    </insert>
+
+    <select id="ruleRuntimeStatusById" resultType="string">
+        select status
+          from rule_runtime_status
+         where id = #{id}
+    </select>
+
+    <select id="firstRolloutExecutionId" resultType="string">
+        select id
+          from rollout_instance_execution
+         where operation_plan_id = #{operationId}
+         limit 1
+    </select>
+
+    <select id="firstRolloutExecutionCommandId" resultType="string">
+        select command_id
+          from rollout_instance_execution
+         where operation_plan_id = #{operationId}
+         limit 1
+    </select>
+
+    <select id="ruleVersionStatus" resultType="string">
+        select status
+          from rule_version
+         where rule_id = #{ruleId}
+           and version = #{version}
+    </select>
+
+    <update id="expireAgentLease">
+        update agent_instance
+           set status = 'ACTIVE',
+               lease_expires_at = current_timestamp - interval '1' minute
+         where id = #{agentId}
+    </update>
+
+    <select id="operationPlanTerminalSource" resultType="string">
+        select terminal_source
+          from operation_plan
+         where id = #{operationId}
+    </select>
+
+    <select id="ruleRuntimeStatus" resultType="string">
+        select status
+          from rule_runtime_status
+         where rule_id = #{ruleId}
+           and instance_id = #{instanceId}
+    </select>
+
+    <select id="operationPlanStatus" resultType="string">
+        select status
+          from operation_plan
+         where id = #{operationId}
+    </select>
+
+    <select id="rolloutExecutionStatusByOperation" resultType="string">
+        select status
+          from rollout_instance_execution
+         where operation_plan_id = #{operationId}
+    </select>
+
+    <update id="markOperationManuallyUnloaded">
+        update operation_plan
+           set status = 'UNLOADED',
+               terminal_source = 'MANUAL',
+               terminal_reason = 'operator requested unload'
+         where id = #{operationId}
+    </update>
+
+    <update id="markAgentOfflineExpired">
+        update agent_instance
+           set status = 'OFFLINE',
+               lease_expires_at = current_timestamp - interval '1' hour,
+               last_heartbeat_at = current_timestamp - interval '1' hour,
+               updated_at = current_timestamp - interval '1' hour
+         where id = #{agentId}
+    </update>
+
+    <update id="markInstanceOfflineExpired">
+        update instance
+           set status = 'OFFLINE',
+               lease_expires_at = current_timestamp - interval '1' hour,
+               last_seen_at = current_timestamp - interval '1' hour,
+               updated_at = current_timestamp - interval '1' hour
+         where id = #{instanceId}
+    </update>
+
+    <select id="instanceStatus" resultType="string">
+        select status
+          from instance
+         where id = #{instanceId}
+    </select>
+
+    <insert id="insertExpiredAttachExecutor">
+        insert into attach_executor(
+            id, executor_type, hostname, endpoint, status, executor_version,
+            capabilities_json, last_heartbeat_at, lease_expires_at, created_at, updated_at
+        ) values (
+            'kairo-expired-executor', 'SIDECAR_CONTAINER', 'expired-executor-host',
+            'http://expired-executor:18480', 'ACTIVE', '0.1.0', '[]',
+            current_timestamp - interval '1' minute,
+            current_timestamp - interval '1' minute,
+            current_timestamp - interval '1' minute,
+            current_timestamp - interval '1' minute
+        )
+    </insert>
+
+    <insert id="insertExpiredAttachExecutorTarget">
+        insert into attach_executor_target(
+            executor_id, instance_id, process_id, agent_jar, runtime, java_version,
+            status, capabilities_json, last_seen_at, created_at, updated_at
+        ) values (
+            'kairo-expired-executor', #{instanceId}, '9001', '/app/kairo-agent-bootstrap.jar',
+            'java', '21', 'ACTIVE', '[]',
+            current_timestamp - interval '1' minute,
+            current_timestamp - interval '1' minute,
+            current_timestamp - interval '1' minute
+        )
+    </insert>
+
+    <insert id="insertExpiredSidecar">
+        insert into sidecar_instance(
+            id, instance_id, executor_id, status, sidecar_version, endpoint,
+            capabilities_json, last_heartbeat_at, created_at, updated_at
+        ) values (
+            'sidecar-expired-executor-1', #{instanceId}, 'kairo-expired-executor', 'ACTIVE',
+            '0.1.0', 'http://expired-executor:18480', '[]',
+            current_timestamp - interval '1' minute,
+            current_timestamp - interval '1' minute,
+            current_timestamp - interval '1' minute
+        )
+    </insert>
+
+    <select id="attachExecutorStatus" resultType="string">
+        select status
+          from attach_executor
+         where id = #{executorId}
+    </select>
+
+    <select id="attachExecutorTargetStatus" resultType="string">
+        select status
+          from attach_executor_target
+         where executor_id = #{executorId}
+           and instance_id = #{instanceId}
+    </select>
+
+    <select id="sidecarStatus" resultType="string">
+        select status
+          from sidecar_instance
+         where id = #{sidecarId}
+    </select>
+
+    <insert id="insertEmptyRolloutOptionsApplication">
+        insert into application(id, project_id, name, created_at)
+        values ('app-empty-rollout-options', 'proj-default', 'Empty Rollout Options App', current_timestamp)
+    </insert>
+
+    <insert id="insertEmptyRolloutOptionsEnvironment">
+        insert into environment(id, application_id, name, type, created_at)
+        values ('env-empty-rollout-options', 'app-empty-rollout-options', 'dev', 'dev', current_timestamp)
+    </insert>
+
+    <select id="devEnvironmentIdByApplication" resultType="string">
+        select id
+          from environment
+         where application_id = #{applicationId}
+           and type = 'dev'
+    </select>
+
+    <update id="markOtherAgentsOffline">
+        update agent_instance
+           set status = 'OFFLINE'
+         where id &lt;&gt; #{agentId}
+    </update>
+
+    <select id="instanceRegistrationStatus" resultType="string">
+        select registration_status
+          from instance
+         where id = #{instanceId}
+    </select>
+
+    <select id="lowerEnvironmentType" resultType="string">
+        select lower(e.type)
+          from environment e
+         where e.id = #{environmentId}
+    </select>
+
+    <select id="countRulesByName" resultType="int">
+        select count(*)
+          from rule
+         where name = #{name}
+    </select>
+
+    <select id="activeUserTokenSubjectId" resultType="string">
+        select t.subject_id
+          from platform_access_token t
+          join user_account u on u.id = t.subject_id
+         where u.username = #{username}
+           and t.subject_type = 'USER'
+           and t.status = 'ACTIVE'
+           and (t.expires_at is null or t.expires_at &gt; current_timestamp)
+         order by t.created_at desc, t.id
+         limit 1
+    </select>
+</mapper>

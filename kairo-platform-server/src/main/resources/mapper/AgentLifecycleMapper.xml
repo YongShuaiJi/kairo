@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.kairo.platform.persistence.mapper.AgentLifecycleMapper">
+
+    <update id="markAgentStopping">
+        update agent_instance
+           set status = 'STOPPING',
+               updated_at = #{updatedAt}
+         where id = #{id}
+    </update>
+
+    <select id="findInstance" resultType="map">
+        select *
+          from instance
+         where id = #{id}
+    </select>
+
+    <select id="latestAgent" resultType="map">
+        select *
+          from agent_instance
+         where instance_id = #{instanceId}
+         order by last_heartbeat_at desc nulls last, updated_at desc, id
+         limit 1
+    </select>
+
+    <select id="latestExecutorSidecar" resultType="map">
+        select ae.id as executor_id,
+               ae.executor_type,
+               ae.endpoint,
+               ae.status as executor_status,
+               aet.process_id,
+               aet.agent_jar,
+               aet.status as target_status,
+               si.id as sidecar_id,
+               si.sidecar_version,
+               si.capabilities_json
+          from attach_executor_target aet
+          join attach_executor ae on ae.id = aet.executor_id
+          left join sidecar_instance si
+            on si.executor_id = ae.id
+           and si.instance_id = aet.instance_id
+         where aet.instance_id = #{instanceId}
+           and ae.status in ('ACTIVE', 'ONLINE')
+           and aet.status in ('ACTIVE', 'ONLINE')
+         order by ae.last_heartbeat_at desc nulls last, ae.updated_at desc, ae.id
+         limit 1
+    </select>
+
+    <select id="latestStandaloneSidecar" resultType="map">
+        select id as sidecar_id,
+               id,
+               endpoint,
+               status,
+               sidecar_version,
+               capabilities_json,
+               null as executor_id,
+               null as process_id,
+               null as agent_jar
+          from sidecar_instance
+         where instance_id = #{instanceId}
+           and status in ('ACTIVE', 'ONLINE')
+         order by last_heartbeat_at desc nulls last, updated_at desc, id
+         limit 1
+    </select>
+</mapper>
