@@ -132,7 +132,7 @@ export function AccountSelfPanel({ user, onUserChange, className }: AccountSelfP
             <DialogTitle>新的个人 Token</DialogTitle>
             <DialogDescription>这是唯一一次显示明文 Token，请立即复制并保存。</DialogDescription>
           </DialogHeader>
-          <div className="break-all rounded-lg border border-amber-200 bg-amber-50 p-4 font-mono text-xs text-amber-950">
+          <div className="token-secret-panel">
             {issuedToken}
           </div>
           <DialogFooter>

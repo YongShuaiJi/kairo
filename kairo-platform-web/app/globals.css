@@ -206,6 +206,24 @@ html.theme-night .surface {
   background: var(--primary) !important;
 }
 
+.token-secret-panel {
+  overflow-wrap: anywhere;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border));
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--warning-soft) 76%, var(--surface));
+  color: #78350f;
+  font-family: var(--runtime-font-mono);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  padding: 1rem;
+}
+
+html.theme-night .token-secret-panel {
+  border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
+  background: color-mix(in srgb, var(--surface-elevated) 82%, var(--warning) 18%);
+  color: #fde68a;
+}
+
 html.theme-night :where(.bg-white) {
   background-color: var(--surface) !important;
 }

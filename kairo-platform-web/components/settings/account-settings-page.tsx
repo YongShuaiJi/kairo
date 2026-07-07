@@ -273,7 +273,7 @@ export function AccountSettingsPage() {
             <DialogTitle>{issuedToken?.title ?? "Token 已生成"}</DialogTitle>
             <DialogDescription>这是唯一一次显示明文 Token，请立即复制并交给对应用户保存。</DialogDescription>
           </DialogHeader>
-          <div className="break-all rounded-lg border border-amber-200 bg-amber-50 p-4 font-mono text-xs text-amber-950">
+          <div className="token-secret-panel">
             {issuedToken?.token}
           </div>
           <DialogFooter>

@@ -1701,7 +1701,7 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
             <DialogTitle>Token 已签发</DialogTitle>
             <DialogDescription>这是唯一一次显示明文 Token，请立即复制并安全保存。</DialogDescription>
           </DialogHeader>
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 font-mono text-xs break-all text-amber-950">{String(created?.token ?? "")}</div>
+          <div className="token-secret-panel">{String(created?.token ?? "")}</div>
           <DialogFooter><Button onClick={async () => { await navigator.clipboard.writeText(String(created?.token ?? "")); toast.success("Token 已复制"); }}><Copy />复制 Token</Button></DialogFooter>
         </DialogContent>
       </Dialog>
