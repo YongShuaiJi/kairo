@@ -1,5 +1,11 @@
 # Kairo 文档索引
 
+## 产品规划
+
+- [V1.X 版本迭代路线图](./roadmap/v1.x-version-roadmap.md)：V1.1 至 V1.7 LTS 的版本范围、实施顺序、交付物和验收标准。
+- [V1.X 技术改造方案](./roadmap/v1.x-technical/README.md)：V1.1 至 V1.6 的模块改造、技术决策、测试方案及多智能体交付规范。
+- [V1.X 多智能体开发与验收规范](./roadmap/v1.x-technical/development-and-acceptance.md)：开发波次、评审检查点、交付和验收模板。
+
 ## 开发者文档
 
 - [平台技术使用文档](./developer/platform-technical-guide.md)：环境搭建、模块边界、产品设计、代码设计、实例注册、Agent 设计和规则发布设计。
