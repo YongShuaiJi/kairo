@@ -1,5 +1,11 @@
 package com.example.kairo.agent.core;
 
+import com.example.kairo.agent.core.bytecode.BytecodeCaptureService;
+import com.example.kairo.agent.core.bytecode.BytecodeSnapshotRepository;
+import com.example.kairo.agent.core.bytecode.DecompilerService;
+import com.example.kairo.agent.core.bytecode.TransformationJournal;
+import com.example.kairo.agent.core.bytecode.TransformationPreviewService;
+import com.example.kairo.agent.core.bytecode.diff.BytecodeDiffService;
 import com.example.kairo.api.MockRule;
 import com.example.kairo.bridge.KairoBridge;
 import com.example.kairo.core.AgentBridgeDispatcher;
@@ -41,6 +47,12 @@ public final class AgentRuntime implements AutoCloseable {
     private final ByteBuddyTransformerManager transformerManager;
     private final LoadedClassRepository loadedClassRepository;
     private final RuntimeEventBuffer eventBuffer;
+    private final BytecodeSnapshotRepository snapshotRepository;
+    private final TransformationJournal transformationJournal;
+    private final TransformationPreviewService previewService;
+    private final BytecodeCaptureService captureService;
+    private final BytecodeDiffService diffService;
+    private final DecompilerService decompilerService;
     private final ConcurrentHashMap<String, PublishedRule> publishedRules = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, RecordingRegistration> activeRecordings = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> degradedClasses = new ConcurrentHashMap<>();
@@ -68,7 +80,19 @@ public final class AgentRuntime implements AutoCloseable {
                 eventBuffer,
                 java.time.Clock.systemUTC());
         this.recordingObserver = new RecordingInvocationObserver();
-        this.transformerManager = new ByteBuddyTransformerManager(instrumentation, instrumentationRegistry);
+        this.snapshotRepository = new BytecodeSnapshotRepository(
+                new BytecodeSnapshotRepository.Config(256, 8L * 1024 * 1024, 30L * 60 * 1000));
+        this.transformationJournal = new TransformationJournal(
+                new TransformationJournal.Config(64, 4096));
+        this.transformerManager = new ByteBuddyTransformerManager(instrumentation, instrumentationRegistry,
+                snapshotRepository, transformationJournal);
+        this.previewService = new TransformationPreviewService(instrumentationRegistry,
+                snapshotRepository, transformationJournal);
+        this.captureService = new BytecodeCaptureService(transformerManager,
+                snapshotRepository, transformationJournal);
+        this.diffService = new BytecodeDiffService();
+        this.decompilerService = new DecompilerService(new com.example.kairo.agent.core.bytecode.UnavailableBytecodeDecompiler(),
+                2 * 1024 * 1024, 5000L);
         this.loadedClassRepository = new LoadedClassRepository(instrumentation);
     }
 
@@ -77,6 +101,7 @@ public final class AgentRuntime implements AutoCloseable {
             KairoBridge.install(new AgentBridgeDispatcher(ruleDispatcher, recordingObserver));
             transformerManager.install();
             cleanupExecutor.scheduleWithFixedDelay(this::cleanupExpiredRules, 1, 1, TimeUnit.SECONDS);
+            cleanupExecutor.scheduleWithFixedDelay(snapshotRepository::evictExpired, 5, 5, TimeUnit.SECONDS);
             state.set(AgentState.ACTIVE);
             eventBuffer.record("agent.start", "system", null, null, "Kairo agent started");
         } catch (RuntimeException e) {
@@ -414,6 +439,30 @@ public final class AgentRuntime implements AutoCloseable {
         return transformerManager;
     }
 
+    public BytecodeSnapshotRepository snapshotRepository() {
+        return snapshotRepository;
+    }
+
+    public TransformationJournal transformationJournal() {
+        return transformationJournal;
+    }
+
+    public TransformationPreviewService previewService() {
+        return previewService;
+    }
+
+    public BytecodeCaptureService captureService() {
+        return captureService;
+    }
+
+    public BytecodeDiffService diffService() {
+        return diffService;
+    }
+
+    public DecompilerService decompilerService() {
+        return decompilerService;
+    }
+
     @Override
     public void close() {
         state.set(AgentState.STOPPING);
@@ -423,6 +472,8 @@ public final class AgentRuntime implements AutoCloseable {
         activeRecordings.clear();
         recordingObserver.clear();
         transformerManager.close();
+        decompilerService.close();
+        snapshotRepository.close();
         scriptCompiler.close();
         cleanupExecutor.shutdownNow();
         state.set(AgentState.STOPPED);

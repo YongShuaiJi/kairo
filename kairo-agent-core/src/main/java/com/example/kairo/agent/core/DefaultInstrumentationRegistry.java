@@ -45,16 +45,25 @@ public final class DefaultInstrumentationRegistry implements InstrumentationRegi
 
     @Override
     public boolean containsType(String className, ClassLoader classLoader) {
-        return !methodsOf(className, classLoader).isEmpty();
+        return containsType(className, ClassLoaderIdentity.idOf(classLoader));
+    }
+
+    @Override
+    public boolean containsType(String className, String classLoaderId) {
+        return !methodsOf(className, classLoaderId).isEmpty();
     }
 
     @Override
     public Set<MethodSignature> methodsOf(String className, ClassLoader classLoader) {
+        return methodsOf(className, ClassLoaderIdentity.idOf(classLoader));
+    }
+
+    @Override
+    public Set<MethodSignature> methodsOf(String className, String classLoaderId) {
         Set<MethodSignature> methods = methodsByClassName.get(className);
         if (methods == null || methods.isEmpty()) {
             return Set.of();
         }
-        String classLoaderId = ClassLoaderIdentity.idOf(classLoader);
         return methods.stream()
                 .filter(method -> method.classLoaderId() == null || method.classLoaderId().equals(classLoaderId))
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());

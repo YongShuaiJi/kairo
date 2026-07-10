@@ -141,6 +141,10 @@ Agent 运行在被测 Java 进程内，负责：
 - 回执发布、卸载和执行结果。
 - 在紧急情况下支持 disable-all、reset-class、reset-all、shutdown。
 
+> V1.1 起 Agent 内建立了字节码可视化底座：公共契约 DTO、有界快照仓库、转换日志、可复用转换计划，
+> 以及只读预览/捕获/结构化 Diff 服务与反编译 SPI。详见
+> [字节码可视化底座](./bytecode-visibility.md)。
+
 ### 2.4 Demo 与 attach-executor
 
 本地 Compose 包含一个 demo 应用和一个 attach-executor。二者处于同一侧运行边界：
