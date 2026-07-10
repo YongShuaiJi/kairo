@@ -2,6 +2,9 @@
 
 Java runtime method mock and fault-injection MVP based on Java Instrumentation, Byte Buddy Advice, and precompiled Groovy scripts.
 
+Kairo is licensed as a whole under the GNU Affero General Public License version 3 only (`AGPL-3.0-only`).
+See [License](#license) and [LICENSE](./LICENSE).
+
 ## Modules
 
 - `kairo-bootstrap-api`: bootstrap-safe bridge API used by instrumented business methods.
@@ -295,3 +298,20 @@ docs/copyright/kairo-software-copyright-application.md
 - `kairo-sidecar` is used by the local attach demo flow; it is not a separate production storage or replay subsystem.
 - Recording, dataset extraction, replay, approval workflow, outbox publishing, Kafka, and MinIO have been removed from the active product surface.
 - Kubernetes, enterprise SSO, performance certification, and multi-region operation are optional future integrations rather than dependencies of the current product.
+
+## License
+
+Copyright in Kairo is held by its respective copyright holders and contributors.
+
+Unless a file or third-party notice states otherwise, the original Kairo source code, documentation,
+configuration, and project assets in this repository are licensed under the
+[GNU Affero General Public License version 3 only](./LICENSE), with SPDX identifier
+`AGPL-3.0-only`. No “or later version” option is granted.
+
+If you modify Kairo and let users interact with the modified version over a network, AGPLv3 section 13
+requires that those users be offered the Corresponding Source. Distribution of object code is also subject
+to the source-availability requirements in AGPLv3. Third-party dependencies and bundled third-party assets
+remain under their respective licenses.
+
+See [LICENSE-POLICY.md](./LICENSE-POLICY.md) for repository scope and distribution guidance, and
+[CONTRIBUTING.md](./CONTRIBUTING.md) for the license applied to contributions.

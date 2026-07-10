@@ -12,6 +12,14 @@
     <name>Kairo Parent</name>
     <description>Java runtime method mocking and fault injection system.</description>
 
+    <licenses>
+        <license>
+            <name>GNU Affero General Public License v3.0 only</name>
+            <url>https://www.gnu.org/licenses/agpl-3.0.html</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
     <modules>
         <module>kairo-bootstrap-api</module>
         <module>kairo-api</module>
