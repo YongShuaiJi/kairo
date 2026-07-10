@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableContainer, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type UserRecord = PlatformRecord & {
   username?: string;
@@ -181,35 +182,35 @@ export function AccountSettingsPage() {
               {usersQuery.error instanceof Error ? usersQuery.error.message : "用户列表加载失败"}
             </div>
           ) : (
-            <div className="scrollbar-thin overflow-x-auto">
-              <table className="w-full min-w-[910px] table-fixed text-left text-sm">
-                <thead className="theme-muted-panel text-xs font-medium uppercase tracking-wide text-[color:var(--muted)]">
-                  <tr>
-                    <th className="w-[190px] px-4 py-3">用户名</th>
-                    <th className="w-[130px] px-4 py-3">权限</th>
-                    <th className="w-[100px] px-4 py-3">有效 Token</th>
-                    <th className="w-[150px] px-4 py-3">创建时间</th>
-                    <th className="w-[340px] px-4 py-3 text-right">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
+            <TableContainer>
+              <Table className="min-w-[910px] table-fixed">
+                <TableHeader className="theme-muted-panel font-medium tracking-wide">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="w-[190px]">用户名</TableHead>
+                    <TableHead className="w-[130px]">权限</TableHead>
+                    <TableHead className="w-[100px]">有效 Token</TableHead>
+                    <TableHead className="w-[150px]">创建时间</TableHead>
+                    <TableHead className="w-[340px] text-right">操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {sortedUsers.map((user) => {
                     const target = String(valueOf(user, "username") ?? "");
                     const isSelf = target === session?.subject;
                     const isSuperAdmin = Boolean(valueOf(user, "superAdmin"));
                     return (
-                      <tr key={String(valueOf(user, "id") ?? target)} className="theme-row">
-                        <td className="px-4 py-3.5">
+                      <TableRow key={String(valueOf(user, "id") ?? target)} className="theme-row">
+                        <TableCell>
                           <div className="min-w-0">
                             <p className="truncate font-medium text-[color:var(--foreground)]">{target}</p>
                           </div>
-                        </td>
-                        <td className="px-4 py-3.5">
+                        </TableCell>
+                        <TableCell>
                           <Badge variant={isSuperAdmin ? "success" : "info"}>{roleLabel(user)}</Badge>
-                        </td>
-                        <td className="px-4 py-3.5 text-[color:var(--foreground)]">{activeTokenCount(user)}</td>
-                        <td className="px-4 py-3.5 text-[color:var(--muted)]">{formatDate(valueOf(user, "createdAt"))}</td>
-                        <td className="px-4 py-3.5">
+                        </TableCell>
+                        <TableCell className="text-[color:var(--foreground)]">{activeTokenCount(user)}</TableCell>
+                        <TableCell className="text-[color:var(--muted)]">{formatDate(valueOf(user, "createdAt"))}</TableCell>
+                        <TableCell>
                           <div className="flex justify-end gap-2">
                             {!isSelf && activeTokenCount(user) > 0 ? (
                               <Button
@@ -248,13 +249,13 @@ export function AccountSettingsPage() {
                               </Button>
                             ) : null}
                           </div>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
+                </TableBody>
+              </Table>
+            </TableContainer>
           )}
         </Card>
       ) : (

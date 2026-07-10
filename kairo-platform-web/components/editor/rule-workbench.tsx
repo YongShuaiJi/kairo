@@ -1061,14 +1061,14 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
                       />
                     </label>
                     <p className="mt-2 text-[10px] leading-4 text-amber-700">手动模式用于目标发现不可用时的技术兜底；发布仍会按类加载器和 JVM 描述符精确匹配。</p>
-                    <button type="button" onClick={() => {
+                    <Button type="button" variant="ghost" size="sm" onClick={() => {
                       setManualTarget(false);
                       setClassId("");
                       setClassName("");
                       setClassLoaderId("");
                       setMethodName("");
                       setMethodDescriptor("");
-                    }} className="mt-2 text-xs font-medium text-indigo-600 hover:text-indigo-700">返回搜索运行时方法</button>
+                    }} className="mt-2 px-0 text-xs font-medium text-indigo-600 hover:bg-transparent hover:text-indigo-700">返回搜索运行时方法</Button>
                   </>
                 ) : (
                   <>
@@ -1105,7 +1105,7 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
                           {immutableRuleIdentity ? (
                             <Badge variant="neutral" className="ml-auto shrink-0">已锁定</Badge>
                           ) : (
-                            <button type="button" onClick={() => {
+                            <Button type="button" variant="ghost" size="sm" onClick={() => {
                               setClassId("");
                               setClassName("");
                               setClassLoaderId("");
@@ -1117,7 +1117,7 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
                               setDiagnostics([]);
                               setValidationStatus("idle");
                               setTestResult(null);
-                            }} className="ml-auto shrink-0 text-[10px] font-medium text-[color:var(--primary)] hover:text-[color:var(--primary-strong)]">更换</button>
+                            }} className="ml-auto h-7 shrink-0 px-2 text-[10px] font-medium text-[color:var(--primary)] hover:text-[color:var(--primary-strong)]">更换</Button>
                           )}
                         </div>
                       </div>
@@ -1146,7 +1146,7 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
                       </div>
                     )}
                     {!immutableRuleIdentity ? (
-                      <button type="button" onClick={() => {
+                      <Button type="button" variant="ghost" size="sm" onClick={() => {
                         setManualTarget(true);
                         setTargetQuery("");
                         setClassId("");
@@ -1154,7 +1154,7 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
                         setClassLoaderId("");
                         setMethodName("");
                         setMethodDescriptor("");
-                      }} className="mt-2 text-xs font-medium text-[color:var(--primary)] hover:text-[color:var(--primary-strong)]">手动填写精确目标</button>
+                      }} className="mt-2 px-0 text-xs font-medium text-[color:var(--primary)] hover:bg-transparent hover:text-[color:var(--primary-strong)]">手动填写精确目标</Button>
                     ) : null}
                   </>
                 )}
@@ -1217,8 +1217,8 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
               <div className="ml-auto flex items-center gap-1">
                 {!focusMode ? (
                   <>
-                    <button type="button" onClick={() => setBottomOpen((value) => !value)} className={cn("rounded p-1.5 hover:bg-slate-200/70", bottomOpen ? "text-indigo-600" : "text-slate-400")} aria-label={bottomOpen ? "收起试运行面板" : "展开试运行面板"}><PanelBottomOpen className="size-3.5" /></button>
-                    <button type="button" onClick={() => setSideOpen((value) => !value)} className={cn("rounded p-1.5 hover:bg-slate-200/70", sideOpen ? "text-indigo-600" : "text-slate-400")} aria-label={sideOpen ? "收起诊断面板" : "展开诊断面板"}><PanelRightOpen className="size-3.5" /></button>
+                    <Button type="button" variant="ghost" size="icon" onClick={() => setBottomOpen((value) => !value)} className={cn("size-7", bottomOpen ? "text-indigo-600" : "text-slate-400")} aria-label={bottomOpen ? "收起试运行面板" : "展开试运行面板"}><PanelBottomOpen className="size-3.5" /></Button>
+                    <Button type="button" variant="ghost" size="icon" onClick={() => setSideOpen((value) => !value)} className={cn("size-7", sideOpen ? "text-indigo-600" : "text-slate-400")} aria-label={sideOpen ? "收起诊断面板" : "展开诊断面板"}><PanelRightOpen className="size-3.5" /></Button>
                   </>
                 ) : null}
                 <span className={cn("ml-1 flex items-center gap-1.5", darkEditorSurface ? "text-slate-500" : "text-slate-400")}><Braces className="size-3.5" />Groovy · UTF-8</span>
@@ -1262,8 +1262,8 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
 
           <aside className={cn("theme-panel scrollbar-thin min-h-0 overflow-y-auto overscroll-contain", (focusMode || !sideOpen) && "invisible")}>
             <div className="flex h-11 border-b">
-              <button onClick={() => setSideTab("diagnostics")} className={cn("flex-1 border-b-2 text-xs font-medium", sideTab === "diagnostics" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}>诊断 ({diagnostics.length})</button>
-              <button onClick={() => setSideTab("context")} className={cn("flex-1 border-b-2 text-xs font-medium", sideTab === "context" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}>上下文</button>
+              <Button type="button" variant="ghost" onClick={() => setSideTab("diagnostics")} className={cn("h-full flex-1 rounded-none border-b-2 text-xs font-medium", sideTab === "diagnostics" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}>诊断 ({diagnostics.length})</Button>
+              <Button type="button" variant="ghost" onClick={() => setSideTab("context")} className={cn("h-full flex-1 rounded-none border-b-2 text-xs font-medium", sideTab === "context" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}>上下文</Button>
             </div>
             {sideTab === "diagnostics" ? (
               <div className="p-3">
@@ -1305,8 +1305,8 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
               <span className="h-1 w-16 rounded-full bg-transparent transition group-hover:bg-[var(--border-strong)] group-active:bg-[var(--primary)]" />
             </div>
             <div className="flex h-10 items-center border-b px-3">
-              <button onClick={() => setBottomTab("test")} className={cn("flex h-full items-center gap-2 border-b-2 px-3 text-xs font-medium", bottomTab === "test" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}><Beaker className="size-3.5" />试运行</button>
-              <button onClick={() => setBottomTab("diff")} className={cn("flex h-full items-center gap-2 border-b-2 px-3 text-xs font-medium", bottomTab === "diff" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}><FileDiff className="size-3.5" />版本 Diff</button>
+              <Button type="button" variant="ghost" onClick={() => setBottomTab("test")} className={cn("h-full rounded-none border-b-2 px-3 text-xs font-medium", bottomTab === "test" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}><Beaker className="size-3.5" />试运行</Button>
+              <Button type="button" variant="ghost" onClick={() => setBottomTab("diff")} className={cn("h-full rounded-none border-b-2 px-3 text-xs font-medium", bottomTab === "diff" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400")}><FileDiff className="size-3.5" />版本 Diff</Button>
               <div className="ml-auto flex items-center gap-2 text-[10px] text-slate-400"><Clock3 className="size-3" />服务端执行上限 1000 ms</div>
             </div>
             {bottomTab === "test" ? (

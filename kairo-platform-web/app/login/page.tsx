@@ -103,9 +103,9 @@ export default function LoginPage() {
                   value={token}
                   onChange={(event) => setToken(event.target.value)}
                 />
-                <button type="button" onClick={() => setVisible((value) => !value)} className="absolute right-3 top-3 text-slate-400 hover:text-slate-700" aria-label={visible ? "隐藏 Token" : "显示 Token"}>
+                <Button type="button" variant="ghost" size="icon" onClick={() => setVisible((value) => !value)} className="absolute right-2 top-2 size-8 text-slate-400 hover:text-slate-700" aria-label={visible ? "隐藏 Token" : "显示 Token"}>
                   {visible ? <EyeOff className="size-5" /> : <Eye className="size-5" />}
-                </button>
+                </Button>
               </div>
             </label>
             {error ? <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}

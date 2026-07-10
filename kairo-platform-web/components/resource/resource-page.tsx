@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { DateTimePicker } from "@/components/ui/date-time-picker";
 import { NumberInput } from "@/components/ui/number-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -457,8 +458,9 @@ function EditableNickname({
     );
   }
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       onPointerDown={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -468,13 +470,13 @@ function EditableNickname({
         event.stopPropagation();
         setEditing(true);
       }}
-      className="group/nickname inline-flex max-w-72 items-center gap-2 rounded-md px-2 py-1 text-left font-medium text-[color:var(--foreground)] transition hover:bg-[var(--surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-border)]"
+      className="group/nickname h-auto max-w-72 justify-start gap-2 rounded-md px-2 py-1 text-left font-medium text-[color:var(--foreground)]"
       aria-label="编辑实例昵称"
       title="编辑昵称"
     >
       <span className="truncate">{String(valueOf(record, "nickname") ?? "—")}</span>
       <Pencil className="size-3.5 shrink-0 text-[color:var(--muted)] opacity-0 transition group-hover/nickname:opacity-100 group-focus-visible/nickname:opacity-100" />
-    </button>
+    </Button>
   );
 }
 
@@ -1239,10 +1241,14 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
       />
 
       {config.tabs ? (
-        <div className="theme-panel scrollbar-thin mb-4 flex gap-1 overflow-x-auto rounded-xl border p-1">
-          {config.tabs.map((tab) => (
-            <button key={tab.endpoint} onClick={() => setActiveEndpoint(tab.endpoint)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition ${activeEndpoint === tab.endpoint ? "bg-[var(--primary)] text-white shadow-sm" : "text-[color:var(--muted)] hover:bg-[var(--surface-muted)] hover:text-[color:var(--foreground)]"}`}>{tab.label}</button>
-          ))}
+        <div className="scrollbar-thin mb-4 overflow-x-auto">
+          <SegmentedControl
+            value={activeEndpoint}
+            onValueChange={setActiveEndpoint}
+            items={config.tabs.map((tab) => ({ value: tab.endpoint, label: tab.label }))}
+            className="min-w-max"
+            aria-label={`${config.title}分类`}
+          />
         </div>
       ) : null}
 
@@ -1343,19 +1349,20 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
                                               className="h-9 max-w-64 font-medium"
                                             />
                                           ) : (
-                                            <button
+                                            <Button
                                               type="button"
+                                              variant="ghost"
                                               onClick={(event) => {
                                                 event.stopPropagation();
                                                 startEditingNickname(record);
                                               }}
-                                              className="group/nickname inline-flex max-w-64 items-center gap-2 rounded-md px-2 py-1.5 text-left font-medium text-[color:var(--foreground)] transition hover:bg-[var(--surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-border)]"
+                                              className="group/nickname h-auto max-w-64 justify-start gap-2 rounded-md px-2 py-1.5 text-left font-medium text-[color:var(--foreground)]"
                                               aria-label="编辑实例昵称"
                                               title="编辑昵称"
                                             >
                                               <span className="truncate">{String(valueOf(record, "nickname") ?? "—")}</span>
                                               <Pencil className="size-3.5 shrink-0 text-[color:var(--muted)] opacity-0 transition group-hover/nickname:opacity-100 group-focus-visible/nickname:opacity-100" />
-                                            </button>
+                                            </Button>
                                           ) : columnIndex === 0 ? <div className="font-medium text-[color:var(--foreground)]"><Cell value={valueOf(record, column.key)} column={column} record={record} /></div> : <Cell value={valueOf(record, column.key)} column={column} record={record} />}
                                         </td>
                                       ))}
@@ -1420,19 +1427,20 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
                           className="h-9 max-w-64 font-medium"
                         />
                       ) : (
-                        <button
+                        <Button
                           type="button"
+                          variant="ghost"
                           onClick={(event) => {
                             event.stopPropagation();
                             startEditingNickname(record);
                           }}
-                          className="group/nickname inline-flex max-w-64 items-center gap-2 rounded-md px-2 py-1.5 text-left font-medium text-[color:var(--foreground)] transition hover:bg-[var(--surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-border)]"
+                          className="group/nickname h-auto max-w-64 justify-start gap-2 rounded-md px-2 py-1.5 text-left font-medium text-[color:var(--foreground)]"
                           aria-label="编辑实例昵称"
                           title="编辑昵称"
                         >
                           <span className="truncate">{String(valueOf(record, "nickname") ?? "—")}</span>
                           <Pencil className="size-3.5 shrink-0 text-[color:var(--muted)] opacity-0 transition group-hover/nickname:opacity-100 group-focus-visible/nickname:opacity-100" />
-                        </button>
+                        </Button>
                       ) : columnIndex === 0 ? (
                         <div className="font-medium text-[color:var(--foreground)]"><Cell value={cellValue} column={column} record={record} /></div>
                       ) : (

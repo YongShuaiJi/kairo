@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableContainer, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type RuleDetailData = {
   rule: PlatformRecord;
@@ -145,37 +146,37 @@ export function RuleLedgerPage({ ruleId }: { ruleId: string }) {
       ) : (
         <div className="space-y-4">
           <Card className="overflow-hidden">
-            <div className="scrollbar-thin overflow-x-auto">
-              <table className="w-full min-w-[1540px] whitespace-nowrap text-center text-sm">
-                <thead className="theme-muted-panel whitespace-nowrap text-xs font-medium uppercase tracking-wide text-[color:var(--muted)]">
-                  <tr>
-                    <th className="px-6 py-3">规则名称</th>
-                    <th className="px-6 py-3">应用</th>
-                    <th className="px-6 py-3">环境</th>
-                    <th className="px-6 py-3">目标方法</th>
-                    <th className="px-6 py-3">版本数</th>
-                    <th className="px-6 py-3">在线版本</th>
-                    <th className="px-6 py-3">最新版本</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td className="px-6 py-4 font-semibold text-[color:var(--foreground)]">{humanize(valueOf(rule, "name"))}</td>
-                    <td className="px-6 py-4">{humanize(valueOf(rule, "applicationName") ?? valueOf(rule, "applicationId"))}</td>
-                    <td className="px-6 py-4">{displayRaw(valueOf(rule, "environmentName") ?? valueOf(rule, "environmentId"))}</td>
-                    <td className="px-6 py-4 font-mono text-xs">{targetLabel(firstTarget(detailQuery.data, versions[0]))}</td>
-                    <td className="px-6 py-4">
+            <TableContainer>
+              <Table className="min-w-[1540px] whitespace-nowrap text-center">
+                <TableHeader className="theme-muted-panel whitespace-nowrap font-medium tracking-wide">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="px-6 text-center">规则名称</TableHead>
+                    <TableHead className="px-6 text-center">应用</TableHead>
+                    <TableHead className="px-6 text-center">环境</TableHead>
+                    <TableHead className="px-6 text-center">目标方法</TableHead>
+                    <TableHead className="px-6 text-center">版本数</TableHead>
+                    <TableHead className="px-6 text-center">在线版本</TableHead>
+                    <TableHead className="px-6 text-center">最新版本</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow>
+                    <TableCell className="px-6 py-4 font-semibold text-[color:var(--foreground)]">{humanize(valueOf(rule, "name"))}</TableCell>
+                    <TableCell className="px-6 py-4">{humanize(valueOf(rule, "applicationName") ?? valueOf(rule, "applicationId"))}</TableCell>
+                    <TableCell className="px-6 py-4">{displayRaw(valueOf(rule, "environmentName") ?? valueOf(rule, "environmentId"))}</TableCell>
+                    <TableCell className="px-6 py-4 font-mono text-xs">{targetLabel(firstTarget(detailQuery.data, versions[0]))}</TableCell>
+                    <TableCell className="px-6 py-4">
                       <span>{versionCountLabel(valueOf(rule, "versionCount") ?? versions.length)}</span>
                       <span className="ml-2 whitespace-nowrap text-xs text-[color:var(--muted)]">
                         启用 {versionCountLabel(valueOf(rule, "enabledVersionCount"))} / 停用 {versionCountLabel(valueOf(rule, "disabledVersionCount"))}
                       </span>
-                    </td>
-                    <td className="px-6 py-4">{onlineVersion ? `v${onlineVersion}` : "—"}</td>
-                    <td className="px-6 py-4">{latestVersion ? `v${latestVersion}` : "—"}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+                    </TableCell>
+                    <TableCell className="px-6 py-4">{onlineVersion ? `v${onlineVersion}` : "—"}</TableCell>
+                    <TableCell className="px-6 py-4">{latestVersion ? `v${latestVersion}` : "—"}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </TableContainer>
           </Card>
 
           <Card className="overflow-hidden">
@@ -185,22 +186,22 @@ export function RuleLedgerPage({ ruleId }: { ruleId: string }) {
                 <p className="mt-1 text-xs text-[color:var(--muted)]">共 {versions.length} 个版本，按版本号倒序排列。</p>
               </div>
             </div>
-            <div className="scrollbar-thin overflow-x-auto">
-              <table className="w-full min-w-[1420px] whitespace-nowrap text-center text-sm">
-                <thead className="theme-muted-panel whitespace-nowrap text-xs font-medium uppercase tracking-wide text-[color:var(--muted)]">
-                  <tr>
-                    <th className="px-6 py-3">版本</th>
-                    <th className="px-6 py-3">状态</th>
-                    <th className="px-6 py-3">执行策略</th>
-                    <th className="px-6 py-3">风险</th>
-                    <th className="px-6 py-3">30 天自动删除倒计时</th>
-                    <th className="px-6 py-3">脚本摘要</th>
-                    <th className="px-6 py-3">创建人</th>
-                    <th className="px-6 py-3">创建时间</th>
-                    <th className="sticky right-0 z-10 w-56 bg-[var(--surface-subtle)] px-6 py-3 shadow-[-12px_0_18px_-18px_rgba(15,23,42,0.85)]">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
+            <TableContainer>
+              <Table className="min-w-[1420px] whitespace-nowrap text-center">
+                <TableHeader className="theme-muted-panel whitespace-nowrap font-medium tracking-wide">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="px-6 text-center">版本</TableHead>
+                    <TableHead className="px-6 text-center">状态</TableHead>
+                    <TableHead className="px-6 text-center">执行策略</TableHead>
+                    <TableHead className="px-6 text-center">风险</TableHead>
+                    <TableHead className="px-6 text-center">30 天自动删除倒计时</TableHead>
+                    <TableHead className="px-6 text-center">脚本摘要</TableHead>
+                    <TableHead className="px-6 text-center">创建人</TableHead>
+                    <TableHead className="px-6 text-center">创建时间</TableHead>
+                    <TableHead className="sticky right-0 z-10 w-56 bg-[var(--surface-subtle)] px-6 text-center shadow-[-12px_0_18px_-18px_rgba(15,23,42,0.85)]">操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {versions.map((version) => {
                     const versionNumber = Number(valueOf(version, "version") ?? 0);
                     const status = String(valueOf(version, "status") ?? "");
@@ -208,22 +209,22 @@ export function RuleLedgerPage({ ruleId }: { ruleId: string }) {
                     const phase = executionPhase(version);
                     const disabled = status.toUpperCase() === "DISABLED";
                     return (
-                      <tr key={String(valueOf(version, "id") ?? versionNumber)} className="theme-row">
-                        <td className="px-6 py-4">
+                      <TableRow key={String(valueOf(version, "id") ?? versionNumber)} className="theme-row">
+                        <TableCell className="px-6 py-4">
                           <div className="flex items-center justify-center gap-2">
                             <span className="font-mono font-semibold">v{versionNumber}</span>
                           </div>
-                        </td>
-                        <td className="px-6 py-4"><Badge variant={statusVariant(status)}>{humanize(status)}</Badge></td>
-                        <td className="px-6 py-4">{phase ? <Badge variant="neutral">{phaseLabel(phase)}</Badge> : "—"}</td>
-                        <td className="px-6 py-4"><Badge variant={statusVariant(String(valueOf(version, "riskLevel") ?? ""))}>{humanize(valueOf(version, "riskLevel"))}</Badge></td>
-                        <td className="px-6 py-4 whitespace-nowrap text-[color:var(--muted)]">{autoDeleteCountdown(version)}</td>
-                        <td className="max-w-80 px-6 py-4 text-center text-[color:var(--muted)]">
+                        </TableCell>
+                        <TableCell className="px-6 py-4"><Badge variant={statusVariant(status)}>{humanize(status)}</Badge></TableCell>
+                        <TableCell className="px-6 py-4">{phase ? <Badge variant="neutral">{phaseLabel(phase)}</Badge> : "—"}</TableCell>
+                        <TableCell className="px-6 py-4"><Badge variant={statusVariant(String(valueOf(version, "riskLevel") ?? ""))}>{humanize(valueOf(version, "riskLevel"))}</Badge></TableCell>
+                        <TableCell className="px-6 py-4 whitespace-nowrap text-[color:var(--muted)]">{autoDeleteCountdown(version)}</TableCell>
+                        <TableCell className="max-w-80 px-6 py-4 text-center text-[color:var(--muted)]">
                           <span className="block truncate" title={String(scriptSummary ?? "")}>{scriptSummary ? humanize(scriptSummary) : "—"}</span>
-                        </td>
-                        <td className="px-6 py-4">{humanize(valueOf(version, "createdBy"))}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-[color:var(--muted)]">{formatDate(valueOf(version, "createdAt"))}</td>
-                        <td className="sticky right-0 z-10 bg-inherit px-6 py-4 shadow-[-12px_0_18px_-18px_rgba(15,23,42,0.85)]">
+                        </TableCell>
+                        <TableCell className="px-6 py-4">{humanize(valueOf(version, "createdBy"))}</TableCell>
+                        <TableCell className="px-6 py-4 whitespace-nowrap text-[color:var(--muted)]">{formatDate(valueOf(version, "createdAt"))}</TableCell>
+                        <TableCell className="sticky right-0 z-10 bg-inherit px-6 py-4 shadow-[-12px_0_18px_-18px_rgba(15,23,42,0.85)]">
                           <div className="flex justify-center gap-2">
                             <Button asChild variant="secondary" size="sm"><Link href={`/rules/${ruleId}/versions/${versionNumber}`}><Pencil />修改</Link></Button>
                             {disabled ? (
@@ -236,13 +237,13 @@ export function RuleLedgerPage({ ruleId }: { ruleId: string }) {
                               </Button>
                             )}
                           </div>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
+                </TableBody>
+              </Table>
+            </TableContainer>
           </Card>
         </div>
       )}

@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   Box,
   ChevronDown,
@@ -27,6 +26,7 @@ import { KairoIcon } from "@/components/brand/kairo-icon";
 import { ThemeSwitcher } from "@/components/theme/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AccountSelfPanel } from "@/components/settings/account-self-panel";
 
 const navigation = [
@@ -171,9 +171,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <aside className="theme-sidebar fixed inset-y-0 left-0 z-40 hidden w-64 border-r lg:block">{sidebar}</aside>
       {mobileOpen ? (
         <div className="fixed inset-0 z-50 lg:hidden">
-          <button className="absolute inset-0 bg-slate-950/50" onClick={() => setMobileOpen(false)} aria-label="关闭导航" />
+          <button type="button" className="absolute inset-0 bg-slate-950/50" onClick={() => setMobileOpen(false)} aria-label="关闭导航" />
           <aside className="theme-sidebar relative h-full w-72 border-r shadow-2xl">
-            <button aria-label="关闭导航菜单" className="absolute right-3 top-3 rounded-lg p-2 text-slate-400 hover:bg-white/10" onClick={() => setMobileOpen(false)}><X className="size-5" /></button>
+            <Button aria-label="关闭导航菜单" variant="ghost" size="icon" className="absolute right-3 top-3 text-slate-400 hover:bg-white/10" onClick={() => setMobileOpen(false)}><X /></Button>
             {sidebar}
           </aside>
         </div>
@@ -182,45 +182,40 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className={cn("lg:pl-64", workspaceRoute && "lg:flex lg:h-screen lg:min-h-0 lg:flex-col lg:overflow-hidden")}>
         <header className={cn("theme-panel sticky top-0 z-30 flex h-16 items-center gap-3 border-b px-4 backdrop-blur-xl sm:px-6", workspaceRoute && "lg:relative lg:shrink-0")}>
           <Button aria-label="打开导航菜单" variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)}><Menu /></Button>
-          <button onClick={() => setCommandOpen(true)} className="theme-field flex h-9 w-full max-w-md items-center gap-2 rounded-lg border px-3 text-left text-sm text-[color:var(--muted)] hover:border-[color:var(--border-strong)]">
+          <Button type="button" variant="outline" onClick={() => setCommandOpen(true)} className="theme-field h-9 w-full max-w-md justify-start px-3 text-left text-[color:var(--muted)] hover:border-[color:var(--border-strong)]">
             <Search className="size-4" />
             <span className="flex-1">搜索页面与功能</span>
             <kbd className="theme-muted-panel hidden rounded border px-1.5 py-0.5 font-mono text-[10px] text-[color:var(--muted)] sm:inline-flex">⌘ K</kbd>
-          </button>
+          </Button>
           <div className="ml-auto flex items-center gap-1">
             {user?.demo ? <Badge variant="warning" className="hidden sm:inline-flex">Demo 模式</Badge> : null}
             <div className="hidden md:block">
               <ThemeSwitcher compact />
             </div>
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
-                <button aria-label="用户菜单" className="ml-1 flex items-center gap-2 rounded-lg p-1.5 hover:bg-[var(--surface-muted)]">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button aria-label="用户菜单" variant="ghost" className="ml-1 h-auto gap-2 p-1.5">
                   <span className="flex size-8 items-center justify-center rounded-lg bg-indigo-100 text-xs font-bold text-indigo-700">{user?.displayName?.slice(0, 1) ?? "R"}</span>
                   <span className="hidden text-left sm:block">
                     <span className="block text-xs font-medium text-slate-800">{user?.displayName ?? "平台用户"}</span>
                     <span className="block text-[10px] text-slate-400">{user?.roles?.[0] ?? "未加载"}</span>
                   </span>
                   <ChevronDown className="size-3.5 text-slate-400" />
-                </button>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content align="end" className="theme-panel-elevated z-50 min-w-56 rounded-xl border p-1.5 shadow-[0_18px_60px_rgb(15_23_42/0.18)]">
-                  <div className="px-2 py-2 md:hidden">
-                    <ThemeSwitcher />
-                  </div>
-                  <DropdownMenu.Separator className="my-1 h-px bg-[var(--border)] md:hidden" />
-                  <DropdownMenu.Item
-                    onSelect={() => setAccountOpen(true)}
-                    className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none hover:bg-[var(--surface-muted)]"
-                  >
-                    <Settings className="size-4" />
-                    账户与设置
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Separator className="my-1 h-px bg-[var(--border)]" />
-                  <DropdownMenu.Item onSelect={logout} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-red-600 outline-none hover:bg-red-50">退出登录</DropdownMenu.Item>
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <div className="px-2 py-2 md:hidden">
+                  <ThemeSwitcher />
+                </div>
+                <DropdownMenuSeparator className="md:hidden" />
+                <DropdownMenuItem onSelect={() => setAccountOpen(true)}>
+                  <Settings className="size-4" />
+                  账户与设置
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={logout} destructive>退出登录</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
         {user?.demo ? (
@@ -248,13 +243,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <div className="scrollbar-thin max-h-80 overflow-y-auto bg-[var(--surface-elevated)] p-2">
             {commandItems.map((item) => (
-              <button key={item.href} onClick={() => { router.push(item.href); setCommandOpen(false); }} className="group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm text-[color:var(--foreground)] transition hover:bg-[var(--surface-muted)] focus-visible:bg-[var(--surface-muted)] focus-visible:outline-none">
+              <Button key={item.href} variant="ghost" onClick={() => { router.push(item.href); setCommandOpen(false); }} className="group h-auto w-full justify-start rounded-xl px-3 py-3 text-left text-[color:var(--foreground)]">
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-subtle)] text-[color:var(--muted)] transition group-hover:text-[color:var(--primary)]">
                   <item.icon className="size-4" />
                 </span>
                 <span className="font-medium">{item.label}</span>
                 <span className="ml-auto whitespace-nowrap font-mono text-xs text-[color:var(--muted)]">{item.href}</span>
-              </button>
+              </Button>
             ))}
             {!commandItems.length ? <div className="p-8 text-center text-sm text-slate-400"><FlaskConical className="mx-auto mb-2 size-6" />没有找到匹配功能</div> : null}
           </div>
