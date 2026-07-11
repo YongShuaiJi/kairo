@@ -33,4 +33,8 @@
            and class_loader_id = #{classLoaderId}
          order by revision desc, snapshot_kind, agent_id
     </select>
+
+    <select id="runtimeInstanceIdForAgent" resultType="string">
+        select instance_id from agent_instance where id = #{agentId}
+    </select>
 </mapper>

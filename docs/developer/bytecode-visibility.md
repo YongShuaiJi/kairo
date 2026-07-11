@@ -243,3 +243,14 @@ Platform 代理服务（浏览器不直连 Agent）、blob 持久化和 Web 增�
 ClassLoader identity、revision 和 snapshot kind 组成，重复观测采用幂等 upsert。该表刻意不存在 byte array、
 BLOB、BYTEA 或 payload 列；INPUT、PLANNED、APPLIED 字节仍留在 Agent 的有界快照仓库，只能按需获取。
 诊断 JSON 由服务限制长度，且不得包含 class bytes 或 Agent token。
+
+## 9. Platform 诊断代理拓扑
+
+Platform 不直连 Agent：Agent HTTP 强制 loopback，数据库也只保存 token 哈希，无法且不应恢复明文 token。
+浏览器调用 `/api/v1/agents/{agentId}/classes/{classId}/...` 后，Platform 通过现有 Agent 主动轮询命令通道下发
+`BYTECODE_TRANSFORMATIONS/GET/PREVIEW/CAPTURE/DIFF`。Agent 直接调用本地 `AgentRuntime` 服务执行。
+
+预览输入与导出的 class bytes 仅存在于 `BytecodeDiagnosticExchange` 的有界请求内存中：命令提交事务提交前注册，
+轮询时临时注入，ACK 时在写数据库前剥离 `bytecodeBase64Url`，请求完成或超时立即清理。`agent_command.payload_json`、
+`agent_command.result_json`、`audit_record.details_json` 和 V35 元数据表均不保存二进制或 Agent token。客户端只能提交
+数据库中的 `agentId` 与 classId/快照参数，不能提交目标 URL、host 或认证头，因此不存在通用 SSRF 入口。

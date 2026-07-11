@@ -11,6 +11,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -78,7 +79,7 @@ final class PlatformCommandPoller implements AutoCloseable {
         }
     }
 
-    private Map<String, Object> execute(JsonNode command) {
+    Map<String, Object> execute(JsonNode command) {
         JsonNode payload = command.path("payload");
         String commandType = payload.path("commandType").asText(command.path("command_type").asText());
         return switch (commandType) {
@@ -112,8 +113,143 @@ final class PlatformCommandPoller implements AutoCloseable {
             case "STOP_RECORDING" -> stopRecording(payload);
             case "DISCOVER_TARGETS" -> discoverTargets(payload);
             case "REFRESH_RUNTIME_STATE" -> Map.of("refreshed", true);
+            case "BYTECODE_TRANSFORMATIONS" -> bytecodeTransformations(payload);
+            case "BYTECODE_GET" -> bytecodeGet(payload);
+            case "BYTECODE_PREVIEW" -> bytecodePreview(payload);
+            case "BYTECODE_CAPTURE" -> bytecodeCapture(payload);
+            case "BYTECODE_DIFF" -> bytecodeDiff(payload);
             default -> throw new IllegalArgumentException("Unsupported platform command: " + commandType);
         };
+    }
+
+    private Map<String, Object> bytecodeTransformations(JsonNode payload) {
+        var identity = runtime.loadedClassRepository().toClassIdentity(requiredText(payload, "classId"));
+        return Map.of("classIdentity", identityMap(identity),
+                "currentRevision", runtime.transformationJournal().currentRevision(identity).value(),
+                "history", runtime.transformationJournal().history(identity).stream()
+                        .map(this::transformationMap).toList());
+    }
+
+    private Map<String, Object> bytecodeGet(JsonNode payload) {
+        var identity = runtime.loadedClassRepository().toClassIdentity(requiredText(payload, "classId"));
+        var kind = com.example.kairo.api.bytecode.BytecodeSnapshotKind.valueOf(
+                requiredText(payload, "kind").toUpperCase(Locale.ROOT));
+        long revision = requiredNonNegativeLong(payload, "revision");
+        var key = new com.example.kairo.agent.core.bytecode.BytecodeSnapshotKey(identity,
+                com.example.kairo.api.bytecode.TransformationRevision.of(revision), kind);
+        byte[] bytes = runtime.snapshotRepository().bytes(key)
+                .orElseThrow(() -> new IllegalArgumentException("bytecode snapshot not found"));
+        ensureOutputSize(bytes);
+        return Map.of("classIdentity", identityMap(identity), "kind", kind.name(),
+                "revision", revision, "sizeBytes", bytes.length,
+                "hash", com.example.kairo.agent.core.bytecode.BytecodeHash.sha256Hex(bytes),
+                "bytecodeBase64Url", Base64.getUrlEncoder().withoutPadding().encodeToString(bytes));
+    }
+
+    private Map<String, Object> bytecodePreview(JsonNode payload) {
+        var identity = runtime.loadedClassRepository().toClassIdentity(requiredText(payload, "classId"));
+        byte[] input = decodeInput(payload, "bytecodeBase64Url");
+        var result = runtime.previewService().preview(identity, input);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("classIdentity", identityMap(identity));
+        response.put("revision", result.revision().value());
+        response.put("inputHash", result.inputHash());
+        response.put("plannedHash", result.plannedHash());
+        response.put("plannedSizeBytes", result.plannedBytes() == null ? null : result.plannedBytes().length);
+        response.put("targetMethodCount", result.targetMethodCount());
+        response.put("adviceTypes", result.adviceTypes());
+        response.put("diagnostics", result.diagnostics().stream().map(this::diagnosticMap).toList());
+        response.put("changed", result.changed());
+        return response;
+    }
+
+    private Map<String, Object> bytecodeCapture(JsonNode payload) {
+        Class<?> type = runtime.loadedClassRepository().findClass(requiredText(payload, "classId"))
+                .orElseThrow(() -> new IllegalArgumentException("class is not loaded"));
+        var result = runtime.captureService().capture(type);
+        if (result.appliedBytes() != null) ensureOutputSize(result.appliedBytes());
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("classIdentity", identityMap(result.classIdentity()));
+        response.put("revision", result.revision().value());
+        response.put("appliedHash", result.appliedHash());
+        response.put("sizeBytes", result.appliedBytes() == null ? null : result.appliedBytes().length);
+        response.put("diagnostics", result.diagnostics().stream().map(this::diagnosticMap).toList());
+        response.put("capturedAtMillis", result.capturedAtMillis());
+        response.put("captured", result.captured());
+        return response;
+    }
+
+    private Map<String, Object> bytecodeDiff(JsonNode payload) {
+        var identity = runtime.loadedClassRepository().toClassIdentity(requiredText(payload, "classId"));
+        var fromKind = com.example.kairo.api.bytecode.BytecodeSnapshotKind.valueOf(
+                requiredText(payload, "fromKind").toUpperCase(Locale.ROOT));
+        var toKind = com.example.kairo.api.bytecode.BytecodeSnapshotKind.valueOf(
+                requiredText(payload, "toKind").toUpperCase(Locale.ROOT));
+        long fromRevision = requiredNonNegativeLong(payload, "fromRevision");
+        long toRevision = requiredNonNegativeLong(payload, "toRevision");
+        byte[] from = snapshot(identity, fromKind, fromRevision);
+        byte[] to = snapshot(identity, toKind, toRevision);
+        var result = runtime.diffService().diff(identity, from,
+                com.example.kairo.api.bytecode.TransformationRevision.of(fromRevision), fromKind, to,
+                com.example.kairo.api.bytecode.TransformationRevision.of(toRevision), toKind);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("classIdentity", identityMap(identity)); response.put("fromRevision", fromRevision);
+        response.put("toRevision", toRevision); response.put("fromKind", fromKind.name());
+        response.put("toKind", toKind.name()); response.put("fromHash", result.fromHash());
+        response.put("toHash", result.toHash()); response.put("identical", result.identical());
+        response.put("normalized", result.normalized()); response.put("methodDiffs", result.methodDiffs());
+        response.put("structuralDiffs", result.structuralDiffs()); response.put("summary", result.summary());
+        return response;
+    }
+
+    private byte[] snapshot(com.example.kairo.api.bytecode.ClassIdentity identity,
+                            com.example.kairo.api.bytecode.BytecodeSnapshotKind kind, long revision) {
+        var key = new com.example.kairo.agent.core.bytecode.BytecodeSnapshotKey(identity,
+                com.example.kairo.api.bytecode.TransformationRevision.of(revision), kind);
+        return runtime.snapshotRepository().bytes(key)
+                .orElseThrow(() -> new IllegalArgumentException("bytecode snapshot not found"));
+    }
+
+    private byte[] decodeInput(JsonNode payload, String field) {
+        try {
+            byte[] bytes = Base64.getUrlDecoder().decode(requiredText(payload, field));
+            if (bytes.length == 0 || bytes.length > 1024 * 1024) {
+                throw new IllegalArgumentException("preview input must be 1..1048576 bytes");
+            }
+            return bytes;
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("invalid or oversized bytecodeBase64Url", e);
+        }
+    }
+
+    private void ensureOutputSize(byte[] bytes) {
+        if (bytes.length > 8 * 1024 * 1024) throw new IllegalArgumentException("bytecode output exceeds 8 MiB");
+    }
+
+    private long requiredNonNegativeLong(JsonNode payload, String field) {
+        if (!payload.has(field) || !payload.path(field).canConvertToLong() || payload.path(field).asLong() < 0) {
+            throw new IllegalArgumentException(field + " must be a non-negative integer");
+        }
+        return payload.path(field).asLong();
+    }
+
+    private Map<String, Object> identityMap(com.example.kairo.api.bytecode.ClassIdentity identity) {
+        return Map.of("binaryClassName", identity.binaryClassName(), "classLoaderId", identity.classLoaderId());
+    }
+
+    private Map<String, Object> transformationMap(com.example.kairo.api.bytecode.TransformationResult result) {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("classIdentity", identityMap(result.classIdentity()));
+        value.put("revision", result.revision().value());
+        value.put("status", result.status().name());
+        value.put("inputHash", result.inputHash()); value.put("outputHash", result.outputHash());
+        value.put("diagnostics", result.diagnostics().stream().map(this::diagnosticMap).toList());
+        value.put("attemptedAtMillis", result.attemptedAtMillis()); value.put("durationMillis", result.durationMillis());
+        return value;
+    }
+
+    private Map<String, Object> diagnosticMap(com.example.kairo.api.bytecode.TransformationDiagnostic diagnostic) {
+        return mapper.convertValue(diagnostic, Map.class);
     }
 
     private Map<String, Object> applyRule(JsonNode ruleNode) {

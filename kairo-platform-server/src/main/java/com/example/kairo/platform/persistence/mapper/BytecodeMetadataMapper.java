@@ -14,4 +14,6 @@ public interface BytecodeMetadataMapper {
     List<BytecodeMetadata> findByClassIdentity(@Param("runtimeInstanceId") String runtimeInstanceId,
                                                @Param("binaryClassName") String binaryClassName,
                                                @Param("classLoaderId") String classLoaderId);
+
+    String runtimeInstanceIdForAgent(@Param("agentId") String agentId);
 }

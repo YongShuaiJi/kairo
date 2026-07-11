@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @Service
 public class AgentCommandService {
@@ -27,6 +28,12 @@ public class AgentCommandService {
     private final PlatformCoreService eventWriter;
     private final BusinessIdService businessIdService;
     private final Clock clock;
+    private BytecodeDiagnosticExchange bytecodeExchange;
+
+    @Autowired
+    void setBytecodeExchange(BytecodeDiagnosticExchange bytecodeExchange) {
+        this.bytecodeExchange = bytecodeExchange;
+    }
 
     @Autowired
     public AgentCommandService(AgentCommandMapper commandMapper, RbacService rbacService,
@@ -65,6 +72,23 @@ public class AgentCommandService {
         }
         return enqueue(context, agentId, commandType, payload, idempotencyKey,
                 optionalLong(request, "maxAttempts", 5), clock.instant());
+    }
+
+    /** Inserts a diagnostic command and registers transient bytes before the transaction becomes visible. */
+    @Transactional
+    public Map<String, Object> createBytecodeDiagnosticCommand(RequestContext context, String agentId,
+                                                                String commandType,
+                                                                Map<String, Object> payload,
+                                                                byte[] transientInput) {
+        rbacService.require(context, "AGENT_MANAGE");
+        if (!commandType.startsWith("BYTECODE_")) {
+            throw PlatformException.badRequest("INVALID_FIELD", "Not a bytecode diagnostic command");
+        }
+        Map<String, Object> created = enqueue(context, agentId, commandType, payload,
+                "diagnostic:" + agentId + ":" + UUID.randomUUID(), 1, clock.instant());
+        if (bytecodeExchange == null) throw new IllegalStateException("Bytecode diagnostic exchange unavailable");
+        bytecodeExchange.register(String.valueOf(created.get("id")), transientInput);
+        return created;
     }
 
     @Transactional
@@ -115,7 +139,9 @@ public class AgentCommandService {
                 candidate, command, "SUCCESS", "dispatch agent command",
                 Map.of("agentId", agentId, "leaseExpiresAt", leaseExpiresAt.toString()));
         Map<String, Object> response = new LinkedHashMap<>(command);
-        response.put("payload", PlatformJson.readMap(String.valueOf(command.get("payload_json"))));
+        Map<String, Object> persistedPayload = PlatformJson.readMap(String.valueOf(command.get("payload_json")));
+        response.put("payload", bytecodeExchange == null ? persistedPayload
+                : bytecodeExchange.enrichPayload(String.valueOf(command.get("id")), persistedPayload));
         return response;
     }
 
@@ -129,15 +155,22 @@ public class AgentCommandService {
         }
         Instant now = clock.instant();
         Map<String, Object> result = optionalMap(request, "result");
+        boolean bytecodeDiagnostic = String.valueOf(current.get("command_type")).startsWith("BYTECODE_");
+        Map<String, Object> persistedResult = bytecodeDiagnostic && bytecodeExchange != null
+                ? bytecodeExchange.sanitizeForPersistence(result) : result;
         String errorMessage = optionalString(request, "errorMessage", null);
         int updatedCount = commandMapper.ackCommand(commandId, resultStatus,
-                PlatformJson.write(result), errorMessage, timestamp(now), timestamp(now));
+                PlatformJson.write(persistedResult), errorMessage, timestamp(now), timestamp(now));
         if (updatedCount == 0) {
             throw PlatformException.conflict("AGENT_COMMAND_STATE_CONFLICT",
                     "Agent command is not currently dispatched",
                     Map.of("commandId", commandId, "status", current.get("status")));
         }
         Map<String, Object> updated = getById(commandId);
+        if (bytecodeDiagnostic && bytecodeExchange != null) {
+            if ("ACKED".equals(resultStatus)) bytecodeExchange.complete(commandId, result);
+            else bytecodeExchange.fail(commandId, errorMessage == null ? "diagnostic failed" : errorMessage);
+        }
         eventWriter.recordEvent(context, "agent_command.ack", "agent_command", commandId,
                 ((Number) updated.get("attempts")).longValue(), current, updated, resultStatus,
                 optionalString(request, "reason", "ack agent command"),
