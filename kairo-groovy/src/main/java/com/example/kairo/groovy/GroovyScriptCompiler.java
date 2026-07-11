@@ -1,6 +1,7 @@
 package com.example.kairo.groovy;
 
-import groovy.lang.GroovyClassLoader;
+import com.example.kairo.api.CapabilityProfile;
+import groovy.lang.GroovySystem;
 import org.codehaus.groovy.control.CompilerConfiguration;
 
 import java.nio.charset.StandardCharsets;
@@ -16,52 +17,81 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
     private static final int MAX_CACHE_ENTRIES = 1024;
 
     private final ConcurrentMap<ScriptCacheKey, CompiledMockScript> cache = new ConcurrentHashMap<>();
-    private final ClassLoader parentClassLoader;
-    private final CompilerConfiguration configuration;
-    private volatile ScriptLoaderGeneration generation;
-    private int classesInGeneration;
+    private final ConcurrentMap<GenerationKey, GenerationHolder> generations = new ConcurrentHashMap<>();
+    private final ClassLoader defaultParentClassLoader;
 
     public GroovyScriptCompiler() {
         this(Thread.currentThread().getContextClassLoader());
     }
 
     public GroovyScriptCompiler(ClassLoader parentClassLoader) {
-        this.parentClassLoader = Objects.requireNonNull(parentClassLoader, "parentClassLoader");
-        this.configuration = GroovySecurityConfiguration.compilerConfiguration();
-        this.generation = new ScriptLoaderGeneration(parentClassLoader, configuration);
+        this.defaultParentClassLoader = Objects.requireNonNull(parentClassLoader, "parentClassLoader");
     }
 
     @Override
     public CompiledMockScript compile(String ruleId, long version, String script) {
+        return compile(ruleId, version, script, ScriptCompilationContext.safeDefaults(defaultParentClassLoader));
+    }
+
+    /**
+     * Compile under an explicit {@link ScriptCompilationContext}. The profile selects the
+     * {@link ScriptSecurityPolicy}, the context's target ClassLoader resolves business
+     * classes, and the tier-shared size limits are enforced.
+     */
+    public CompiledMockScript compile(String ruleId, long version, String script, ScriptCompilationContext context) {
         Objects.requireNonNull(ruleId, "ruleId");
         Objects.requireNonNull(script, "script");
-        GroovyScriptSecurityPolicy.validateSource(script);
+        Objects.requireNonNull(context, "context");
+        ScriptSecurityPolicy policy = ScriptSecurityPolicy.forContext(context);
+        policy.validateSource(script);
+        context.enforceScriptSize(script);
         String scriptHash = sha256(script);
-        ScriptCacheKey key = new ScriptCacheKey(ruleId, version, scriptHash);
+        ScriptCacheKey key = new ScriptCacheKey(ruleId, version, scriptHash,
+                context.profile(), context.targetClassLoaderId());
         if (cache.size() >= MAX_CACHE_ENTRIES && !cache.containsKey(key)) {
             cache.clear();
         }
-        return cache.computeIfAbsent(key, ignored -> compileNew(ruleId, version, scriptHash, script));
+        return cache.computeIfAbsent(key, ignored -> compileNew(ruleId, version, scriptHash, script, context, policy));
     }
 
-    private CompiledMockScript compileNew(String ruleId, long version, String scriptHash, String script) {
-        String className = "KairoRule_" + sanitize(ruleId) + "_" + version + "_" + scriptHash.substring(0, 16);
-        Class<?> scriptType;
+    private CompiledMockScript compileNew(String ruleId, long version, String scriptHash, String script,
+                                          ScriptCompilationContext context, ScriptSecurityPolicy policy) {
+        String className = "KairoRule_" + sanitize(ruleId) + "_" + version
+                + "_" + policy.profile() + "_" + scriptHash.substring(0, 12);
+        GenerationHolder holder = generationFor(context, policy);
+        ClassAndBytes compiled;
         try {
-            synchronized (this) {
-                rotateGenerationIfNeeded();
-                scriptType = generation.groovyClassLoader().parseClass(script, className + ".groovy");
-                classesInGeneration++;
-            }
+            compiled = holder.parseClass(script, className + ".groovy");
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("Invalid or forbidden Groovy script: " + rootMessage(e), e);
         }
+        Class<?> scriptType = compiled.type();
         if (!KairoScript.class.isAssignableFrom(scriptType)) {
             throw new IllegalStateException("Compiled script does not extend " + KairoScript.class.getName());
         }
+        context.enforceArtifactSize(compiled.artifactBytes());
         @SuppressWarnings("unchecked")
         Class<? extends KairoScript> typedScript = (Class<? extends KairoScript>) scriptType;
-        return new GroovyCompiledMockScript(ruleId, version, scriptHash, typedScript);
+        GroovyCompilationMetadata metadata = new GroovyCompilationMetadata(
+                scriptHash,
+                context.profile(),
+                context.policyRevision(),
+                GroovySystem.getVersion(),
+                context.targetClassLoaderId(),
+                compiled.artifactBytes());
+        return new GroovyCompiledMockScript(ruleId, version, metadata, typedScript);
+    }
+
+    private GenerationHolder generationFor(ScriptCompilationContext context, ScriptSecurityPolicy policy) {
+        GenerationKey key = new GenerationKey(context.profile(), context.targetClassLoaderId());
+        return generations.computeIfAbsent(key, k -> new GenerationHolder(context.targetClassLoader(), policy));
+    }
+
+    private static CompilerConfiguration buildConfiguration(ScriptSecurityPolicy policy) {
+        CompilerConfiguration configuration = new CompilerConfiguration();
+        configuration.setScriptBaseClass(KairoScript.class.getName());
+        policy.applyTo(configuration);
+        return configuration;
     }
 
     private static String sanitize(String ruleId) {
@@ -95,20 +125,64 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
 
     @Override
     public synchronized void close() {
-        generation.close();
+        generations.values().forEach(GenerationHolder::close);
+        generations.clear();
         cache.clear();
     }
 
-    private void rotateGenerationIfNeeded() {
-        if (classesInGeneration < MAX_CLASSES_PER_GENERATION) {
-            return;
-        }
-        ScriptLoaderGeneration previous = generation;
-        generation = new ScriptLoaderGeneration(parentClassLoader, configuration);
-        classesInGeneration = 0;
-        previous.close();
+    private record ScriptCacheKey(String ruleId, long version, String scriptHash,
+                                  CapabilityProfile profile, String targetClassLoaderId) {
     }
 
-    private record ScriptCacheKey(String ruleId, long version, String scriptHash) {
+    private record GenerationKey(CapabilityProfile profile, String targetClassLoaderId) {
+    }
+
+    private record ClassAndBytes(Class<?> type, int artifactBytes) {
+    }
+
+    /**
+     * Holds the {@link ScriptLoaderGeneration} for one (profile, target ClassLoader) pair,
+     * rotating it when the per-generation class cap is reached.
+     */
+    private static final class GenerationHolder {
+        private final ClassLoader parent;
+        private final CompilerConfiguration configuration;
+        private volatile ScriptLoaderGeneration generation;
+        private int classesInGeneration;
+
+        GenerationHolder(ClassLoader parent, ScriptSecurityPolicy policy) {
+            this.parent = parent;
+            this.configuration = buildConfiguration(policy);
+            this.generation = new ScriptLoaderGeneration(parent, configuration);
+        }
+
+        synchronized ClassAndBytes parseClass(String script, String fileName) {
+            rotateIfNeeded();
+            KairoGroovyClassLoader loader = generation.groovyClassLoader();
+            Class<?> type;
+            try {
+                type = loader.parseClass(script, fileName);
+            } catch (RuntimeException e) {
+                loader.consumeArtifactBytes();
+                throw e;
+            }
+            int bytes = loader.consumeArtifactBytes();
+            classesInGeneration++;
+            return new ClassAndBytes(type, bytes);
+        }
+
+        private void rotateIfNeeded() {
+            if (classesInGeneration < MAX_CLASSES_PER_GENERATION) {
+                return;
+            }
+            ScriptLoaderGeneration previous = generation;
+            generation = new ScriptLoaderGeneration(parent, configuration);
+            classesInGeneration = 0;
+            previous.close();
+        }
+
+        synchronized void close() {
+            generation.close();
+        }
     }
 }

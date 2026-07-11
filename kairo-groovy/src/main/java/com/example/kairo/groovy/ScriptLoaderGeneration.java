@@ -1,17 +1,16 @@
 package com.example.kairo.groovy;
 
-import groovy.lang.GroovyClassLoader;
 import org.codehaus.groovy.control.CompilerConfiguration;
 
 public final class ScriptLoaderGeneration implements AutoCloseable {
 
-    private final GroovyClassLoader groovyClassLoader;
+    private final KairoGroovyClassLoader groovyClassLoader;
 
     public ScriptLoaderGeneration(ClassLoader parentClassLoader, CompilerConfiguration configuration) {
-        this.groovyClassLoader = new GroovyClassLoader(parentClassLoader, configuration);
+        this.groovyClassLoader = new KairoGroovyClassLoader(parentClassLoader, configuration);
     }
 
-    GroovyClassLoader groovyClassLoader() {
+    KairoGroovyClassLoader groovyClassLoader() {
         return groovyClassLoader;
     }
 

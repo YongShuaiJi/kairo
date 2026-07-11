@@ -7,14 +7,15 @@ final class GroovyCompiledMockScript implements CompiledMockScript {
 
     private final String ruleId;
     private final long version;
-    private final String scriptHash;
+    private final GroovyCompilationMetadata metadata;
     private final Class<? extends KairoScript> scriptType;
 
-    GroovyCompiledMockScript(String ruleId, long version, String scriptHash,
+    GroovyCompiledMockScript(String ruleId, long version,
+                             GroovyCompilationMetadata metadata,
                              Class<? extends KairoScript> scriptType) {
         this.ruleId = ruleId;
         this.version = version;
-        this.scriptHash = scriptHash;
+        this.metadata = metadata;
         this.scriptType = scriptType;
     }
 
@@ -30,7 +31,12 @@ final class GroovyCompiledMockScript implements CompiledMockScript {
 
     @Override
     public String scriptHash() {
-        return scriptHash;
+        return metadata.scriptHash();
+    }
+
+    /** Full compilation metadata for this script. */
+    public GroovyCompilationMetadata compilationMetadata() {
+        return metadata;
     }
 
     @Override

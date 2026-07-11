@@ -318,6 +318,36 @@ final class GroovyScriptSecurityPolicy {
                 || normalized.equals("thread");
     }
 
+    /**
+     * Precise sensitive-capability floor check for a fully-qualified type name or
+     * package prefix. Used by {@link ExtendedScriptPolicy} to keep the hard floor
+     * (java.io, java.net, reflection, threads, processes, classloaders, etc.) without
+     * resorting to a crude substring blacklist that could block an authorized class.
+     */
+    static boolean isSensitiveType(String name) {
+        if (name == null || name.isBlank()) {
+            return false;
+        }
+        if (DISALLOWED_IMPORTS.contains(name)) {
+            return true;
+        }
+        for (String prefix : DISALLOWED_STAR_IMPORTS) {
+            if (name.startsWith(prefix)) {
+                return true;
+            }
+            String pkg = prefix.endsWith(".") ? prefix.substring(0, prefix.length() - 1) : prefix;
+            if (name.equals(pkg)) {
+                return true;
+            }
+        }
+        for (Class<?> forbiddenClass : DISALLOWED_RECEIVER_CLASSES) {
+            if (forbiddenClass.getName().equals(name)) {
+                return true;
+            }
+        }
+        return isDangerousName(name);
+    }
+
     private static void validateBlockDepth(String script) {
         int depth = 0;
         char quote = 0;

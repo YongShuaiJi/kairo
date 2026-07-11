@@ -10,10 +10,7 @@ public final class GroovySecurityConfiguration {
     public static CompilerConfiguration compilerConfiguration() {
         CompilerConfiguration configuration = new CompilerConfiguration();
         configuration.setScriptBaseClass(KairoScript.class.getName());
-        configuration.addCompilationCustomizers(
-                GroovyScriptSecurityPolicy.secureAstCustomizer(),
-                new GroovyStructureCustomizer()
-        );
+        SafeScriptPolicy.instance().applyTo(configuration);
         return configuration;
     }
 }
