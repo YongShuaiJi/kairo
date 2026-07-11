@@ -18,6 +18,10 @@ public final class MockRule {
     private final long expireAt;
     private final boolean failOpen;
     private final boolean enabled;
+    private final CapabilityProfile capabilityProfile;
+    private final ScriptPolicyRevision policyRevision;
+    private final int consecutiveFailureThreshold;
+    private final String scriptSessionSource;
 
     private MockRule(Builder builder) {
         this.id = requireText(builder.id, "id");
@@ -34,6 +38,16 @@ public final class MockRule {
         this.expireAt = builder.expireAt;
         this.failOpen = builder.failOpen;
         this.enabled = builder.enabled;
+        this.capabilityProfile = Objects.requireNonNull(builder.capabilityProfile, "capabilityProfile");
+        this.policyRevision = builder.policyRevision;
+        if (builder.consecutiveFailureThreshold <= 0) {
+            throw new IllegalArgumentException("consecutiveFailureThreshold must be > 0");
+        }
+        this.consecutiveFailureThreshold = builder.consecutiveFailureThreshold;
+        if (builder.scriptSessionSource != null && builder.scriptSessionSource.isBlank()) {
+            throw new IllegalArgumentException("scriptSessionSource must be null or non-blank");
+        }
+        this.scriptSessionSource = builder.scriptSessionSource;
     }
 
     private static String requireText(String value, String name) {
@@ -69,7 +83,11 @@ public final class MockRule {
                 .maxHits(maxHits)
                 .expireAt(expireAt)
                 .failOpen(failOpen)
-                .enabled(enabled);
+                .enabled(enabled)
+                .capabilityProfile(capabilityProfile)
+                .policyRevision(policyRevision)
+                .consecutiveFailureThreshold(consecutiveFailureThreshold)
+                .scriptSessionSource(scriptSessionSource);
     }
 
     public String id() {
@@ -128,6 +146,22 @@ public final class MockRule {
         return enabled;
     }
 
+    public CapabilityProfile capabilityProfile() {
+        return capabilityProfile;
+    }
+
+    public ScriptPolicyRevision policyRevision() {
+        return policyRevision;
+    }
+
+    public int consecutiveFailureThreshold() {
+        return consecutiveFailureThreshold;
+    }
+
+    public String scriptSessionSource() {
+        return scriptSessionSource;
+    }
+
     public static final class Builder {
         private String id;
         private long version = 1L;
@@ -143,6 +177,10 @@ public final class MockRule {
         private long expireAt;
         private boolean failOpen = true;
         private boolean enabled = true;
+        private CapabilityProfile capabilityProfile = CapabilityProfile.SAFE;
+        private ScriptPolicyRevision policyRevision;
+        private int consecutiveFailureThreshold = 3;
+        private String scriptSessionSource;
 
         private Builder() {
         }
@@ -214,6 +252,26 @@ public final class MockRule {
 
         public Builder enabled(boolean enabled) {
             this.enabled = enabled;
+            return this;
+        }
+
+        public Builder capabilityProfile(CapabilityProfile capabilityProfile) {
+            this.capabilityProfile = capabilityProfile;
+            return this;
+        }
+
+        public Builder policyRevision(ScriptPolicyRevision policyRevision) {
+            this.policyRevision = policyRevision;
+            return this;
+        }
+
+        public Builder consecutiveFailureThreshold(int consecutiveFailureThreshold) {
+            this.consecutiveFailureThreshold = consecutiveFailureThreshold;
+            return this;
+        }
+
+        public Builder scriptSessionSource(String scriptSessionSource) {
+            this.scriptSessionSource = scriptSessionSource;
             return this;
         }
 
