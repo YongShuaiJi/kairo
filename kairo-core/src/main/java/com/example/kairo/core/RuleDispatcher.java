@@ -11,29 +11,17 @@ import com.example.kairo.object.RuntimeObjectFactory;
 import java.time.Clock;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-public final class RuleDispatcher {
-
-    private static final long SCRIPT_TIMEOUT_MILLIS = 100L;
-    private static final long FIRST_SCRIPT_TIMEOUT_MILLIS = 1_000L;
-    private static final ThreadPoolExecutor SCRIPT_EXECUTOR = new ThreadPoolExecutor(
-            0,
-            Math.max(4, Runtime.getRuntime().availableProcessors()),
-            30L,
-            TimeUnit.SECONDS,
-            new SynchronousQueue<>(),
-            runnable -> {
-                Thread thread = new Thread(runnable, "kairo-script-execution");
-                thread.setDaemon(true);
-                return thread;
-            },
-            new ThreadPoolExecutor.AbortPolicy()
-    );
+public final class RuleDispatcher implements AutoCloseable {
 
     private final RuleRegistry ruleRegistry;
     private final RuntimeObjectFactory objectFactory;
@@ -42,15 +30,25 @@ public final class RuleDispatcher {
     private final SamplingPolicy samplingPolicy;
     private final ScriptLog log;
     private final Clock clock;
+    private final RuleDispatcherConfig config;
+    private final ThreadPoolExecutor scriptExecutor;
     private volatile boolean enabled = true;
 
     public RuleDispatcher(RuleRegistry ruleRegistry, RuntimeObjectFactory objectFactory) {
         this(ruleRegistry, objectFactory, new DecisionValidator(), new ReentryGuard(),
-                new SamplingPolicy(), new LimitedScriptLog(), Clock.systemUTC());
+                new SamplingPolicy(), new LimitedScriptLog(), Clock.systemUTC(),
+                RuleDispatcherConfig.defaults());
     }
 
     public RuleDispatcher(RuleRegistry ruleRegistry, RuntimeObjectFactory objectFactory, DecisionValidator validator,
                           ReentryGuard reentryGuard, SamplingPolicy samplingPolicy, ScriptLog log, Clock clock) {
+        this(ruleRegistry, objectFactory, validator, reentryGuard, samplingPolicy, log, clock,
+                RuleDispatcherConfig.defaults());
+    }
+
+    public RuleDispatcher(RuleRegistry ruleRegistry, RuntimeObjectFactory objectFactory, DecisionValidator validator,
+                          ReentryGuard reentryGuard, SamplingPolicy samplingPolicy, ScriptLog log, Clock clock,
+                          RuleDispatcherConfig config) {
         this.ruleRegistry = Objects.requireNonNull(ruleRegistry, "ruleRegistry");
         this.objectFactory = Objects.requireNonNull(objectFactory, "objectFactory");
         this.validator = Objects.requireNonNull(validator, "validator");
@@ -58,6 +56,26 @@ public final class RuleDispatcher {
         this.samplingPolicy = Objects.requireNonNull(samplingPolicy, "samplingPolicy");
         this.log = log == null ? ScriptLog.NOOP : log;
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.config = Objects.requireNonNull(config, "config");
+        this.scriptExecutor = newExecutor(config);
+    }
+
+    private static ThreadPoolExecutor newExecutor(RuleDispatcherConfig config) {
+        BlockingQueue<Runnable> queue = config.executorQueueCapacity() == 0
+                ? new SynchronousQueue<>()
+                : new LinkedBlockingQueue<>(config.executorQueueCapacity());
+        return new ThreadPoolExecutor(
+                config.executorCorePoolSize(),
+                config.executorMaxPoolSize(),
+                config.executorKeepAliveSeconds(),
+                TimeUnit.SECONDS,
+                queue,
+                runnable -> {
+                    Thread thread = new Thread(runnable, config.threadNamePrefix());
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new ThreadPoolExecutor.AbortPolicy());
     }
 
     public EnterResult onEnter(MethodKey methodKey, MethodMetadata method, Object target, Object[] arguments) {
@@ -154,22 +172,40 @@ public final class RuleDispatcher {
                         log
                 );
                 long started = System.nanoTime();
-                Future<MockDecision> execution = SCRIPT_EXECUTOR.submit(
-                        () -> compiledRule.script().execute(context));
-                MockDecision decision;
                 long timeoutMillis = compiledRule.hasExecuted()
-                        ? SCRIPT_TIMEOUT_MILLIS
-                        : FIRST_SCRIPT_TIMEOUT_MILLIS;
+                        ? config.scriptTimeoutMillis()
+                        : config.firstScriptTimeoutMillis();
+                Future<MockDecision> execution;
+                try {
+                    execution = scriptExecutor.submit(() -> compiledRule.script().execute(context));
+                } catch (RejectedExecutionException saturated) {
+                    compiledRule.circuitBreak(CircuitBreakReason.SATURATION);
+                    log.error("Rule " + compiledRule.rule().id()
+                            + " executor rejected the task; circuit-open (saturation); fail-open", saturated);
+                    continue;
+                }
+                MockDecision decision;
                 try {
                     decision = execution.get(timeoutMillis, TimeUnit.MILLISECONDS);
-                    compiledRule.recordSuccess(System.nanoTime() - started);
-                } catch (TimeoutException e) {
+                } catch (TimeoutException timedOut) {
                     execution.cancel(true);
-                    compiledRule.lock();
-                    throw new IllegalStateException(
-                            "Rule " + compiledRule.rule().id() + " exceeded "
-                                    + timeoutMillis + "ms and was locked", e);
+                    compiledRule.recordTimeout();
+                    log.error("Rule " + compiledRule.rule().id() + " exceeded " + timeoutMillis
+                            + "ms timeout; circuit-open (timeout); " + compiledRule.unfinishedTaskCount()
+                            + " unfinished task(s); fail-open", timedOut);
+                    continue;
+                } catch (ExecutionException scriptFailure) {
+                    compiledRule.recordError();
+                    log.error(failOpenMessage(compiledRule), scriptFailure.getCause());
+                    continue;
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    execution.cancel(true);
+                    compiledRule.recordError();
+                    log.error(failOpenMessage(compiledRule), interrupted);
+                    continue;
                 }
+                compiledRule.recordSuccess(System.nanoTime() - started);
                 if (decision == null) {
                     decision = MockDecision.proceed();
                 }
@@ -185,7 +221,7 @@ public final class RuleDispatcher {
                 return decision;
             } catch (Throwable e) {
                 compiledRule.recordError();
-                log.error("Rule " + compiledRule.rule().id() + " failed; fail-open", e);
+                log.error(failOpenMessage(compiledRule), e);
             }
         }
         return lastProceed;
@@ -199,5 +235,25 @@ public final class RuleDispatcher {
             return ExitResult.throwException(decision.throwable());
         }
         return ExitResult.proceed();
+    }
+
+    /**
+     * Fail-open log message for a rule whose script threw. If the error tripped the circuit
+     * breaker, the reason is included so the transition is distinguishable from a one-off script
+     * error in the runtime event stream &mdash; a steady-state error and the error that finally
+     * opens the circuit would otherwise log identically.
+     */
+    private static String failOpenMessage(CompiledRule compiledRule) {
+        String id = compiledRule.rule().id();
+        CircuitBreakReason reason = compiledRule.circuitBreakReason();
+        if (compiledRule.locked() && reason != null) {
+            return "Rule " + id + " failed and circuit-open (" + reason + "); fail-open";
+        }
+        return "Rule " + id + " failed; fail-open";
+    }
+
+    @Override
+    public void close() {
+        scriptExecutor.shutdownNow();
     }
 }

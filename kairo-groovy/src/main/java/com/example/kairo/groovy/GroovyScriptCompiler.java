@@ -1,9 +1,12 @@
 package com.example.kairo.groovy;
 
 import com.example.kairo.api.CapabilityProfile;
+import com.example.kairo.api.ScriptPolicyRevision;
 import groovy.lang.GroovySystem;
 import org.codehaus.groovy.control.CompilerConfiguration;
 
+import java.lang.ref.ReferenceQueue;
+import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
@@ -16,8 +19,10 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
     private static final int MAX_CLASSES_PER_GENERATION = 256;
     private static final int MAX_CACHE_ENTRIES = 1024;
 
-    private final ConcurrentMap<ScriptCacheKey, CompiledMockScript> cache = new ConcurrentHashMap<>();
-    private final ConcurrentMap<GenerationKey, GenerationHolder> generations = new ConcurrentHashMap<>();
+    private final ConcurrentMap<ScriptCacheKey, CompiledScriptReference> cache = new ConcurrentHashMap<>();
+    private final ConcurrentMap<GenerationKey, GenerationHolderReference> generations = new ConcurrentHashMap<>();
+    private final ReferenceQueue<CompiledMockScript> cacheReferenceQueue = new ReferenceQueue<>();
+    private final ReferenceQueue<GenerationHolder> generationReferenceQueue = new ReferenceQueue<>();
     private final ClassLoader defaultParentClassLoader;
 
     public GroovyScriptCompiler() {
@@ -37,6 +42,18 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
      * Compile under an explicit {@link ScriptCompilationContext}. The profile selects the
      * {@link ScriptSecurityPolicy}, the context's target ClassLoader resolves business
      * classes, and the tier-shared size limits are enforced.
+     *
+     * <p>The cache weakly references the compiled script and its target ClassLoader: when no
+     * active rule holds the script, both the compiled class and the target loader become
+     * reclaimable. This keeps a long-lived compiler from pinning business ClassLoaders that the
+     * application has already discarded.
+     *
+     * <p>The cache key bundles the script hash, capability tier, target ClassLoader id, policy
+     * revision and Groovy version (alongside the rule id and version). The policy revision is
+     * load-bearing: a new revision invalidates the cached script <em>and</em> the per-loader
+     * generation, so a tightened EXTENDED allow-list or a reissued policy actually takes effect
+     * rather than silently serving the previously compiled class. The Groovy version is constant
+     * within a JVM and guards against cross-version reuse.
      */
     public CompiledMockScript compile(String ruleId, long version, String script, ScriptCompilationContext context) {
         Objects.requireNonNull(ruleId, "ruleId");
@@ -47,11 +64,24 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
         context.enforceScriptSize(script);
         String scriptHash = sha256(script);
         ScriptCacheKey key = new ScriptCacheKey(ruleId, version, scriptHash,
-                context.profile(), context.targetClassLoaderId());
+                context.profile(), context.targetClassLoaderId(),
+                context.policyRevision(), GroovySystem.getVersion());
+        evictStaleCacheEntries();
         if (cache.size() >= MAX_CACHE_ENTRIES && !cache.containsKey(key)) {
             cache.clear();
         }
-        return cache.computeIfAbsent(key, ignored -> compileNew(ruleId, version, scriptHash, script, context, policy));
+        CompiledMockScript[] resultHolder = new CompiledMockScript[1];
+        cache.compute(key, (cacheKey, existingRef) -> {
+            CompiledMockScript existing = existingRef == null ? null : existingRef.get();
+            if (existing != null) {
+                resultHolder[0] = existing;
+                return existingRef;
+            }
+            CompiledMockScript fresh = compileNew(ruleId, version, scriptHash, script, context, policy);
+            resultHolder[0] = fresh;
+            return new CompiledScriptReference(fresh, cacheKey, cacheReferenceQueue);
+        });
+        return resultHolder[0];
     }
 
     private CompiledMockScript compileNew(String ruleId, long version, String scriptHash, String script,
@@ -83,8 +113,41 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
     }
 
     private GenerationHolder generationFor(ScriptCompilationContext context, ScriptSecurityPolicy policy) {
-        GenerationKey key = new GenerationKey(context.profile(), context.targetClassLoaderId());
-        return generations.computeIfAbsent(key, k -> new GenerationHolder(context.targetClassLoader(), policy));
+        GenerationKey key = new GenerationKey(context.profile(), context.targetClassLoaderId(),
+                context.policyRevision());
+        evictStaleGenerations();
+        GenerationHolder[] holderBox = new GenerationHolder[1];
+        generations.compute(key, (generationKey, existingRef) -> {
+            GenerationHolder existing = existingRef == null ? null : existingRef.get();
+            if (existing != null) {
+                holderBox[0] = existing;
+                return existingRef;
+            }
+            GenerationHolder created = new GenerationHolder(context.targetClassLoader(), policy);
+            holderBox[0] = created;
+            return new GenerationHolderReference(created, generationKey, generationReferenceQueue);
+        });
+        return holderBox[0];
+    }
+
+    private void evictStaleCacheEntries() {
+        CompiledScriptReference ref;
+        while ((ref = (CompiledScriptReference) cacheReferenceQueue.poll()) != null) {
+            cache.remove(ref.key(), ref);
+        }
+    }
+
+    private void evictStaleGenerations() {
+        GenerationHolderReference ref;
+        while ((ref = (GenerationHolderReference) generationReferenceQueue.poll()) != null) {
+            GenerationHolderReference removed = generations.remove(ref.key(), ref) ? ref : null;
+            if (removed != null) {
+                GenerationHolder holder = removed.get();
+                if (holder != null) {
+                    holder.close();
+                }
+            }
+        }
     }
 
     private static CompilerConfiguration buildConfiguration(ScriptSecurityPolicy policy) {
@@ -125,19 +188,63 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
 
     @Override
     public synchronized void close() {
-        generations.values().forEach(GenerationHolder::close);
+        generations.values().forEach(ref -> {
+            GenerationHolder holder = ref.get();
+            if (holder != null) {
+                holder.close();
+            }
+        });
         generations.clear();
         cache.clear();
     }
 
     private record ScriptCacheKey(String ruleId, long version, String scriptHash,
-                                  CapabilityProfile profile, String targetClassLoaderId) {
+                                  CapabilityProfile profile, String targetClassLoaderId,
+                                  ScriptPolicyRevision policyRevision, String groovyVersion) {
     }
 
-    private record GenerationKey(CapabilityProfile profile, String targetClassLoaderId) {
+    private record GenerationKey(CapabilityProfile profile, String targetClassLoaderId,
+                                 ScriptPolicyRevision policyRevision) {
     }
 
     private record ClassAndBytes(Class<?> type, int artifactBytes) {
+    }
+
+    /**
+     * Weak reference from a cache key to its compiled script. Carries the key so the
+     * reference queue can evict the stale entry when the script is reclaimed.
+     */
+    private static final class CompiledScriptReference extends WeakReference<CompiledMockScript> {
+        private final ScriptCacheKey key;
+
+        CompiledScriptReference(CompiledMockScript referent, ScriptCacheKey key,
+                                ReferenceQueue<CompiledMockScript> queue) {
+            super(referent, queue);
+            this.key = key;
+        }
+
+        ScriptCacheKey key() {
+            return key;
+        }
+    }
+
+    /**
+     * Weak reference from a generation key to its holder. Letting the holder be reclaimed
+     * releases the per-loader {@link KairoGroovyClassLoader} (and thus the target ClassLoader
+     * it delegates to) once no compiled script keeps it alive.
+     */
+    private static final class GenerationHolderReference extends WeakReference<GenerationHolder> {
+        private final GenerationKey key;
+
+        GenerationHolderReference(GenerationHolder referent, GenerationKey key,
+                                  ReferenceQueue<GenerationHolder> queue) {
+            super(referent, queue);
+            this.key = key;
+        }
+
+        GenerationKey key() {
+            return key;
+        }
     }
 
     /**

@@ -2,24 +2,24 @@ package com.example.kairo.core;
 
 import com.example.kairo.api.MockRule;
 import com.example.kairo.groovy.CompiledMockScript;
-import com.example.kairo.groovy.ScriptCompiler;
+import com.example.kairo.groovy.ScriptCompilerFactory;
 
 import java.lang.reflect.Method;
 import java.util.Objects;
 
 public final class RulePublisher {
 
-    private final ScriptCompiler scriptCompiler;
+    private final ScriptCompilerFactory scriptCompilerFactory;
     private final RuleRegistry ruleRegistry;
 
-    public RulePublisher(ScriptCompiler scriptCompiler, RuleRegistry ruleRegistry) {
-        this.scriptCompiler = Objects.requireNonNull(scriptCompiler, "scriptCompiler");
+    public RulePublisher(ScriptCompilerFactory scriptCompilerFactory, RuleRegistry ruleRegistry) {
+        this.scriptCompilerFactory = Objects.requireNonNull(scriptCompilerFactory, "scriptCompilerFactory");
         this.ruleRegistry = Objects.requireNonNull(ruleRegistry, "ruleRegistry");
     }
 
     public CompiledRule publish(Method method, MockRule rule) {
         validateTarget(method, rule);
-        CompiledMockScript script = scriptCompiler.compile(rule.id(), rule.version(), rule.script());
+        CompiledMockScript script = scriptCompilerFactory.compile(method, rule);
         CompiledRule compiledRule = new CompiledRule(rule.toBuilder()
                 .scriptHash(script.scriptHash())
                 .build(), script);

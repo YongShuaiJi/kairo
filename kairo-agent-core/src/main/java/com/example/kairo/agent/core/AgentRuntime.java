@@ -6,6 +6,7 @@ import com.example.kairo.agent.core.bytecode.DecompilerService;
 import com.example.kairo.agent.core.bytecode.TransformationJournal;
 import com.example.kairo.agent.core.bytecode.TransformationPreviewService;
 import com.example.kairo.agent.core.bytecode.diff.BytecodeDiffService;
+import com.example.kairo.agent.core.script.AgentScriptCompilerFactory;
 import com.example.kairo.api.MockRule;
 import com.example.kairo.bridge.KairoBridge;
 import com.example.kairo.core.AgentBridgeDispatcher;
@@ -14,11 +15,11 @@ import com.example.kairo.core.CompiledRule;
 import com.example.kairo.core.MethodDescriptor;
 import com.example.kairo.core.MethodKey;
 import com.example.kairo.core.RuleDispatcher;
+import com.example.kairo.core.RuleDispatcherConfig;
 import com.example.kairo.core.RulePublisher;
 import com.example.kairo.core.RuleRegistry;
 import com.example.kairo.core.RuleSet;
 import com.example.kairo.groovy.CompiledMockScript;
-import com.example.kairo.groovy.GroovyScriptCompiler;
 import com.example.kairo.object.DefaultRuntimeObjectFactory;
 
 import java.lang.instrument.Instrumentation;
@@ -40,9 +41,10 @@ public final class AgentRuntime implements AutoCloseable {
     private final Instrumentation instrumentation;
     private final DefaultInstrumentationRegistry instrumentationRegistry;
     private final RuleRegistry ruleRegistry;
-    private final GroovyScriptCompiler scriptCompiler;
+    private final AgentScriptCompilerFactory scriptCompilerFactory;
     private final RulePublisher rulePublisher;
     private final RuleDispatcher ruleDispatcher;
+    private final RuleDispatcherConfig dispatcherConfig;
     private final RecordingInvocationObserver recordingObserver;
     private final ByteBuddyTransformerManager transformerManager;
     private final LoadedClassRepository loadedClassRepository;
@@ -67,18 +69,24 @@ public final class AgentRuntime implements AutoCloseable {
     private volatile String loadMode = "unknown";
 
     public AgentRuntime(Instrumentation instrumentation) {
+        this(instrumentation, RuleDispatcherConfig.defaults());
+    }
+
+    public AgentRuntime(Instrumentation instrumentation, RuleDispatcherConfig dispatcherConfig) {
         this.instrumentation = Objects.requireNonNull(instrumentation, "instrumentation");
+        this.dispatcherConfig = Objects.requireNonNull(dispatcherConfig, "dispatcherConfig");
         this.instrumentationRegistry = new DefaultInstrumentationRegistry();
         this.ruleRegistry = new RuleRegistry();
-        this.scriptCompiler = new GroovyScriptCompiler(AgentRuntime.class.getClassLoader());
-        this.rulePublisher = new RulePublisher(scriptCompiler, ruleRegistry);
+        this.scriptCompilerFactory = new AgentScriptCompilerFactory(AgentRuntime.class.getClassLoader());
+        this.rulePublisher = new RulePublisher(scriptCompilerFactory, ruleRegistry);
         this.eventBuffer = new RuntimeEventBuffer();
         this.ruleDispatcher = new RuleDispatcher(ruleRegistry, new DefaultRuntimeObjectFactory(),
                 new com.example.kairo.core.DecisionValidator(),
                 new com.example.kairo.core.ReentryGuard(),
                 new com.example.kairo.core.SamplingPolicy(),
                 eventBuffer,
-                java.time.Clock.systemUTC());
+                java.time.Clock.systemUTC(),
+                dispatcherConfig);
         this.recordingObserver = new RecordingInvocationObserver();
         this.snapshotRepository = new BytecodeSnapshotRepository(
                 new BytecodeSnapshotRepository.Config(256, 8L * 1024 * 1024, 30L * 60 * 1000));
@@ -364,7 +372,7 @@ public final class AgentRuntime implements AutoCloseable {
     }
 
     public CompiledMockScript compileScript(String ruleId, long version, String script) {
-        CompiledMockScript compiled = scriptCompiler.compile(ruleId, version, script);
+        CompiledMockScript compiled = scriptCompilerFactory.compileScript(ruleId, version, script);
         eventBuffer.record("script.compile", "api", ruleId, null, "Compiled script " + compiled.scriptHash());
         return compiled;
     }
@@ -475,7 +483,8 @@ public final class AgentRuntime implements AutoCloseable {
         transformerManager.close();
         decompilerService.close();
         snapshotRepository.close();
-        scriptCompiler.close();
+        ruleDispatcher.close();
+        scriptCompilerFactory.close();
         cleanupExecutor.shutdownNow();
         state.set(AgentState.STOPPED);
         eventBuffer.record("agent.stop", "system", null, null, "Kairo agent stopped");

@@ -317,6 +317,28 @@ class KairoAgentIntegrationTest {
     }
 
     @Test
+    void slowScriptTimesOutCircuitBreaksAndFailsOpen() throws Exception {
+        Method method = OrderService.class.getMethod("calculateScore", int.class);
+        CompiledRule compiledRule = runtime.publish(method, rule("slow-script", method,
+                InvokePhase.BEFORE, """
+                        Thread.sleep(3_000)
+                        return mock.returnValue(999)
+                        """).toBuilder()
+                .capabilityProfile(com.example.kairo.api.CapabilityProfile.UNRESTRICTED)
+                .build());
+
+        // First-run timeout is 1s (RuleDispatcherConfig.defaults); the 3s sleep must trip it,
+        // circuit-break the rule with TIMEOUT, and fail open so the original method runs.
+        int result = new OrderService().calculateScore(7);
+
+        assertThat(result).isEqualTo(14);
+        assertThat(compiledRule.locked()).isTrue();
+        assertThat(compiledRule.circuitBreakReason())
+                .isEqualTo(com.example.kairo.core.CircuitBreakReason.TIMEOUT);
+        assertThat(compiledRule.unfinishedTaskCount()).isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
     void concurrentCallsUseIsolatedScriptInstancesAndRespectMaxHits() throws Exception {
         Method method = OrderService.class.getMethod("calculateScore", int.class);
         runtime.publish(method, rule("max-hits", method, InvokePhase.BEFORE, """
