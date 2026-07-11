@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Fragment, type ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Copy, Pencil, Plus, RefreshCw, RotateCcw, Search, X } from "lucide-react";
+import { CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Copy, FileCode2, Pencil, Plus, RefreshCw, RotateCcw, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { platformFetch } from "@/lib/api/client";
 import { recordValue as valueOf, toOptionalIsoInstant } from "@/lib/api/record";
@@ -1567,6 +1567,9 @@ export function ResourcePage({ resourceKey }: { resourceKey: string }) {
                   重新加载
                 </Button>
               </>
+            ) : null}
+            {config.key === "agents" && detail?.id ? (
+              <Button asChild variant="secondary"><Link href={`/agents/${detail.id}/bytecode`}><FileCode2 />字节码诊断</Link></Button>
             ) : null}
             {config.key === "rules" && detail?.id ? <Button asChild><Link href={`/rules/${detail.id}`}>创建新版本</Link></Button> : null}
           </div>

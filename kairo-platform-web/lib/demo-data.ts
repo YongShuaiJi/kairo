@@ -1,4 +1,12 @@
 import type { PlatformRecord, ScriptTestResult, ScriptValidationResult } from "@/lib/api/types";
+import type {
+  BytecodeDiffResult,
+  BytecodeSnapshotKind,
+  CaptureResponse,
+  PreviewResponse,
+  TransformationsResponse,
+} from "@/lib/api/bytecode";
+import { decodeClassId } from "@/lib/bytecode/class-id";
 
 const stamp = "2026-06-18T09:30:00+08:00";
 
@@ -237,5 +245,148 @@ export function demoMutation(path: string, body: PlatformRecord) {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     demo: true,
+  };
+}
+
+// ---- V1.1 bytecode diagnostics (demo) ----
+// Mirrors the five platform-proxied agent routes under
+// /api/v1/agents/{agentId}/classes/{classId}/... so the page is fully exercisable
+// in demo mode. The browser still goes through the same-origin BFF; no agent URL or
+// X-Agent-Token is ever exposed. Decompilation is honestly UNAVAILABLE (the agent
+// does not expose source on the wire in this phase), so the UI shows the notice and
+// retains the structured bytecode diff.
+
+const BYTECODE_DEMO_MILLIS = Date.parse(stamp);
+const BYTECODE_DEMO_IDENTITY = {
+  binaryClassName: "com.example.demo.OrderService",
+  classLoaderId: "app-loader-7f3a",
+};
+
+function demoIdentity(classId: string) {
+  const decoded = decodeClassId(classId);
+  if (decoded) return decoded;
+  return BYTECODE_DEMO_IDENTITY;
+}
+
+const UNAVAILABLE_DECOMPILATION = {
+  status: "UNAVAILABLE" as const,
+  decompilerName: "UnavailableBytecodeDecompiler",
+  sourceCode: null,
+  diagnostics: ["Agent 未配置反编译器，无法产出反编译源码"],
+  durationMillis: 0,
+};
+
+export function demoBytecodeTransformations(agentId: string, classId: string): TransformationsResponse {
+  const identity = demoIdentity(classId);
+  return {
+    classIdentity: identity,
+    currentRevision: { value: 2 },
+    count: 2,
+    history: [
+      {
+        classIdentity: identity,
+        revision: { value: 2 },
+        status: "SUCCEEDED",
+        inputHash: "sha256-input-r2-9c4f",
+        outputHash: "sha256-applied-r2-2b71",
+        diagnostics: [],
+        attemptedAtMillis: BYTECODE_DEMO_MILLIS,
+        durationMillis: 47,
+      },
+      {
+        classIdentity: identity,
+        revision: { value: 1 },
+        status: "SUCCEEDED",
+        inputHash: "sha256-input-r1-aa01",
+        outputHash: "sha256-applied-r1-10fe",
+        diagnostics: [],
+        attemptedAtMillis: BYTECODE_DEMO_MILLIS - 3_600_000,
+        durationMillis: 33,
+      },
+    ],
+  };
+}
+
+/** Deterministic fake {@code .class} bytes (CAFEBABE magic + padding) for demo only. */
+export function demoBytecodeBytes(kind: BytecodeSnapshotKind, revision: number): Uint8Array {
+  const base = [0xca, 0xfe, 0xba, 0xbe, 0x00, 0x00, 0x00, 0x34];
+  const length = Math.max(16, 248 + revision * 8 + (kind === "APPLIED" ? 12 : 0));
+  const bytes = new Uint8Array(length);
+  for (let i = 0; i < base.length && i < length; i += 1) bytes[i] = base[i];
+  for (let i = base.length; i < length; i += 1) bytes[i] = (i * 31 + revision) & 0xff;
+  return bytes;
+}
+
+export function demoBytecodePreview(agentId: string, classId: string): PreviewResponse {
+  const identity = demoIdentity(classId);
+  return {
+    classIdentity: identity,
+    revision: { value: 2 },
+    inputHash: "sha256-input-r2-9c4f",
+    plannedHash: "sha256-planned-r2-5d8e",
+    plannedSizeBytes: 264,
+    targetMethodCount: 2,
+    adviceTypes: ["MethodDelegation", "MemberSubstitution"],
+    diagnostics: [],
+    changed: true,
+    decompilation: UNAVAILABLE_DECOMPILATION,
+  };
+}
+
+export function demoBytecodeCapture(agentId: string, classId: string): CaptureResponse {
+  const identity = demoIdentity(classId);
+  return {
+    classIdentity: identity,
+    revision: { value: 2 },
+    appliedHash: "sha256-applied-r2-2b71",
+    sizeBytes: 272,
+    diagnostics: [],
+    capturedAtMillis: Date.now(),
+    captured: true,
+    decompilation: UNAVAILABLE_DECOMPILATION,
+  };
+}
+
+export function demoBytecodeDiff(
+  classId: string,
+  fromKind: BytecodeSnapshotKind,
+  fromRevision: number,
+  toKind: BytecodeSnapshotKind,
+  toRevision: number,
+): BytecodeDiffResult {
+  const identity = demoIdentity(classId);
+  return {
+    classIdentity: identity,
+    fromRevision: { value: fromRevision },
+    toRevision: { value: toRevision },
+    fromKind,
+    toKind,
+    fromHash: `sha256-${fromKind.toLowerCase()}-r${fromRevision}`,
+    toHash: `sha256-${toKind.toLowerCase()}-r${toRevision}`,
+    identical: false,
+    normalized: true,
+    methodDiffs: [
+      {
+        methodName: "createOrder",
+        methodDescriptor: "(Ljava/lang/String;)Lcom/example/demo/Order;",
+        changeType: "MODIFIED",
+        instructionDiffs: [
+          "- 12: invokevirtual #24 (MockRule.apply)",
+          "+ 12: invokevirtual #28 (MockRule.applyReturnValue)",
+          "+ 15: areturn",
+        ],
+        attributeDiffs: [],
+      },
+      {
+        methodName: "cancelOrder",
+        methodDescriptor: "(Ljava/lang/String;)V",
+        changeType: "ADDED",
+        instructionDiffs: ["+ 0: aload_1", "+ 1: invokestatic #30 (Audit.record)"],
+        attributeDiffs: [],
+      },
+    ],
+    structuralDiffs: [],
+    summary: "1 个方法被修改，1 个方法新增",
+    decompilation: UNAVAILABLE_DECOMPILATION,
   };
 }

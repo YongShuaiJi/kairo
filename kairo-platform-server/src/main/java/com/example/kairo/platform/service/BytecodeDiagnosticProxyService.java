@@ -146,7 +146,9 @@ public class BytecodeDiagnosticProxyService {
     }
 
     private static long number(Object value, long fallback) {
-        return value instanceof Number number ? number.longValue() : fallback;
+        if (value instanceof Number number) return number.longValue();
+        if (value instanceof Map<?, ?> map && map.get("value") instanceof Number number) return number.longValue();
+        return fallback;
     }
 
     private static String nullableString(Object value) {

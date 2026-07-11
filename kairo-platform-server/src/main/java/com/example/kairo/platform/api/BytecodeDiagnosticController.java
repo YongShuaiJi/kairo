@@ -28,9 +28,14 @@ public class BytecodeDiagnosticController {
     public ResponseEntity<byte[]> bytecode(@PathVariable String agentId, @PathVariable String classId,
                                            @RequestParam String kind, @RequestParam long revision,
                                            HttpServletRequest request) {
+        byte[] bytes = service.bytecode(contexts.from(request), agentId, classId, kind, revision);
         return ResponseEntity.ok().contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .header("X-Content-Type-Options", "nosniff")
-                .body(service.bytecode(contexts.from(request), agentId, classId, kind, revision));
+                .header("X-Kairo-Kind", kind.toUpperCase(java.util.Locale.ROOT))
+                .header("X-Kairo-Revision", String.valueOf(revision))
+                .header("X-Kairo-Size", String.valueOf(bytes.length))
+                .header("X-Kairo-Hash", sha256(bytes))
+                .body(bytes);
     }
 
     @PostMapping(value = "/preview", consumes = MediaType.APPLICATION_OCTET_STREAM_VALUE)
@@ -52,5 +57,14 @@ public class BytecodeDiagnosticController {
                                     HttpServletRequest request) {
         return service.diff(contexts.from(request), agentId, classId,
                 fromKind, fromRevision, toKind, toRevision);
+    }
+
+    private static String sha256(byte[] bytes) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes);
+            return java.util.HexFormat.of().formatHex(digest);
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 }

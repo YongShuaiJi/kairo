@@ -125,7 +125,7 @@ final class PlatformCommandPoller implements AutoCloseable {
     private Map<String, Object> bytecodeTransformations(JsonNode payload) {
         var identity = runtime.loadedClassRepository().toClassIdentity(requiredText(payload, "classId"));
         return Map.of("classIdentity", identityMap(identity),
-                "currentRevision", runtime.transformationJournal().currentRevision(identity).value(),
+                "currentRevision", revisionMap(runtime.transformationJournal().currentRevision(identity).value()),
                 "history", runtime.transformationJournal().history(identity).stream()
                         .map(this::transformationMap).toList());
     }
@@ -152,7 +152,7 @@ final class PlatformCommandPoller implements AutoCloseable {
         var result = runtime.previewService().preview(identity, input);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("classIdentity", identityMap(identity));
-        response.put("revision", result.revision().value());
+        response.put("revision", revisionMap(result.revision().value()));
         response.put("inputHash", result.inputHash());
         response.put("plannedHash", result.plannedHash());
         response.put("plannedSizeBytes", result.plannedBytes() == null ? null : result.plannedBytes().length);
@@ -170,7 +170,7 @@ final class PlatformCommandPoller implements AutoCloseable {
         if (result.appliedBytes() != null) ensureOutputSize(result.appliedBytes());
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("classIdentity", identityMap(result.classIdentity()));
-        response.put("revision", result.revision().value());
+        response.put("revision", revisionMap(result.revision().value()));
         response.put("appliedHash", result.appliedHash());
         response.put("sizeBytes", result.appliedBytes() == null ? null : result.appliedBytes().length);
         response.put("diagnostics", result.diagnostics().stream().map(this::diagnosticMap).toList());
@@ -193,8 +193,8 @@ final class PlatformCommandPoller implements AutoCloseable {
                 com.example.kairo.api.bytecode.TransformationRevision.of(fromRevision), fromKind, to,
                 com.example.kairo.api.bytecode.TransformationRevision.of(toRevision), toKind);
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("classIdentity", identityMap(identity)); response.put("fromRevision", fromRevision);
-        response.put("toRevision", toRevision); response.put("fromKind", fromKind.name());
+        response.put("classIdentity", identityMap(identity)); response.put("fromRevision", revisionMap(fromRevision));
+        response.put("toRevision", revisionMap(toRevision)); response.put("fromKind", fromKind.name());
         response.put("toKind", toKind.name()); response.put("fromHash", result.fromHash());
         response.put("toHash", result.toHash()); response.put("identical", result.identical());
         response.put("normalized", result.normalized()); response.put("methodDiffs", result.methodDiffs());
@@ -240,7 +240,7 @@ final class PlatformCommandPoller implements AutoCloseable {
     private Map<String, Object> transformationMap(com.example.kairo.api.bytecode.TransformationResult result) {
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("classIdentity", identityMap(result.classIdentity()));
-        value.put("revision", result.revision().value());
+        value.put("revision", revisionMap(result.revision().value()));
         value.put("status", result.status().name());
         value.put("inputHash", result.inputHash()); value.put("outputHash", result.outputHash());
         value.put("diagnostics", result.diagnostics().stream().map(this::diagnosticMap).toList());
@@ -250,6 +250,10 @@ final class PlatformCommandPoller implements AutoCloseable {
 
     private Map<String, Object> diagnosticMap(com.example.kairo.api.bytecode.TransformationDiagnostic diagnostic) {
         return mapper.convertValue(diagnostic, Map.class);
+    }
+
+    private Map<String, Object> revisionMap(long value) {
+        return Map.of("value", value);
     }
 
     private Map<String, Object> applyRule(JsonNode ruleNode) {
