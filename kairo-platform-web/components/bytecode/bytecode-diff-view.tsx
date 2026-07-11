@@ -68,8 +68,6 @@ export function BytecodeDiffView({
 
   const summary = summarizeDiff(result);
   const methods = toMethodDiffViews(result);
-  const sourceAvailable = decompilationAvailable(result.decompilation);
-
   return (
     <Card className="overflow-hidden" data-testid="bytecode-diff-view">
       <div className="border-b p-4">
@@ -102,9 +100,10 @@ export function BytecodeDiffView({
         <StructuredDiff result={result} methods={methods} />
       ) : (
         <SourceDecompilation
-          available={sourceAvailable}
           result={result}
           methods={methods}
+          fromLabel={fromLabel}
+          toLabel={toLabel}
         />
       )}
     </Card>
@@ -179,24 +178,28 @@ function StructuredDiff({
   );
 }
 
-function SourceDecompilation({
-  available,
-  result,
-  methods,
-}: {
-  available: boolean;
+function SourceDecompilation({ result, methods, fromLabel, toLabel }: {
   result: BytecodeDiffResult;
   methods: ReturnType<typeof toMethodDiffViews>;
+  fromLabel?: string;
+  toLabel?: string;
 }) {
-  if (available && result.decompilation?.sourceCode) {
+  const before = result.fromDecompilation;
+  const after = result.toDecompilation;
+  const beforeAvailable = decompilationAvailable(before);
+  const afterAvailable = decompilationAvailable(after);
+  if (beforeAvailable || afterAvailable) {
     return (
       <div className="p-4" data-testid="decompilation-source">
         <p className="mb-2 text-xs text-[color:var(--muted)]">
-          反编译器：{result.decompilation.decompilerName}（仅用于阅读，以结构化字节码 Diff 为准）
+          近似源码仅用于阅读，以结构化字节码 Diff 为准；局部变量名和表达式可能与原源码不同。
         </p>
-        <pre className="max-h-96 overflow-auto rounded-lg border bg-[var(--surface-subtle)] p-3 font-mono text-xs leading-5">
-          {result.decompilation.sourceCode}
-        </pre>
+        <div className="grid gap-3 lg:grid-cols-2" data-testid="source-before-after">
+          <SourcePanel label={fromLabel ?? `${result.fromKind}@${result.fromRevision.value}`}
+            result={before} available={beforeAvailable} />
+          <SourcePanel label={toLabel ?? `${result.toKind}@${result.toRevision.value}`}
+            result={after} available={afterAvailable} />
+        </div>
       </div>
     );
   }
@@ -207,7 +210,7 @@ function SourceDecompilation({
           <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
           <div>
             <p className="font-semibold">反编译源码不可用</p>
-            <p className="mt-1 text-xs">{decompilationReason(result.decompilation)}</p>
+            <p className="mt-1 text-xs">Before：{decompilationReason(before)}；After：{decompilationReason(after)}</p>
           </div>
         </div>
       </div>
@@ -216,6 +219,26 @@ function SourceDecompilation({
         <StructuredDiff result={result} methods={methods} />
       </div>
     </div>
+  );
+}
+
+function SourcePanel({ label, result, available }: {
+  label: string;
+  result: BytecodeDiffResult["fromDecompilation"];
+  available: boolean;
+}) {
+  return (
+    <section className="min-w-0 rounded-lg border">
+      <div className="border-b bg-[var(--surface-subtle)] px-3 py-2">
+        <code className="text-xs font-semibold">{label}</code>
+        {result?.decompilerName ? <span className="ml-2 text-xs text-[color:var(--muted)]">{result.decompilerName}</span> : null}
+      </div>
+      {available && result?.sourceCode ? (
+        <pre className="max-h-[32rem] overflow-auto p-3 font-mono text-xs leading-5">{result.sourceCode}</pre>
+      ) : (
+        <p className="p-3 text-xs text-amber-800">{decompilationReason(result)}</p>
+      )}
+    </section>
   );
 }
 

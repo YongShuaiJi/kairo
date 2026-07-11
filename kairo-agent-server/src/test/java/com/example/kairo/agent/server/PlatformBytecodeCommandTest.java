@@ -41,7 +41,8 @@ class PlatformBytecodeCommandTest {
                     "classId", classId, "fromKind", "APPLIED", "fromRevision", 0,
                     "toKind", "APPLIED", "toRevision", 0)));
             assertThat(diff).containsEntry("identical", true).containsEntry("normalized", true);
-            assertVineflowerDecompilation(diff);
+            assertVineflowerDecompilation(diff, "fromDecompilation");
+            assertVineflowerDecompilation(diff, "toDecompilation");
         } finally {
             runtime.close();
         }
@@ -55,7 +56,12 @@ class PlatformBytecodeCommandTest {
      */
     @SuppressWarnings("unchecked")
     private static void assertVineflowerDecompilation(Map<String, Object> response) {
-        Object raw = response.get("decompilation");
+        assertVineflowerDecompilation(response, "decompilation");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void assertVineflowerDecompilation(Map<String, Object> response, String field) {
+        Object raw = response.get(field);
         assertThat(raw).isInstanceOf(Map.class);
         Map<String, Object> decomp = (Map<String, Object>) raw;
         assertThat(decomp.get("status")).isEqualTo("SUCCESS");

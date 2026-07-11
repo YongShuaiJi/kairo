@@ -330,6 +330,33 @@ class BytecodeVisibilityIntegrationTest {
         assertThat(runtime.snapshotRepository().size()).isZero();
     }
 
+    @Test
+    void externalJavapSeesTheSameInjectedBridgeAsKairoDiff() throws Exception {
+        Method method = OrderService.class.getMethod("calculateScore", int.class);
+        ClassIdentity identity = ClassIdentities.of(OrderService.class);
+        byte[] before = runtime.captureService().capture(OrderService.class).appliedBytes();
+        runtime.publish(method, rule("javap", method, InvokePhase.BEFORE,
+                "return mock.returnValue(77)"));
+        byte[] applied = runtime.captureService().capture(OrderService.class).appliedBytes();
+
+        BytecodeDiffResult diff = runtime.diffService().diff(identity, before,
+                runtime.transformationJournal().currentRevision(identity), BytecodeSnapshotKind.INPUT,
+                applied, runtime.transformationJournal().currentRevision(identity), BytecodeSnapshotKind.APPLIED);
+        assertThat(diff.methodDiffs().stream().flatMap(value -> value.instructionDiffs().stream()))
+                .anyMatch(line -> line.contains("KairoBridge"));
+
+        Path root = Files.createTempDirectory("kairo-javap-");
+        Path classFile = root.resolve(OrderService.class.getName().replace('.', '/') + ".class");
+        Files.createDirectories(classFile.getParent());
+        Files.write(classFile, applied);
+        Path javap = Path.of(System.getProperty("java.home"), "bin", "javap");
+        Process process = new ProcessBuilder(javap.toString(), "-c", "-p", "-classpath",
+                root.toString(), OrderService.class.getName()).redirectErrorStream(true).start();
+        String output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(process.waitFor()).as(output).isZero();
+        assertThat(output).contains("calculateScore", "KairoBridge");
+    }
+
     // ---- helpers ----
 
     private MethodSignature signatureOf(Method method) {

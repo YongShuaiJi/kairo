@@ -238,24 +238,24 @@ curl -s -H "X-Agent-Token: $TOKEN" \
 
 ### 7.5 反编译（preview/capture/diff 可选结果）
 
-`preview`/`capture`/`diff` 三类诊断响应都带一个可选 `decompilation` 字段（`DecompilationResult`：
+`preview`/`capture` 响应带可选 `decompilation`；`diff` 同时带 `fromDecompilation` 与
+`toDecompilation`（字段类型均为 `DecompilationResult`：
 `status` ∈ `SUCCESS`/`UNAVAILABLE`/`FAILED`、`decompilerName`、`sourceCode`（仅 `SUCCESS` 非空）、
 `diagnostics`、`durationMillis`）。Agent 默认使用 Vineflower，因此通常为 `SUCCESS` 并返回近似 Java source：
 
 - `preview` 反编译计划字节码（`PLANNED`，未变更时退回输入字节）；
 - `capture` 反编译 JVM 实际运行字节码（`APPLIED`）；
-- `diff` 反编译 `to` 侧快照（目标状态），通过 `@JsonUnwrapped` 与 Diff 字段平铺在同一层，不扩展冻结的
-  `BytecodeDiffResult` 契约。
+- `diff` 同时反编译 `from` 与 `to` 两侧快照，通过 `@JsonUnwrapped` 与 Diff 字段平铺在同一层，提供真正的
+  Before/After 近似 Java 视图，同时不扩展冻结的 `BytecodeDiffResult` 契约。
 
 反编译在诊断执行线程内完成（受 `DecompilerService` 自身超时与大小限制约束，超时/异常降级为 `FAILED`，
 不破坏主响应）。源码为近似重建，诊断里明确标注「以结构化字节码 Diff 为准」，不伪称精确。Platform 代理把
-Agent 命令通道返回的 `decompilation` 原样透传给 Web；Web 早已支持该可选字段，`SUCCESS` 时展示源码，
-否则展示不可用/失败原因。`decompilation.sourceCode` 不入库（`BytecodeDiagnosticProxyService` 持久化
-元数据时只读既定字段）。
+Agent 命令通道返回的反编译结果原样透传给 Web；两侧成功时并排展示近似源码，任一侧失败时显示原因且
+始终保留权威结构化 Diff。`sourceCode` 在命令 ACK 入库前递归剥离，只存在于有界瞬时交换中。
 
 ### 7.6 本小片不做
 
-Platform 代理服务（浏览器不直连 Agent）、blob 持久化和 Web 增强对比视图属于后续小片。
+V1.1 不启用 blob 持久化；class bytes 与反编译源码均按需、瞬时传输，不默认落 Platform 数据库。
 
 ## 8. Platform 元数据持久化
 

@@ -151,8 +151,9 @@ export type BytecodeDiffResult = {
   methodDiffs: MethodDiff[];
   structuralDiffs: string[];
   summary?: string | null;
-  /** Optional paired decompilation; absent until the agent exposes source on diffs. */
-  decompilation?: DecompilationResult | null;
+  /** Approximate readable sources for both sides; structured bytecode remains authoritative. */
+  fromDecompilation?: DecompilationResult | null;
+  toDecompilation?: DecompilationResult | null;
 };
 
 /** A {@code KIND@revision} selector as used by the diff endpoint. */

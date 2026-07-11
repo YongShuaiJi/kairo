@@ -249,7 +249,9 @@ final class BytecodeRoutes implements AutoCloseable {
                 BytecodeDiffResult diff = diffService.diff(identity,
                         fromBytes, from.revision(), from.kind(),
                         toBytes, to.revision(), to.kind());
-                return new DiffWithDecompilation(diff, decompilerService.decompile(identity, toBytes));
+                return new DiffWithDecompilation(diff,
+                        decompilerService.decompile(identity, fromBytes),
+                        decompilerService.decompile(identity, toBytes));
             });
             writeJson(exchange, 200, response);
         } else {
@@ -309,7 +311,8 @@ final class BytecodeRoutes implements AutoCloseable {
      */
     private record DiffWithDecompilation(
             @JsonUnwrapped BytecodeDiffResult diff,
-            DecompilationResult decompilation
+            DecompilationResult fromDecompilation,
+            DecompilationResult toDecompilation
     ) {
     }
 

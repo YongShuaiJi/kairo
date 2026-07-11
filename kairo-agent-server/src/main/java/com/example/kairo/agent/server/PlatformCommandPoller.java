@@ -200,7 +200,8 @@ final class PlatformCommandPoller implements AutoCloseable {
         var result = runtime.diffService().diff(identity, from,
                 com.example.kairo.api.bytecode.TransformationRevision.of(fromRevision), fromKind, to,
                 com.example.kairo.api.bytecode.TransformationRevision.of(toRevision), toKind);
-        DecompilationResult decompilation = runtime.decompilerService().decompile(identity, to);
+        DecompilationResult fromDecompilation = runtime.decompilerService().decompile(identity, from);
+        DecompilationResult toDecompilation = runtime.decompilerService().decompile(identity, to);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("classIdentity", identityMap(identity)); response.put("fromRevision", revisionMap(fromRevision));
         response.put("toRevision", revisionMap(toRevision)); response.put("fromKind", fromKind.name());
@@ -208,7 +209,8 @@ final class PlatformCommandPoller implements AutoCloseable {
         response.put("toHash", result.toHash()); response.put("identical", result.identical());
         response.put("normalized", result.normalized()); response.put("methodDiffs", result.methodDiffs());
         response.put("structuralDiffs", result.structuralDiffs()); response.put("summary", result.summary());
-        response.put("decompilation", decompilationMap(decompilation));
+        response.put("fromDecompilation", decompilationMap(fromDecompilation));
+        response.put("toDecompilation", decompilationMap(toDecompilation));
         return response;
     }
 

@@ -387,6 +387,7 @@ export function demoBytecodeDiff(
     ],
     structuralDiffs: [],
     summary: "1 个方法被修改，1 个方法新增",
-    decompilation: UNAVAILABLE_DECOMPILATION,
+    fromDecompilation: UNAVAILABLE_DECOMPILATION,
+    toDecompilation: UNAVAILABLE_DECOMPILATION,
   };
 }

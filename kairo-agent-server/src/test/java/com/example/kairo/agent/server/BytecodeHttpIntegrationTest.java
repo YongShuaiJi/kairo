@@ -26,6 +26,7 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -231,12 +232,13 @@ class BytecodeHttpIntegrationTest {
         assertThat(body.path("methodDiffs").isArray()).isTrue();
         assertThat(body.path("methodDiffs").size()).isGreaterThan(0);
 
-        // The JSON diff carries an optional decompilation of the "to" bytes inline
-        // (flattened alongside the diff fields, not nested under a wrapper key).
-        JsonNode decomp = body.path("decompilation");
-        assertThat(decomp.path("status").asText()).isEqualTo("SUCCESS");
-        assertThat(decomp.path("decompilerName").asText()).isEqualTo("vineflower");
-        assertThat(decomp.path("sourceCode").asText()).contains("SampleService");
+        // Both sides carry approximate source for a true Before/After Java view.
+        for (String field : List.of("fromDecompilation", "toDecompilation")) {
+            JsonNode decomp = body.path(field);
+            assertThat(decomp.path("status").asText()).isEqualTo("SUCCESS");
+            assertThat(decomp.path("decompilerName").asText()).isEqualTo("vineflower");
+            assertThat(decomp.path("sourceCode").asText()).contains("SampleService");
+        }
         // The diff fields remain at the top level (not wrapped under "diff").
         assertThat(body.path("classIdentity").path("binaryClassName").asText())
                 .isEqualTo(SampleService.class.getName());
