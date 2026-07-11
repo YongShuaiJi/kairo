@@ -234,5 +234,12 @@ curl -s -H "X-Agent-Token: $TOKEN" \
 
 ### 7.5 本小片不做
 
-Platform 代理服务（浏览器不直连 Agent）、转换元数据持久化表、blob 持久化、Web 增强对比视图与数据库迁移
-属于后续小片，本小片不实现。反编译器接入（`DecompilerService` 已就绪但未挂 HTTP 路由）同样留给后续小片。
+Platform 代理服务（浏览器不直连 Agent）、blob 持久化和 Web 增强对比视图属于后续小片。
+反编译器接入（`DecompilerService` 已就绪但未挂 HTTP 路由）同样留给后续小片。
+
+## 8. Platform 元数据持久化
+
+`V35__bytecode_transformation_metadata.sql` 保存有界的转换元数据，唯一键由 runtime、Agent、二进制类名、
+ClassLoader identity、revision 和 snapshot kind 组成，重复观测采用幂等 upsert。该表刻意不存在 byte array、
+BLOB、BYTEA 或 payload 列；INPUT、PLANNED、APPLIED 字节仍留在 Agent 的有界快照仓库，只能按需获取。
+诊断 JSON 由服务限制长度，且不得包含 class bytes 或 Agent token。
