@@ -1,5 +1,6 @@
 package com.example.kairo.agent.core;
 
+import com.example.kairo.api.bytecode.ClassIdentity;
 import com.example.kairo.core.ClassLoaderIdentity;
 import com.example.kairo.core.MethodDescriptor;
 
@@ -13,6 +14,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 
 public final class LoadedClassRepository {
 
@@ -34,14 +36,39 @@ public final class LoadedClassRepository {
     }
 
     public Class<?> resolveClass(String classId) {
+        return findClass(classId)
+                .orElseThrow(() -> new IllegalArgumentException("Class not found: " + classId));
+    }
+
+    /**
+     * Resolve a class by its {@link #classId(Class)}, returning empty instead of
+     * throwing when the class is not currently loaded. A malformed {@code classId}
+     * still throws {@link IllegalArgumentException} so callers can distinguish a
+     * bad identifier (400) from a valid one whose class is simply not present (404).
+     */
+    public Optional<Class<?>> findClass(String classId) {
         String[] parts = decodeClassId(classId);
         String classLoaderId = parts[0];
         String className = parts[1];
-        return Arrays.stream(instrumentation.getAllLoadedClasses())
-                .filter(type -> type.getName().equals(className))
-                .filter(type -> ClassLoaderIdentity.idOf(type.getClassLoader()).equals(classLoaderId))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Class not found: " + classId));
+        for (Class<?> type : instrumentation.getAllLoadedClasses()) {
+            if (type.getName().equals(className)
+                    && ClassLoaderIdentity.idOf(type.getClassLoader()).equals(classLoaderId)) {
+                return Optional.of(type);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Decode a {@link #classId(Class)} into the frozen {@link ClassIdentity} without
+     * resolving a live {@code Class}. This is the identity-only path used by read-only
+     * bytecode routes that operate on stored snapshots and journal history, which may
+     * outlive the {@code Class} they were captured from. A malformed {@code classId}
+     * throws {@link IllegalArgumentException}.
+     */
+    public ClassIdentity toClassIdentity(String classId) {
+        String[] parts = decodeClassId(classId);
+        return new ClassIdentity(parts[1], parts[0]);
     }
 
     public List<MethodInfo> methods(String classId) {

@@ -137,5 +137,102 @@ List<TransformationResult> history = runtime.transformationJournal().history(ide
 
 ## 6. 本阶段不做
 
-Platform 代理服务、转换元数据表、blob 持久化、Agent 本地 HTTP API（`/v1/classes/...`）、Web 增强对比
-视图与数据库迁移均属于下一阶段，本阶段不实现。
+Platform 代理服务、转换元数据表、blob 持久化、Web 增强对比视图与数据库迁移均属于后续阶段，本阶段不实现。
+
+> Agent 本地 HTTP API（`/v1/classes/...` 的 transformations/bytecode/preview/capture/diff 五类路由）已在 V1.1
+> 第三阶段第一小块落地，见下文第 7 节。浏览器直连 Agent 的限制由 Platform 代理服务在后续阶段实现，本阶段
+> Agent 端沿用现有 `X-Agent-Token` 认证。
+
+## 7. Agent 本地 HTTP API（第三阶段第一小块）
+
+`kairo-agent-server` 的 `AgentHttpServer` 在现有 token 认证之上新增五类只读 / 诊断路由，路径与
+[路线图 3.3](../roadmap/v1.x-technical/v1.1-bytecode-visibility.md) 一致。路由实现集中在 `BytecodeRoutes`，
+慢速 preview/capture/diff 派发到有界 `BytecodeDiagnosticExecutor`（守护线程、最低优先级、带超时），不占用业务线程
+或 HTTP 线程池的并发槽位之外的计算资源。
+
+### 7.1 通用约定
+
+- **认证**：除 `/health` 等公开路径外，所有路由复用现有 `X-Agent-Token`（或 `Authorization: Bearer ...`）。
+  未带 token 或 token 失效返回 `401`。浏览器不得直连的限制由 Platform 代理在后续阶段实现。
+- **classId**：沿用 `LoadedClassRepository.classId` 的 base64url(`classLoaderId|binaryClassName`) 形式，
+  无歧义定位 `binaryClassName + classLoaderId`，**不接受裸类名**。格式非法返回 `400`；capture 需要的类未加载
+  返回 `404`；bytecode/diff 需要的快照缺失返回 `404`。`classLoaderId` 一律由 `ClassLoaderIdentity.idOf` 生成。
+- **媒体类型**：字节码二进制使用 `application/octet-stream`（并附 `X-Content-Type-Options: nosniff`）；
+  元数据、Diff、预览/捕获结果使用现有 Jackson 序列化的 JSON（`application/json; charset=utf-8`）。
+- **大小 / 超时上限**（`BytecodeApiLimits.STANDARD`，可构造时覆盖用于测试）：
+  请求体上限 1 MiB；字节码响应上限 8 MiB；诊断超时 10 s；诊断并发 2。超限返回 `413`，超时返回 `503`。
+- **错误体**：结构化 JSON `{"error": "<code>", "message": "<可读信息>"}`，内部错误不泄露堆栈或异常类名。
+  错误码：`bad_request`(400)、`not_found`(404)、`payload_too_large`(413)、`diagnostic_timeout`(503)、
+  `diagnostic_failed`/`internal_error`(500)。
+
+### 7.2 路由
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/v1/classes/{classId}/transformations` | 当前 revision + 有界 journal 历史（JSON） |
+| `GET` | `/v1/classes/{classId}/bytecode?kind=&revision=` | 快照原始 bytes（octet-stream，支持 `HEAD`） |
+| `POST` | `/v1/classes/{classId}/preview` | 对请求体中的 input bytes 做离线预览（JSON） |
+| `POST` | `/v1/classes/{classId}/capture` | 重新读取 JVM 实际运行字节码（JSON） |
+| `GET` | `/v1/classes/{classId}/diff?from=&to=&format=` | 结构化归一化字节码 Diff（JSON / text） |
+
+- `kind` ∈ `INPUT|PLANNED|APPLIED`（大小写不敏感）；`revision` 为非负整数。
+- `from`/`to` 为快照选择器 `KIND@revision`，例如 `INPUT@1`、`PLANNED@1`。
+- `format` ∈ `json`（默认）| `text`。
+
+### 7.3 示例
+
+```bash
+# 0. 取 classId（先通过类发现接口，或由发布规则回执获得）。假设 classId=<CID>。
+TOKEN=...
+
+# 1. 转换历史
+curl -s -H "X-Agent-Token: $TOKEN" \
+  "http://127.0.0.1:18080/v1/classes/<CID>/transformations"
+# {"classIdentity":{"binaryClassName":"com.example.bytecode.SampleService","classLoaderId":"..."},
+#  "currentRevision":{"value":1},"count":2,
+#  "history":[{"classIdentity":{...},"revision":{"value":1},"status":"SUCCEEDED",
+#             "inputHash":"...","outputHash":"...",...}]}
+
+# 2. 取 INPUT 字节码（二进制）
+curl -s -H "X-Agent-Token: $TOKEN" -o /tmp/in.class \
+  "http://127.0.0.1:18080/v1/classes/<CID>/bytecode?kind=INPUT&revision=1"
+# 响应头: Content-Type: application/octet-stream
+#         X-Kairo-Kind: INPUT  X-Kairo-Revision: 1  X-Kairo-Hash: <sha256>  X-Kairo-Size: <n>
+
+# 3. 预览：把上一步取到的 input bytes 喂给 preview，得到 PLANNED 结果（不触碰 JVM）
+curl -s -H "X-Agent-Token: $TOKEN" -H "Content-Type: application/octet-stream" \
+  --data-binary @/tmp/in.class \
+  "http://127.0.0.1:18080/v1/classes/<CID>/preview"
+# {"classIdentity":{...},"revision":{"value":1},"inputHash":"...","plannedHash":"...",
+#  "plannedSizeBytes":1234,"targetMethodCount":1,"adviceTypes":["VALUE"],
+#  "diagnostics":[],"changed":true}
+# 预览生成的 PLANNED 快照随后可用 GET .../bytecode?kind=PLANNED&revision=1 取回。
+
+# 4. 捕获 JVM 实际运行字节码
+curl -s -X POST -H "X-Agent-Token: $TOKEN" \
+  "http://127.0.0.1:18080/v1/classes/<CID>/capture"
+# {"classIdentity":{...},"revision":{"value":1},"appliedHash":"...","sizeBytes":1234,
+#  "diagnostics":[],"capturedAtMillis":...,"captured":true}
+
+# 5. 结构化 Diff（INPUT -> PLANNED），文本格式
+curl -s -H "X-Agent-Token: $TOKEN" \
+  "http://127.0.0.1:18080/v1/classes/<CID>/diff?from=INPUT@1&to=PLANNED@1&format=text"
+# # bytecode diff for com.example.bytecode.SampleService
+# from: INPUT@1 (...)   to: PLANNED@1 (...)
+# identical: false (normalized: true)
+# ## methods
+# ### compute(I)I [MODIFIED]
+#   - ILOAD 0
+#   + INVOKESTATIC com/example/kairo/bridge/KairoBridge ...
+```
+
+### 7.4 跨 ClassLoader 隔离
+
+`classId` 包含 `classLoaderId`，因此两个 ClassLoader 加载的同名类拥有不同 `classId`，其 revision、journal 历史
+与快照互不串数据。`GET .../transformations` 与 `GET .../bytecode` 仅按 `{classLoaderId, binaryClassName}` 命中，
+绝不会把 A 类加载器的快照暴露给 B 类加载器的 classId。
+
+### 7.5 本小片不做
+
+Platform 代理服务（浏览器不直连 Agent）、转换元数据持久化表、blob 持久化、Web 增强对比视图与数据库迁移
+属于后续小片，本小片不实现。反编译器接入（`DecompilerService` 已就绪但未挂 HTTP 路由）同样留给后续小片。

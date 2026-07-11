@@ -5,6 +5,9 @@ import com.example.kairo.agent.core.MethodInfo;
 import com.example.kairo.api.InvokePhase;
 import com.example.kairo.api.MethodSelector;
 import com.example.kairo.api.MockRule;
+import com.example.kairo.api.bytecode.ClassIdentity;
+import com.example.kairo.api.bytecode.TransformationRevision;
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -39,14 +42,32 @@ public final class AgentHttpServer implements AutoCloseable {
     private final ObjectMapper objectMapper = new ObjectMapper()
             .findAndRegisterModules()
             .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
+    private final BytecodeRoutes bytecodeRoutes;
 
     public AgentHttpServer(AgentRuntime runtime, String host, int port, String token) {
-        this(runtime, host, port, new AgentTokenManager(token, java.time.Duration.ofMinutes(15)));
+        this(runtime, host, port, new AgentTokenManager(token, java.time.Duration.ofMinutes(15)),
+                BytecodeApiLimits.STANDARD);
     }
 
     AgentHttpServer(AgentRuntime runtime, String host, int port, AgentTokenManager tokenManager) {
+        this(runtime, host, port, tokenManager, BytecodeApiLimits.STANDARD);
+    }
+
+    /**
+     * Full constructor, primarily for tests that need non-standard bytecode limits
+     * (e.g. a tiny response cap to exercise the 413 path).
+     */
+    AgentHttpServer(AgentRuntime runtime, String host, int port, AgentTokenManager tokenManager,
+                    BytecodeApiLimits bytecodeApiLimits) {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.tokenManager = Objects.requireNonNull(tokenManager, "tokenManager");
+        // The frozen bytecode DTOs ClassIdentity and TransformationRevision are plain
+        // classes (not records) with xxxName()/value() accessors that Jackson does not
+        // treat as getters. Serialize them by field so they appear on the wire with their
+        // real property names without polluting the pure kairo-api module with Jackson
+        // annotations.
+        objectMapper.addMixIn(ClassIdentity.class, FieldVisibilityMixin.class);
+        objectMapper.addMixIn(TransformationRevision.class, FieldVisibilityMixin.class);
         String bindHost = host == null || host.isBlank() ? LOOPBACK_HOST : host;
         if (!LOOPBACK_HOST.equals(bindHost) && !"localhost".equalsIgnoreCase(bindHost)) {
             throw new IllegalArgumentException("Agent HTTP server must bind to loopback");
@@ -62,6 +83,15 @@ public final class AgentHttpServer implements AutoCloseable {
             return thread;
         });
         server.setExecutor(executor);
+        this.bytecodeRoutes = new BytecodeRoutes(
+                runtime.loadedClassRepository(),
+                runtime.snapshotRepository(),
+                runtime.transformationJournal(),
+                runtime.previewService(),
+                runtime.captureService(),
+                runtime.diffService(),
+                objectMapper,
+                Objects.requireNonNull(bytecodeApiLimits, "bytecodeApiLimits"));
         registerContexts();
     }
 
@@ -77,6 +107,7 @@ public final class AgentHttpServer implements AutoCloseable {
     public void close() {
         server.stop(0);
         executor.shutdownNow();
+        bytecodeRoutes.close();
     }
 
     private void registerContexts() {
@@ -111,6 +142,9 @@ public final class AgentHttpServer implements AutoCloseable {
         String path = normalizePath(rawPath);
         if ("GET".equals(method) && "/health".equals(path)) {
             write(exchange, 200, Map.of("status", "UP", "protocolVersion", PROTOCOL_VERSION));
+            return;
+        }
+        if (bytecodeRoutes.handle(exchange, method, path)) {
             return;
         }
         if ("GET".equals(method) && "/status".equals(path)) {
@@ -401,6 +435,15 @@ public final class AgentHttpServer implements AutoCloseable {
     @FunctionalInterface
     private interface ExchangeHandler {
         void handle(HttpExchange exchange) throws Exception;
+    }
+
+    /** Mixin: serialize only fields (no get/is accessors), used for the frozen bytecode DTOs. */
+    @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY,
+            getterVisibility = JsonAutoDetect.Visibility.NONE,
+            isGetterVisibility = JsonAutoDetect.Visibility.NONE,
+            setterVisibility = JsonAutoDetect.Visibility.NONE,
+            creatorVisibility = JsonAutoDetect.Visibility.NONE)
+    private interface FieldVisibilityMixin {
     }
 
     public record RuleRequest(
