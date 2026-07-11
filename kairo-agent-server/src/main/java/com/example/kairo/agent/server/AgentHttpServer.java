@@ -90,6 +90,7 @@ public final class AgentHttpServer implements AutoCloseable {
                 runtime.previewService(),
                 runtime.captureService(),
                 runtime.diffService(),
+                runtime.decompilerService(),
                 objectMapper,
                 Objects.requireNonNull(bytecodeApiLimits, "bytecodeApiLimits"));
         registerContexts();

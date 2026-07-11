@@ -3,10 +3,12 @@ package com.example.kairo.api.bytecode;
 /**
  * Service-provider interface for decompiling class bytes back to readable source.
  *
- * <p>V1.1 ships only the {@code Unavailable} implementation (see
- * {@code kairo-agent-core}); no decompiler dependency is added to the agent. The
- * SPI exists so a later slice can plug in a real decompiler without touching the
- * agent runtime or the platform contract.
+ * <p>V1.1 ships a default implementation backed by the official Vineflower decompiler
+ * (see {@code VineflowerBytecodeDecompiler} in {@code kairo-agent-core}, shaded into the
+ * {@code kairo-agent-core-modern} distribution). When Vineflower is absent or fails to
+ * initialise, the agent degrades to {@code UnavailableBytecodeDecompiler}. The SPI lets
+ * a later slice plug in an alternative decompiler without touching the agent runtime or
+ * the platform contract.
  *
  * <p>Implementations must be safe to call on a dedicated diagnostic executor
  * (never on a business call thread) and must enforce their own input-size,

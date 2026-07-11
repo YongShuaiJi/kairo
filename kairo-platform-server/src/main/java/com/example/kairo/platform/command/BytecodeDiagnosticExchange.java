@@ -71,8 +71,19 @@ public class BytecodeDiagnosticExchange {
     }
 
     public Map<String, Object> sanitizeForPersistence(Map<String, Object> result) {
-        Map<String, Object> safe = new LinkedHashMap<>(result);
-        safe.remove("bytecodeBase64Url");
+        return sanitizeMap(result);
+    }
+
+    private Map<String, Object> sanitizeMap(Map<?, ?> source) {
+        Map<String, Object> safe = new LinkedHashMap<>();
+        source.forEach((key, value) -> {
+            String name = String.valueOf(key);
+            if ("bytecodeBase64Url".equals(name) || "sourceCode".equals(name)) return;
+            if (value instanceof Map<?, ?> nested) safe.put(name, sanitizeMap(nested));
+            else if (value instanceof java.util.List<?> list) safe.put(name, list.stream()
+                    .map(item -> item instanceof Map<?, ?> nested ? sanitizeMap(nested) : item).toList());
+            else safe.put(name, value);
+        });
         return safe;
     }
 

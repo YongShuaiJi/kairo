@@ -10,8 +10,10 @@ import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -46,12 +48,14 @@ public final class DecompilerService implements AutoCloseable {
         }
         this.maxBytes = maxBytes;
         this.timeoutMillis = timeoutMillis;
-        this.executor = Executors.newFixedThreadPool(maxConcurrency, runnable -> {
+        java.util.concurrent.ThreadFactory threadFactory = runnable -> {
             Thread thread = new Thread(runnable, "kairo-decompiler");
             thread.setDaemon(true);
             thread.setPriority(Thread.MIN_PRIORITY);
             return thread;
-        });
+        };
+        this.executor = new ThreadPoolExecutor(maxConcurrency, maxConcurrency, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(maxConcurrency), threadFactory, new ThreadPoolExecutor.AbortPolicy());
     }
 
     public DecompilationResult decompile(ClassIdentity classIdentity, byte[] bytes) {
@@ -61,8 +65,12 @@ public final class DecompilerService implements AutoCloseable {
         if (bytes.length > maxBytes) {
             return failed("input too large: " + bytes.length + " > " + maxBytes, started);
         }
-        Future<DecompilationResult> future = executor.submit(
-                new DecompileTask(decompiler, classIdentity, bytes));
+        Future<DecompilationResult> future;
+        try {
+            future = executor.submit(new DecompileTask(decompiler, classIdentity, bytes.clone()));
+        } catch (RejectedExecutionException busy) {
+            return failed("decompiler is busy; bounded queue is full", started);
+        }
         try {
             return future.get(timeoutMillis, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {

@@ -1,6 +1,7 @@
 package com.example.kairo.agent.server;
 
 import com.example.kairo.agent.core.AgentRuntime;
+import com.example.kairo.api.bytecode.DecompilationResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -150,6 +151,8 @@ final class PlatformCommandPoller implements AutoCloseable {
         var identity = runtime.loadedClassRepository().toClassIdentity(requiredText(payload, "classId"));
         byte[] input = decodeInput(payload, "bytecodeBase64Url");
         var result = runtime.previewService().preview(identity, input);
+        byte[] toDecompile = result.plannedBytes() != null ? result.plannedBytes() : input;
+        DecompilationResult decompilation = runtime.decompilerService().decompile(identity, toDecompile);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("classIdentity", identityMap(identity));
         response.put("revision", revisionMap(result.revision().value()));
@@ -160,6 +163,7 @@ final class PlatformCommandPoller implements AutoCloseable {
         response.put("adviceTypes", result.adviceTypes());
         response.put("diagnostics", result.diagnostics().stream().map(this::diagnosticMap).toList());
         response.put("changed", result.changed());
+        response.put("decompilation", decompilationMap(decompilation));
         return response;
     }
 
@@ -168,6 +172,9 @@ final class PlatformCommandPoller implements AutoCloseable {
                 .orElseThrow(() -> new IllegalArgumentException("class is not loaded"));
         var result = runtime.captureService().capture(type);
         if (result.appliedBytes() != null) ensureOutputSize(result.appliedBytes());
+        DecompilationResult decompilation = result.appliedBytes() != null
+                ? runtime.decompilerService().decompile(result.classIdentity(), result.appliedBytes())
+                : null;
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("classIdentity", identityMap(result.classIdentity()));
         response.put("revision", revisionMap(result.revision().value()));
@@ -176,6 +183,7 @@ final class PlatformCommandPoller implements AutoCloseable {
         response.put("diagnostics", result.diagnostics().stream().map(this::diagnosticMap).toList());
         response.put("capturedAtMillis", result.capturedAtMillis());
         response.put("captured", result.captured());
+        response.put("decompilation", decompilationMap(decompilation));
         return response;
     }
 
@@ -192,6 +200,7 @@ final class PlatformCommandPoller implements AutoCloseable {
         var result = runtime.diffService().diff(identity, from,
                 com.example.kairo.api.bytecode.TransformationRevision.of(fromRevision), fromKind, to,
                 com.example.kairo.api.bytecode.TransformationRevision.of(toRevision), toKind);
+        DecompilationResult decompilation = runtime.decompilerService().decompile(identity, to);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("classIdentity", identityMap(identity)); response.put("fromRevision", revisionMap(fromRevision));
         response.put("toRevision", revisionMap(toRevision)); response.put("fromKind", fromKind.name());
@@ -199,7 +208,22 @@ final class PlatformCommandPoller implements AutoCloseable {
         response.put("toHash", result.toHash()); response.put("identical", result.identical());
         response.put("normalized", result.normalized()); response.put("methodDiffs", result.methodDiffs());
         response.put("structuralDiffs", result.structuralDiffs()); response.put("summary", result.summary());
+        response.put("decompilation", decompilationMap(decompilation));
         return response;
+    }
+
+    /** Serializes a {@link DecompilationResult} to the wire shape expected by the platform/web client. */
+    private Map<String, Object> decompilationMap(DecompilationResult decompilation) {
+        if (decompilation == null) {
+            return null;
+        }
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("status", decompilation.status().name());
+        map.put("decompilerName", decompilation.decompilerName());
+        map.put("sourceCode", decompilation.sourceCode());
+        map.put("diagnostics", decompilation.diagnostics());
+        map.put("durationMillis", decompilation.durationMillis());
+        return map;
     }
 
     private byte[] snapshot(com.example.kairo.api.bytecode.ClassIdentity identity,

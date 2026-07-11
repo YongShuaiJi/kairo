@@ -94,8 +94,12 @@
   下标、栈映射帧与调试信息，保留指令、描述符、异常表、签名与注解，因此语义相等的两份字节码即使
   原始 bytes 不同也会比较为 `identical`。这是权威比较，真实可用，不是占位。
 - `DecompilerService` + `BytecodeDecompiler` SPI：反编译器运行在独立有界诊断线程池，带超时与大小
-  限制。默认实现 `UnavailableBytecodeDecompiler` 明确不可用并返回清晰诊断；结构化字节码 Diff 不依赖
-  反编译器，始终可用。
+  限制。默认实现是官方 `org.vineflower:vineflower` 1.12.0（`VineflowerBytecodeDecompiler`，shaded 进
+  `kairo-agent-core-modern` 发行物）：只从传入 `byte[]` 在内存反编译目标类，不落临时文件（用内存
+  `IContextSource`/`IResultSaver`/`IOutputSink` + `NO_OP` 日志，禁止 `System.out/err` 污染），类名与输入
+  不一致即失败，返回近似 Java source、`decompilerName`/版本、诊断与耗时。`AgentRuntime` 默认使用
+  Vineflower；只有显式缺依赖或初始化失败（`LinkageError`/`RuntimeException`）才回退到
+  `UnavailableBytecodeDecompiler` 并给出原因。结构化字节码 Diff 不依赖反编译器，始终可用。
 
 `InstrumentationRegistry` 新增按 `classLoaderId` 查询的 `methodsOf` / `containsType` 重载，使只读预览
 无需 `ClassLoader` 对象即可复用同一计划。
@@ -232,10 +236,26 @@ curl -s -H "X-Agent-Token: $TOKEN" \
 与快照互不串数据。`GET .../transformations` 与 `GET .../bytecode` 仅按 `{classLoaderId, binaryClassName}` 命中，
 绝不会把 A 类加载器的快照暴露给 B 类加载器的 classId。
 
-### 7.5 本小片不做
+### 7.5 反编译（preview/capture/diff 可选结果）
+
+`preview`/`capture`/`diff` 三类诊断响应都带一个可选 `decompilation` 字段（`DecompilationResult`：
+`status` ∈ `SUCCESS`/`UNAVAILABLE`/`FAILED`、`decompilerName`、`sourceCode`（仅 `SUCCESS` 非空）、
+`diagnostics`、`durationMillis`）。Agent 默认使用 Vineflower，因此通常为 `SUCCESS` 并返回近似 Java source：
+
+- `preview` 反编译计划字节码（`PLANNED`，未变更时退回输入字节）；
+- `capture` 反编译 JVM 实际运行字节码（`APPLIED`）；
+- `diff` 反编译 `to` 侧快照（目标状态），通过 `@JsonUnwrapped` 与 Diff 字段平铺在同一层，不扩展冻结的
+  `BytecodeDiffResult` 契约。
+
+反编译在诊断执行线程内完成（受 `DecompilerService` 自身超时与大小限制约束，超时/异常降级为 `FAILED`，
+不破坏主响应）。源码为近似重建，诊断里明确标注「以结构化字节码 Diff 为准」，不伪称精确。Platform 代理把
+Agent 命令通道返回的 `decompilation` 原样透传给 Web；Web 早已支持该可选字段，`SUCCESS` 时展示源码，
+否则展示不可用/失败原因。`decompilation.sourceCode` 不入库（`BytecodeDiagnosticProxyService` 持久化
+元数据时只读既定字段）。
+
+### 7.6 本小片不做
 
 Platform 代理服务（浏览器不直连 Agent）、blob 持久化和 Web 增强对比视图属于后续小片。
-反编译器接入（`DecompilerService` 已就绪但未挂 HTTP 路由）同样留给后续小片。
 
 ## 8. Platform 元数据持久化
 

@@ -139,6 +139,14 @@ class BytecodeHttpIntegrationTest {
         assertThat(body.path("sizeBytes").asInt()).isGreaterThan(0);
         assertThat(body.path("revision").path("value").asLong()).isEqualTo(1L);
 
+        // The default Vineflower decompiler is on the agent classpath, so capture
+        // returns approximate source for the actual running bytes.
+        JsonNode decomp = body.path("decompilation");
+        assertThat(decomp.path("status").asText()).isEqualTo("SUCCESS");
+        assertThat(decomp.path("decompilerName").asText()).isEqualTo("vineflower");
+        assertThat(decomp.path("sourceCode").asText()).contains("SampleService");
+        assertThat(decomp.path("sourceCode").asText()).contains("compute");
+
         // The APPLIED snapshot is now fetchable.
         Resp applied = get("/v1/classes/" + classId + "/bytecode?kind=APPLIED&revision=1");
         assertThat(applied.status()).isEqualTo(200);
@@ -171,6 +179,13 @@ class BytecodeHttpIntegrationTest {
         assertThat(body.path("plannedHash").asText()).isNotEqualTo(body.path("inputHash").asText());
         assertThat(body.path("targetMethodCount").asInt()).isGreaterThanOrEqualTo(1);
         assertThat(body.path("plannedSizeBytes").asInt()).isGreaterThan(0);
+
+        // Preview decompiles the planned bytes so the caller can read the approximate
+        // post-enhancement source without touching the JVM.
+        JsonNode decomp = body.path("decompilation");
+        assertThat(decomp.path("status").asText()).isEqualTo("SUCCESS");
+        assertThat(decomp.path("decompilerName").asText()).isEqualTo("vineflower");
+        assertThat(decomp.path("sourceCode").asText()).contains("SampleService");
 
         // The PLANNED snapshot was stored at the current revision and is fetchable.
         Resp planned = get("/v1/classes/" + classId + "/bytecode?kind=PLANNED&revision=1");
@@ -215,6 +230,16 @@ class BytecodeHttpIntegrationTest {
         assertThat(body.path("normalized").asBoolean()).isTrue();
         assertThat(body.path("methodDiffs").isArray()).isTrue();
         assertThat(body.path("methodDiffs").size()).isGreaterThan(0);
+
+        // The JSON diff carries an optional decompilation of the "to" bytes inline
+        // (flattened alongside the diff fields, not nested under a wrapper key).
+        JsonNode decomp = body.path("decompilation");
+        assertThat(decomp.path("status").asText()).isEqualTo("SUCCESS");
+        assertThat(decomp.path("decompilerName").asText()).isEqualTo("vineflower");
+        assertThat(decomp.path("sourceCode").asText()).contains("SampleService");
+        // The diff fields remain at the top level (not wrapped under "diff").
+        assertThat(body.path("classIdentity").path("binaryClassName").asText())
+                .isEqualTo(SampleService.class.getName());
 
         // Identical sides compare identical.
         Resp same = get("/v1/classes/" + classId + "/diff?from=INPUT@1&to=INPUT@1");

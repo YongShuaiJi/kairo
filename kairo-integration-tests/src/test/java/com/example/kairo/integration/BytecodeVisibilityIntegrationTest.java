@@ -275,13 +275,47 @@ class BytecodeVisibilityIntegrationTest {
     }
 
     @Test
-    void decompilerIsUnavailableWithClearDiagnostic() throws Exception {
+    void decompilesClassByDefaultWithVineflower() throws Exception {
         ClassIdentity identity = ClassIdentities.of(OrderService.class);
         byte[] bytes = runtime.captureService().capture(OrderService.class).appliedBytes();
         var result = runtime.decompilerService().decompile(identity, bytes);
-        assertThat(result.status()).isEqualTo(com.example.kairo.api.bytecode.DecompilationStatus.UNAVAILABLE);
+
+        // The agent defaults to Vineflower (shaded into the modern distribution), so a
+        // normal loaded class decompiles successfully. Source is approximate: we assert
+        // the class and target method are present, never that the text is byte-exact.
+        assertThat(result.status()).isEqualTo(com.example.kairo.api.bytecode.DecompilationStatus.SUCCESS);
+        assertThat(result.decompilerName()).isEqualTo("vineflower");
+        assertThat(result.sourceCode()).contains("OrderService");
+        assertThat(result.sourceCode()).contains("calculateScore");
+        assertThat(result.diagnostics()).anyMatch(s -> s.contains("approximate"));
+    }
+
+    @Test
+    void decompilesKairoEnhancedBytecode() throws Exception {
+        Method method = OrderService.class.getMethod("calculateScore", int.class);
+        ClassIdentity identity = ClassIdentities.of(OrderService.class);
+        runtime.publish(method, rule("enhanced-decomp", method, InvokePhase.BEFORE,
+                "return mock.returnValue(123)"));
+        try {
+            // APPLIED bytes now carry the KairoBridge weave; Vineflower must still
+            // produce readable source that mentions the target class and method.
+            byte[] enhanced = runtime.captureService().capture(OrderService.class).appliedBytes();
+            var result = runtime.decompilerService().decompile(identity, enhanced);
+            assertThat(result.status()).isEqualTo(com.example.kairo.api.bytecode.DecompilationStatus.SUCCESS);
+            assertThat(result.sourceCode()).contains("OrderService");
+            assertThat(result.sourceCode()).contains("calculateScore");
+        } finally {
+            runtime.remove(method, "enhanced-decomp");
+        }
+    }
+
+    @Test
+    void decompilesIllegalBytesAsFailedWithoutSource() {
+        ClassIdentity identity = ClassIdentities.of(OrderService.class);
+        var result = runtime.decompilerService().decompile(identity, new byte[]{0x00, (byte) 0xCA, (byte) 0xFE});
+        assertThat(result.status()).isEqualTo(com.example.kairo.api.bytecode.DecompilationStatus.FAILED);
         assertThat(result.sourceCode()).isNull();
-        assertThat(result.diagnostics()).anyMatch(s -> s.contains("No Java decompiler"));
+        assertThat(result.diagnostics()).anyMatch(s -> s.contains("class name"));
     }
 
     @Test

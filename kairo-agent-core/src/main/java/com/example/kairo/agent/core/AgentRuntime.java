@@ -91,7 +91,8 @@ public final class AgentRuntime implements AutoCloseable {
         this.captureService = new BytecodeCaptureService(transformerManager,
                 snapshotRepository, transformationJournal);
         this.diffService = new BytecodeDiffService();
-        this.decompilerService = new DecompilerService(new com.example.kairo.agent.core.bytecode.UnavailableBytecodeDecompiler(),
+        this.decompilerService = new DecompilerService(
+                com.example.kairo.agent.core.bytecode.BytecodeDecompilers.defaultDecompiler(),
                 2 * 1024 * 1024, 5000L);
         this.loadedClassRepository = new LoadedClassRepository(instrumentation);
     }

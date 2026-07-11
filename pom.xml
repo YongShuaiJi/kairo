@@ -47,6 +47,7 @@
         <junit.version>5.11.4</junit.version>
         <assertj.version>3.26.3</assertj.version>
         <spring-boot.version>3.3.7</spring-boot.version>
+        <vineflower.version>1.12.0</vineflower.version>
         <maven.compiler.plugin.version>3.13.0</maven.compiler.plugin.version>
         <maven.surefire.plugin.version>3.5.2</maven.surefire.plugin.version>
         <maven.shade.plugin.version>3.6.0</maven.shade.plugin.version>
@@ -75,6 +76,11 @@
                 <groupId>org.apache.groovy</groupId>
                 <artifactId>groovy</artifactId>
                 <version>${groovy.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.vineflower</groupId>
+                <artifactId>vineflower</artifactId>
+                <version>${vineflower.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>

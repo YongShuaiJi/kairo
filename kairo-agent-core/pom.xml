@@ -29,6 +29,10 @@
             <artifactId>byte-buddy</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.vineflower</groupId>
+            <artifactId>vineflower</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
@@ -39,4 +43,15 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <!-- Filter the decompiler version out of decompiler.properties so it stays in
+             sync with the vineflower Maven dependency and survives shading. -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+            </resource>
+        </resources>
+    </build>
 </project>

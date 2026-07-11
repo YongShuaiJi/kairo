@@ -25,10 +25,13 @@ class BytecodeDiagnosticExchangeTest {
     void binaryResultIsStrippedBeforePersistenceButAvailableToWaitingRequest() {
         BytecodeDiagnosticExchange exchange = new BytecodeDiagnosticExchange();
         exchange.register("c2", null);
-        Map<String, Object> result = Map.of("hash", "h", "bytecodeBase64Url", "AQID");
+        Map<String, Object> result = Map.of("hash", "h", "bytecodeBase64Url", "AQID",
+                "decompilation", Map.of("status", "SUCCESS", "sourceCode", "class Secret {}"));
         exchange.complete("c2", result);
         assertThat(exchange.sanitizeForPersistence(result)).containsEntry("hash", "h")
                 .doesNotContainKey("bytecodeBase64Url");
+        assertThat(((Map<?, ?>) exchange.sanitizeForPersistence(result).get("decompilation"))
+                .containsKey("sourceCode")).isFalse();
         assertThat(exchange.await("c2", Duration.ofSeconds(1))).containsKey("bytecodeBase64Url");
     }
 

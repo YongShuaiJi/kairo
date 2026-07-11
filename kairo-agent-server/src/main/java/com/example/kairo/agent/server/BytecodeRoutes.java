@@ -5,15 +5,18 @@ import com.example.kairo.agent.core.bytecode.BytecodeCaptureService;
 import com.example.kairo.agent.core.bytecode.BytecodeHash;
 import com.example.kairo.agent.core.bytecode.BytecodeSnapshotKey;
 import com.example.kairo.agent.core.bytecode.BytecodeSnapshotRepository;
+import com.example.kairo.agent.core.bytecode.DecompilerService;
 import com.example.kairo.agent.core.bytecode.TransformationJournal;
 import com.example.kairo.agent.core.bytecode.TransformationPreviewService;
 import com.example.kairo.agent.core.bytecode.diff.BytecodeDiffService;
 import com.example.kairo.api.bytecode.BytecodeDiffResult;
 import com.example.kairo.api.bytecode.BytecodeSnapshotKind;
 import com.example.kairo.api.bytecode.ClassIdentity;
+import com.example.kairo.api.bytecode.DecompilationResult;
 import com.example.kairo.api.bytecode.TransformationDiagnostic;
 import com.example.kairo.api.bytecode.TransformationResult;
 import com.example.kairo.api.bytecode.TransformationRevision;
+import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 
@@ -68,6 +71,7 @@ final class BytecodeRoutes implements AutoCloseable {
     private final TransformationPreviewService previewService;
     private final BytecodeCaptureService captureService;
     private final BytecodeDiffService diffService;
+    private final DecompilerService decompilerService;
     private final ObjectMapper objectMapper;
     private final BytecodeApiLimits limits;
     private final BytecodeDiagnosticExecutor diagnosticExecutor;
@@ -78,6 +82,7 @@ final class BytecodeRoutes implements AutoCloseable {
                    TransformationPreviewService previewService,
                    BytecodeCaptureService captureService,
                    BytecodeDiffService diffService,
+                   DecompilerService decompilerService,
                    ObjectMapper objectMapper,
                    BytecodeApiLimits limits) {
         this.loadedClassRepository = loadedClassRepository;
@@ -86,6 +91,7 @@ final class BytecodeRoutes implements AutoCloseable {
         this.previewService = previewService;
         this.captureService = captureService;
         this.diffService = diffService;
+        this.decompilerService = decompilerService;
         this.objectMapper = objectMapper;
         this.limits = limits;
         this.diagnosticExecutor = new BytecodeDiagnosticExecutor(
@@ -177,35 +183,48 @@ final class BytecodeRoutes implements AutoCloseable {
             throw new BadRequestException("preview requires input bytes in the request body"
                     + " (application/octet-stream); fetch them via GET .../bytecode?kind=APPLIED");
         }
-        TransformationPreviewService.PreviewResult result = diagnosticExecutor.submitAndAwait(
-                () -> previewService.preview(identity, inputBytes));
-        Integer plannedSize = result.plannedBytes() == null ? null : result.plannedBytes().length;
-        writeJson(exchange, 200, new PreviewResponse(
-                result.classIdentity(),
-                result.revision(),
-                result.inputHash(),
-                result.plannedHash(),
-                plannedSize,
-                result.targetMethodCount(),
-                result.adviceTypes(),
-                result.diagnostics(),
-                result.changed()));
+        PreviewResponse response = diagnosticExecutor.submitAndAwait(() -> {
+            TransformationPreviewService.PreviewResult result = previewService.preview(identity, inputBytes);
+            // Decompile the planned output when preview changed it; otherwise the input
+            // bytes, so the caller always sees approximate source for the class under test.
+            byte[] toDecompile = result.plannedBytes() != null ? result.plannedBytes() : inputBytes;
+            DecompilationResult decompilation = decompilerService.decompile(identity, toDecompile);
+            Integer plannedSize = result.plannedBytes() == null ? null : result.plannedBytes().length;
+            return new PreviewResponse(
+                    result.classIdentity(),
+                    result.revision(),
+                    result.inputHash(),
+                    result.plannedHash(),
+                    plannedSize,
+                    result.targetMethodCount(),
+                    result.adviceTypes(),
+                    result.diagnostics(),
+                    result.changed(),
+                    decompilation);
+        });
+        writeJson(exchange, 200, response);
     }
 
     private void handleCapture(HttpExchange exchange, String path) throws IOException {
         String classId = segment(path, "/classes/", "/capture");
         Class<?> clazz = resolveClass(classId);
-        BytecodeCaptureService.CaptureResult result = diagnosticExecutor.submitAndAwait(
-                () -> captureService.capture(clazz));
-        Integer size = result.appliedBytes() == null ? null : result.appliedBytes().length;
-        writeJson(exchange, 200, new CaptureResponse(
-                result.classIdentity(),
-                result.revision(),
-                result.appliedHash(),
-                size,
-                result.diagnostics(),
-                result.capturedAtMillis(),
-                result.captured()));
+        CaptureResponse response = diagnosticExecutor.submitAndAwait(() -> {
+            BytecodeCaptureService.CaptureResult result = captureService.capture(clazz);
+            DecompilationResult decompilation = result.appliedBytes() != null
+                    ? decompilerService.decompile(result.classIdentity(), result.appliedBytes())
+                    : null;
+            Integer size = result.appliedBytes() == null ? null : result.appliedBytes().length;
+            return new CaptureResponse(
+                    result.classIdentity(),
+                    result.revision(),
+                    result.appliedHash(),
+                    size,
+                    result.diagnostics(),
+                    result.capturedAtMillis(),
+                    result.captured(),
+                    decompilation);
+        });
+        writeJson(exchange, 200, response);
     }
 
     private void handleDiff(HttpExchange exchange, String path) throws IOException {
@@ -217,14 +236,22 @@ final class BytecodeRoutes implements AutoCloseable {
         String format = query.getOrDefault("format", "json");
         byte[] fromBytes = snapshotBytes(identity, from, "from");
         byte[] toBytes = snapshotBytes(identity, to, "to");
-        BytecodeDiffResult result = diagnosticExecutor.submitAndAwait(
-                () -> diffService.diff(identity,
-                        fromBytes, from.revision(), from.kind(),
-                        toBytes, to.revision(), to.kind()));
         if ("text".equalsIgnoreCase(format)) {
+            BytecodeDiffResult result = diagnosticExecutor.submitAndAwait(
+                    () -> diffService.diff(identity,
+                            fromBytes, from.revision(), from.kind(),
+                            toBytes, to.revision(), to.kind()));
             writeText(exchange, 200, renderTextDiff(result));
         } else if ("json".equalsIgnoreCase(format)) {
-            writeJson(exchange, 200, result);
+            // Decompile the "to" bytes (the target state) so the structured diff is
+            // accompanied by readable source; the diff itself remains authoritative.
+            DiffWithDecompilation response = diagnosticExecutor.submitAndAwait(() -> {
+                BytecodeDiffResult diff = diffService.diff(identity,
+                        fromBytes, from.revision(), from.kind(),
+                        toBytes, to.revision(), to.kind());
+                return new DiffWithDecompilation(diff, decompilerService.decompile(identity, toBytes));
+            });
+            writeJson(exchange, 200, response);
         } else {
             throw new BadRequestException("unsupported format: " + format + " (expected json or text)");
         }
@@ -257,7 +284,8 @@ final class BytecodeRoutes implements AutoCloseable {
             int targetMethodCount,
             Set<String> adviceTypes,
             List<TransformationDiagnostic> diagnostics,
-            boolean changed
+            boolean changed,
+            DecompilationResult decompilation
     ) {
     }
 
@@ -268,7 +296,20 @@ final class BytecodeRoutes implements AutoCloseable {
             Integer sizeBytes,
             List<TransformationDiagnostic> diagnostics,
             long capturedAtMillis,
-            boolean captured
+            boolean captured,
+            DecompilationResult decompilation
+    ) {
+    }
+
+    /**
+     * Wraps a {@link BytecodeDiffResult} with an optional decompilation, serialized so
+     * the diff fields stay at the top level (via {@link JsonUnwrapped}) and
+     * {@code decompilation} appears alongside them - matching the platform/web wire
+     * shape without extending the frozen {@code BytecodeDiffResult} contract.
+     */
+    private record DiffWithDecompilation(
+            @JsonUnwrapped BytecodeDiffResult diff,
+            DecompilationResult decompilation
     ) {
     }
 
