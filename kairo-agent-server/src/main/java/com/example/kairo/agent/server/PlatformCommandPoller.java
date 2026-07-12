@@ -93,6 +93,7 @@ final class PlatformCommandPoller implements AutoCloseable {
         String commandType = payload.path("commandType").asText(command.path("command_type").asText());
         return switch (commandType) {
             case "APPLY_RULE" -> applyRule(payload.path("rule"));
+            case "APPLY_CHAIN" -> applyChain(payload);
             case "DISABLE_ALL" -> {
                 runtime.disableAll(true);
                 yield Map.of("disabled", true);
@@ -448,6 +449,97 @@ final class PlatformCommandPoller implements AutoCloseable {
         AgentHttpServer.RuleRequest request = AgentHttpServer.RuleRequest.from(ruleNode);
         runtime.publishTarget(request.classId(), request.toRule(List.of()), "platform");
         return Map.of("ruleId", request.id(), "version", request.version(), "classId", request.classId());
+    }
+
+    /**
+     * V1.4 fenced chain apply: build an {@link com.example.kairo.api.ApplyChainRequest}
+     * from the payload (rules + desired spec + expected revision), invoke
+     * {@code runtime.applyRuleChain}, and return the fenced result. Stale commands
+     * return {@code STALE_COMMAND} and duplicates replay the prior result.
+     */
+    private Map<String, Object> applyChain(JsonNode payload) {
+        String commandId = text(payload, "commandId", "chain-" + System.currentTimeMillis());
+        String idempotencyKey = text(payload, "idempotencyKey", commandId);
+        long deadlineMillis = payload.path("deadlineMillis").asLong(30_000L);
+
+        JsonNode rulesNode = payload.path("rules");
+        List<com.example.kairo.api.MockRule> rules = new ArrayList<>();
+        for (JsonNode ruleNode : rulesNode) {
+            rules.add(AgentHttpServer.RuleRequest.from(ruleNode).toRule(List.of()));
+        }
+        if (rules.isEmpty() && !"EMPTY".equals(text(payload, "desiredState", "ACTIVE"))) {
+            throw new IllegalArgumentException("APPLY_CHAIN requires at least one rule for ACTIVE state");
+        }
+
+        JsonNode desiredNode = payload.path("desired");
+        com.example.kairo.api.EnhancementTarget target = chainTarget(payload.path("target"));
+        com.example.kairo.api.ChainDesiredState state =
+                com.example.kairo.api.ChainDesiredState.valueOf(text(desiredNode, "desiredState", "ACTIVE"));
+        List<com.example.kairo.api.RuleChainEntry> entries = rules.stream()
+                .map(r -> com.example.kairo.api.RuleChainEntry.builder()
+                        .ruleId(r.id())
+                        .version(r.version())
+                        .priority(r.priority())
+                        .createdAtMillis(r.createdAt())
+                        .scriptHash(r.scriptHash() == null ? "" : r.scriptHash())
+                        .mutexGroup(r.mutexGroup())
+                        .build())
+                .toList();
+        com.example.kairo.api.RuleChainSpec spec = com.example.kairo.api.RuleChainSpec.builder()
+                .chainId(text(desiredNode, "chainId", target.method().className() + "#" + target.method().methodName()))
+                .revision(desiredNode.path("revision").asLong(1L))
+                .target(target)
+                .entries(entries)
+                .desiredState(state)
+                .transformationRevision(desiredNode.path("transformationRevision").asLong(0L))
+                .build();
+
+        JsonNode expectedNode = payload.path("expected");
+        com.example.kairo.api.RuleChainRevision expected = new com.example.kairo.api.RuleChainRevision(
+                expectedNode.path("value").asLong(0L),
+                text(expectedNode, "hash", ""));
+
+        com.example.kairo.api.ApplyChainRequest request = com.example.kairo.api.ApplyChainRequest.builder()
+                .commandId(commandId)
+                .idempotencyKey(idempotencyKey)
+                .expected(expected)
+                .desired(spec)
+                .rules(rules)
+                .target(target)
+                .deadlineMillis(deadlineMillis)
+                .build();
+
+        com.example.kairo.api.ApplyChainResult result = runtime.applyRuleChain(request);
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("commandId", result.commandId());
+        map.put("status", result.status().name());
+        map.put("appliedRevision", result.applied().value());
+        map.put("appliedHash", result.applied().hash());
+        map.put("actualHash", result.actualHash());
+        if (result.message() != null) {
+            map.put("message", result.message());
+        }
+        if (result.conflictReport() != null && result.conflictReport().hasFindings()) {
+            map.put("conflicts", result.conflictReport().findings().stream()
+                    .map(f -> Map.of("kind", f.kind().name(), "severity", f.severity().name(),
+                            "message", f.message(), "ruleIds", f.ruleIds()))
+                    .toList());
+        }
+        return map;
+    }
+
+    private com.example.kairo.api.EnhancementTarget chainTarget(JsonNode targetNode) {
+        com.example.kairo.api.MethodSelector method = new com.example.kairo.api.MethodSelector(
+                text(targetNode, "className", ""),
+                targetNode.path("classLoaderId").isNull() ? null : text(targetNode, "classLoaderId", null),
+                text(targetNode, "methodName", ""),
+                text(targetNode, "methodDescriptor", ""));
+        com.example.kairo.api.EnhancementLocation location =
+                com.example.kairo.api.EnhancementLocation.valueOf(text(targetNode, "location", "METHOD_ENTER"));
+        com.example.kairo.api.CallSiteSelector selector = AgentHttpServer.RuleRequest.readCallSiteSelector(targetNode);
+        return selector != null
+                ? com.example.kairo.api.EnhancementTarget.callSite(method, location, selector)
+                : com.example.kairo.api.EnhancementTarget.of(method, location);
     }
 
     private Map<String, Object> discoverTargets(JsonNode payload) {

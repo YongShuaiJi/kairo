@@ -73,6 +73,7 @@ public final class ByteBuddyTransformerManager implements AutoCloseable {
     private final List<TransformationListener> listeners = new CopyOnWriteArrayList<>();
     private final AtomicLong retransformCount = new AtomicLong();
     private final Set<ClassIdentity> affectedClasses = ConcurrentHashMap.newKeySet();
+    private final List<ForeignTransformerProbe> foreignProbes = new CopyOnWriteArrayList<>();
     // Thread-local: retransform/capture state is visible only to the calling thread,
     // and removed in every finally/close so pooled threads never retain it.
     private final ThreadLocal<Mode> currentMode = ThreadLocal.withInitial(() -> Mode.IDLE);
@@ -206,6 +207,70 @@ public final class ByteBuddyTransformerManager implements AutoCloseable {
 
     public TransformationRevision currentRevision(ClassIdentity classIdentity) {
         return journal == null ? TransformationRevision.INITIAL : journal.currentRevision(classIdentity);
+    }
+
+    // -------------------------------------------------------- V1.4 coexistence
+
+    /**
+     * Register a foreign (non-Kairo) transformer probe for the coexistence test
+     * matrix. The probe describes whether the foreign transformer is installed
+     * ahead of Kairo and whether it is safe to re-run (idempotent). Retransform
+     * re-runs every installed transformer on the original bytes; a non-idempotent
+     * foreign transformer ahead of Kairo cannot be safely re-run, so
+     * {@link #coexistenceUnsafe(Class)} reports it and the chain applier returns
+     * {@code COEXISTENCE_UNSAFE} rather than corrupting the class.
+     */
+    public void registerForeignProbe(ForeignTransformerProbe probe) {
+        if (probe != null) {
+            foreignProbes.add(probe);
+        }
+    }
+
+    public boolean unregisterForeignProbe(ForeignTransformerProbe probe) {
+        return foreignProbes.remove(probe);
+    }
+
+    /**
+     * Returns a non-null reason when retransforming {@code clazz} cannot be
+     * safely ordered against a foreign transformer, or {@code null} when
+     * coexistence is safe. Production deployments register no probes, so this
+     * returns {@code null} (Kairo is the only transformer).
+     */
+    public String coexistenceUnsafe(Class<?> clazz) {
+        for (ForeignTransformerProbe probe : foreignProbes) {
+            if (!probe.idempotent() && probe.installedAheadOfKairo()) {
+                return "foreign transformer " + probe.name() + " is installed ahead of Kairo and is not "
+                        + "idempotent; retransform order cannot be guaranteed";
+            }
+            if (probe.installedAheadOfKairo() && !probe.supportsRetransform()) {
+                return "foreign transformer " + probe.name() + " does not support retransformation";
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether any foreign probe is installed (ahead or behind Kairo). Used by
+     * tests to assert foreign markers are present and preserved.
+     */
+    public boolean hasForeignProbes() {
+        return !foreignProbes.isEmpty();
+    }
+
+    /**
+     * Record a recovery entry in the transformation journal for a class whose
+     * Kairo advice has been removed by a precise per-class retransform (e.g.
+     * {@code resetAll}). This is the V1.4 replacement for the recovery entries
+     * the old {@code transformer.reset} path wrote during {@code close()}.
+     */
+    public void recordRecovery(Class<?> clazz, String reason) {
+        if (journal == null) {
+            return;
+        }
+        ClassIdentity identity = ClassIdentities.of(clazz);
+        long now = System.currentTimeMillis();
+        journal.recordRecovery(identity, journal.currentRevision(identity), reason, now);
+        affectedClasses.remove(identity);
     }
 
     @Override

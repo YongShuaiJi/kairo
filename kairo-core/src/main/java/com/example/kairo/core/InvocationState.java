@@ -3,15 +3,22 @@ package com.example.kairo.core;
 import com.example.kairo.api.CallSiteSelector;
 import com.example.kairo.api.MethodMetadata;
 import com.example.kairo.api.MockDecision;
+import com.example.kairo.api.OutcomeState;
 
 import java.util.Arrays;
 
 /**
  * Unified execution state carried from enter to exit across one enhancement
- * invocation. V1.3 extends the V1.2 holder so a single state object tracks the
+ * invocation. V1.3 extended the V1.2 holder so a single state object tracks the
  * original arguments (before any BEFORE rule mutated them), the current
  * arguments, the original result/throwable produced by the body, and the
  * call-site context for call-site locations.
+ *
+ * <p>V1.4 adds the frozen per-invocation {@link MethodChainSnapshot} (read once
+ * at enter so a mid-invocation publish cannot affect this run), an explicit
+ * current throwable and {@link OutcomeState} so return-side rules can replace
+ * the outcome and let later rules observe the replacement, and the hit chain
+ * revision recorded for audit.
  *
  * <p>The state is mutated only on the single business thread driving the
  * invocation; it is not published across threads.
@@ -26,7 +33,13 @@ public final class InvocationState {
     private Object originalResult;
     private Object result;
     private Throwable originalThrowable;
+    private Throwable currentThrowable;
+    private OutcomeState outcomeState = OutcomeState.PROCEEDING;
     private MockDecision beforeTerminalDecision;
+
+    // frozen per-invocation chain view (V1.4: one snapshot per invocation)
+    private MethodChainSnapshot chains = MethodChainSnapshot.EMPTY;
+    private long hitChainRevision;
 
     // call-site context (null for method / constructor locations)
     private final CallSiteSelector callSiteSelector;
@@ -100,6 +113,42 @@ public final class InvocationState {
 
     public void originalThrowable(Throwable originalThrowable) {
         this.originalThrowable = originalThrowable;
+    }
+
+    /** The current throwable, possibly replaced by a return-side rule. */
+    public Throwable currentThrowable() {
+        return currentThrowable;
+    }
+
+    public void currentThrowable(Throwable throwable) {
+        this.currentThrowable = throwable;
+    }
+
+    /** The current outcome flavour flowing through the chain. */
+    public OutcomeState outcomeState() {
+        return outcomeState;
+    }
+
+    public void outcomeState(OutcomeState outcomeState) {
+        this.outcomeState = outcomeState == null ? OutcomeState.PROCEEDING : outcomeState;
+    }
+
+    /** Frozen per-invocation chain view (V1.4: one snapshot per invocation). */
+    public MethodChainSnapshot chains() {
+        return chains;
+    }
+
+    public void chains(MethodChainSnapshot chains) {
+        this.chains = chains == null ? MethodChainSnapshot.EMPTY : chains;
+    }
+
+    /** Revision of the chain snapshot that governed this invocation, for audit. */
+    public long hitChainRevision() {
+        return hitChainRevision;
+    }
+
+    public void hitChainRevision(long hitChainRevision) {
+        this.hitChainRevision = hitChainRevision;
     }
 
     public MockDecision beforeTerminalDecision() {

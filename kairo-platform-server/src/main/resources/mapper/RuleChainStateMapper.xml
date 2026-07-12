@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.kairo.platform.persistence.mapper.RuleChainStateMapper">
+
+    <select id="findDesiredState" resultType="map">
+        select *
+          from rule_chain_desired_state
+         where application_id = #{applicationId}
+           and environment_id = #{environmentId}
+           and agent_id = #{agentId}
+           and chain_id = #{chainId}
+    </select>
+
+    <insert id="insertDesiredState">
+        insert into rule_chain_desired_state (
+            id, application_id, environment_id, agent_id, chain_id,
+            target_class_name, target_method_name, target_method_descriptor, target_location,
+            target_call_site_selector_json, revision, canonical_hash, desired_state,
+            transformation_revision, rule_entries_json, version, created_by, created_at, updated_by, updated_at
+        ) values (
+            #{id}, #{applicationId}, #{environmentId}, #{agentId}, #{chainId},
+            #{targetClassName}, #{targetMethodName}, #{targetMethodDescriptor}, #{targetLocation},
+            #{targetCallSiteSelectorJson}, #{revision}, #{canonicalHash}, #{desiredState},
+            #{transformationRevision}, #{ruleEntriesJson}, 0, #{createdBy}, #{createdAt}, #{createdBy}, #{createdAt}
+        )
+    </insert>
+
+    <update id="casDesiredRevision">
+        update rule_chain_desired_state
+           set revision = #{newRevision},
+               canonical_hash = #{newHash},
+               desired_state = #{newDesiredState},
+               transformation_revision = #{newTransformationRevision},
+               rule_entries_json = #{newRuleEntriesJson},
+               version = version + 1,
+               updated_by = #{updatedBy},
+               updated_at = #{updatedAt}
+         where id = #{id}
+           and revision = #{expectedRevision}
+           and version = #{version}
+    </update>
+
+    <insert id="upsertInstanceState">
+        merge into rule_chain_instance_state (
+            id, desired_state_id, agent_id, applied_revision, applied_hash,
+            transformation_revision, transformation_hash, apply_time, degraded_reason,
+            status, version, updated_at
+        ) key (desired_state_id, agent_id)
+        values (
+            #{id}, #{desiredStateId}, #{agentId}, #{appliedRevision}, #{appliedHash},
+            #{transformationRevision}, #{transformationHash}, #{applyTime}, #{degradedReason},
+            #{status}, 0, #{updatedAt}
+        )
+    </insert>
+
+    <select id="findInstanceState" resultType="map">
+        select *
+          from rule_chain_instance_state
+         where desired_state_id = #{desiredStateId}
+           and agent_id = #{agentId}
+    </select>
+
+    <select id="desiredStatesForTarget" resultType="map">
+        select *
+          from rule_chain_desired_state
+         where target_class_name = #{targetClassName}
+           and target_method_name = #{targetMethodName}
+           and target_method_descriptor = #{targetMethodDescriptor}
+           and target_location = #{targetLocation}
+    </select>
+
+    <insert id="insertOperation">
+        insert into rule_chain_operation (
+            id, desired_state_id, operation_type, expected_revision, desired_revision,
+            desired_hash, status, version, created_by, created_at, updated_by, updated_at
+        ) values (
+            #{id}, #{desiredStateId}, #{operationType}, #{expectedRevision}, #{desiredRevision},
+            #{desiredHash}, #{status}, 0, #{createdBy}, #{createdAt}, #{createdBy}, #{createdAt}
+        )
+    </insert>
+
+    <update id="updateOperationStatus">
+        update rule_chain_operation
+           set status = #{status},
+               result_hash = #{resultHash},
+               error_message = #{errorMessage},
+               version = version + 1,
+               updated_by = #{updatedBy},
+               updated_at = #{updatedAt}
+         where id = #{id}
+           and version = #{version}
+    </update>
+
+</mapper>

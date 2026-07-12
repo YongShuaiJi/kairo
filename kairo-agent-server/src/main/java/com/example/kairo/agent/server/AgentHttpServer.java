@@ -540,7 +540,7 @@ public final class AgentHttpServer implements AutoCloseable {
                     : EnhancementLocation.valueOf(value.toUpperCase(java.util.Locale.ROOT));
         }
 
-        private static CallSiteSelector readCallSiteSelector(JsonNode body) {
+        static CallSiteSelector readCallSiteSelector(JsonNode body) {
             JsonNode node = body.path("callSiteSelector");
             if (node.isMissingNode() || node.isNull()) {
                 return null;

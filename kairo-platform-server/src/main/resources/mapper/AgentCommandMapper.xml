@@ -200,7 +200,7 @@
             id, operation_plan_id, rollback_type, status, reason,
             created_by, created_at, finished_at
         ) values (
-            #{id}, #{operationPlanId}, 'RESET_ALL', 'DISPATCHED', #{reason},
+            #{id}, #{operationPlanId}, 'RESET_CLASS', 'DISPATCHED', #{reason},
             #{createdBy}, #{createdAt}, null
         )
     </insert>

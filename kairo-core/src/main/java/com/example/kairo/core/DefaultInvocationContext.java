@@ -6,6 +6,7 @@ import com.example.kairo.api.InvocationContext;
 import com.example.kairo.api.InvokePhase;
 import com.example.kairo.api.MethodMetadata;
 import com.example.kairo.api.MockApi;
+import com.example.kairo.api.OutcomeState;
 import com.example.kairo.api.ScriptLog;
 import com.example.kairo.object.RuntimeObjectFactory;
 
@@ -15,9 +16,13 @@ public final class DefaultInvocationContext implements InvocationContext {
 
     private final EnhancementLocation location;
     private final Object[] arguments;
+    private final Object[] originalArguments;
     private final Object target;
     private final Object result;
+    private final Object originalResult;
     private final Throwable throwable;
+    private final Throwable originalThrowable;
+    private final OutcomeState outcomeState;
     private final MethodMetadata method;
     private final MockApi mockApi;
     private final ScriptLog log;
@@ -46,11 +51,27 @@ public final class DefaultInvocationContext implements InvocationContext {
                                     RuntimeObjectFactory objectFactory, ScriptLog log,
                                     MethodMetadata caller, CallSiteSelector callSite,
                                     Object[] callArguments, Object callResult, Throwable callThrowable) {
+        this(location, arguments, arguments, target, result, result, throwable, throwable,
+                OutcomeState.PROCEEDING, method, objectFactory, log,
+                caller, callSite, callArguments, callResult, callThrowable);
+    }
+
+    public DefaultInvocationContext(EnhancementLocation location, Object[] arguments, Object[] originalArguments,
+                                    Object target, Object result, Object originalResult,
+                                    Throwable throwable, Throwable originalThrowable,
+                                    OutcomeState outcomeState, MethodMetadata method,
+                                    RuntimeObjectFactory objectFactory, ScriptLog log,
+                                    MethodMetadata caller, CallSiteSelector callSite,
+                                    Object[] callArguments, Object callResult, Throwable callThrowable) {
         this.location = Objects.requireNonNull(location, "location");
         this.arguments = Objects.requireNonNull(arguments, "arguments");
+        this.originalArguments = originalArguments == null ? arguments : originalArguments;
         this.target = target;
         this.result = result;
+        this.originalResult = originalResult;
         this.throwable = throwable;
+        this.originalThrowable = originalThrowable;
+        this.outcomeState = outcomeState == null ? OutcomeState.PROCEEDING : outcomeState;
         this.method = Objects.requireNonNull(method, "method");
         this.log = log == null ? ScriptLog.NOOP : log;
         this.mockApi = new DefaultMockApi(this, Objects.requireNonNull(objectFactory, "objectFactory"));
@@ -89,6 +110,26 @@ public final class DefaultInvocationContext implements InvocationContext {
     @Override
     public Throwable throwable() {
         return throwable;
+    }
+
+    @Override
+    public Object[] originalArguments() {
+        return originalArguments;
+    }
+
+    @Override
+    public Object originalResult() {
+        return originalResult;
+    }
+
+    @Override
+    public Throwable originalThrowable() {
+        return originalThrowable;
+    }
+
+    @Override
+    public OutcomeState outcomeState() {
+        return outcomeState;
     }
 
     @Override

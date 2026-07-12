@@ -15,6 +15,9 @@ public final class MockRule {
     private final String script;
     private final String scriptHash;
     private final int priority;
+    private final long createdAt;
+    private final String mutexGroup;
+    private final boolean terminal;
     private final int percentage;
     private final long maxHits;
     private final long expireAt;
@@ -50,6 +53,9 @@ public final class MockRule {
         this.script = requireText(builder.script, "script");
         this.scriptHash = builder.scriptHash;
         this.priority = builder.priority;
+        this.createdAt = builder.createdAt;
+        this.mutexGroup = builder.mutexGroup;
+        this.terminal = builder.terminal;
         this.percentage = validatePercentage(builder.percentage);
         this.maxHits = builder.maxHits;
         this.expireAt = builder.expireAt;
@@ -98,6 +104,9 @@ public final class MockRule {
                 .script(script)
                 .scriptHash(scriptHash)
                 .priority(priority)
+                .createdAt(createdAt)
+                .mutexGroup(mutexGroup)
+                .terminal(terminal)
                 .percentage(percentage)
                 .maxHits(maxHits)
                 .expireAt(expireAt)
@@ -179,6 +188,39 @@ public final class MockRule {
         return priority;
     }
 
+    /**
+     * Wall-clock creation time in epoch milliseconds, used as the secondary
+     * canonical ordering key ({@code priority DESC, createdAt ASC, ruleId ASC}).
+     * Defaults to {@code 0} for rules authored before V1.4; the platform stamps
+     * a real time when persisting a rule version. May be {@code 0} in tests
+     * where the rule id alone disambiguates order.
+     */
+    public long createdAt() {
+        return createdAt;
+    }
+
+    /**
+     * Optional mutex group label. Rules sharing a non-null mutex group are
+     * mutually exclusive: at most one may be active in a chain, and the
+     * conflict analyzer flags simultaneous enablement. {@code null} means the
+     * rule participates in no mutex group.
+     */
+    public String mutexGroup() {
+        return mutexGroup;
+    }
+
+    /**
+     * Whether this rule is declared to unconditionally terminate the chain when
+     * it runs (e.g. an always-return or always-throw rule). The conflict
+     * analyzer uses this declaration to detect multiple unconditional terminate
+     * rules and unreachable followers deterministically. Rules that may or may
+     * not terminate depending on script logic should leave this {@code false};
+     * their overlap is then reported as {@link ConflictKind#POTENTIAL_CONDITION_OVERLAP}.
+     */
+    public boolean terminal() {
+        return terminal;
+    }
+
     public int percentage() {
         return percentage;
     }
@@ -227,6 +269,9 @@ public final class MockRule {
         private String script;
         private String scriptHash;
         private int priority;
+        private long createdAt;
+        private String mutexGroup;
+        private boolean terminal;
         private int percentage = 100;
         private long maxHits;
         private long expireAt;
@@ -292,6 +337,21 @@ public final class MockRule {
 
         public Builder priority(int priority) {
             this.priority = priority;
+            return this;
+        }
+
+        public Builder createdAt(long createdAt) {
+            this.createdAt = createdAt;
+            return this;
+        }
+
+        public Builder mutexGroup(String mutexGroup) {
+            this.mutexGroup = mutexGroup;
+            return this;
+        }
+
+        public Builder terminal(boolean terminal) {
+            this.terminal = terminal;
             return this;
         }
 

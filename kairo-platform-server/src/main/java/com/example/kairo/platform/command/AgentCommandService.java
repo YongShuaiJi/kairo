@@ -1,6 +1,7 @@
 package com.example.kairo.platform.command;
 
 import com.example.kairo.platform.persistence.mapper.AgentCommandMapper;
+import com.example.kairo.platform.persistence.mapper.RuleUnloadMapper;
 import com.example.kairo.platform.service.PlatformException;
 import com.example.kairo.platform.service.BusinessIdService;
 import com.example.kairo.platform.service.PlatformCoreService;
@@ -32,6 +33,7 @@ public class AgentCommandService {
     private BytecodeDiagnosticExchange bytecodeExchange;
     private ScriptSessionExchange scriptSessionExchange;
     private TargetResolutionExchange targetResolutionExchange;
+    private RuleUnloadMapper ruleUnloadMapper;
 
     @Autowired
     void setBytecodeExchange(BytecodeDiagnosticExchange bytecodeExchange) {
@@ -46,6 +48,11 @@ public class AgentCommandService {
     @Autowired
     void setTargetResolutionExchange(TargetResolutionExchange targetResolutionExchange) {
         this.targetResolutionExchange = targetResolutionExchange;
+    }
+
+    @Autowired
+    void setRuleUnloadMapper(RuleUnloadMapper ruleUnloadMapper) {
+        this.ruleUnloadMapper = ruleUnloadMapper;
     }
 
     @Autowired
@@ -409,13 +416,38 @@ public class AgentCommandService {
                         String.valueOf(operation.get("resource_id"))));
         commandMapper.insertRollbackExecution(rollbackId, operationPlanId, "实例执行失败后自动卸载",
                 context.actor(), timestamp(now));
+        // V1.4: auto-unload is a precise per-class rollback, not a coarse RESET_ALL.
+        // Resolve the failed rule's target class and dispatch RESET_CLASS so only the
+        // affected class is retransformed with the remaining Kairo plan; other classes
+        // and other agents' advice are preserved.
+        String ruleId = String.valueOf(operation.get("resource_id"));
+        Object ruleVersion = operation.get("resource_version");
+        String classId = "";
+        String className = "";
+        if (ruleUnloadMapper != null) {
+            List<Map<String, Object>> targets = normalizeRows(
+                    ruleUnloadMapper.ruleTarget(ruleId, ruleVersion));
+            if (!targets.isEmpty()) {
+                Map<String, Object> target = targets.get(0);
+                className = String.valueOf(target.getOrDefault("class_name", ""));
+                Map<String, Object> matcher = PlatformJson.readMap(String.valueOf(
+                        target.getOrDefault("matcher_json", "{}")));
+                classId = String.valueOf(matcher.getOrDefault("classId", className));
+            }
+        }
         List<Map<String, Object>> agents = normalizeRows(commandMapper.activeAgentsForOperation(operationPlanId));
         for (Map<String, Object> agent : agents) {
-            enqueue(context, String.valueOf(agent.get("id")), "RESET_ALL",
-                    Map.of("commandType", "RESET_ALL",
-                            "operationPlanId", operationPlanId,
-                            "rollbackExecutionId", rollbackId),
-                    "unload:" + operationPlanId + ":" + agent.get("id"), 10, now);
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("commandType", "RESET_CLASS");
+            payload.put("operationPlanId", operationPlanId);
+            payload.put("rollbackExecutionId", rollbackId);
+            payload.put("ruleId", ruleId);
+            payload.put("ruleVersion", ruleVersion);
+            payload.put("instanceId", agent.get("instance_id"));
+            payload.put("classId", classId);
+            payload.put("className", className);
+            enqueue(context, String.valueOf(agent.get("id")), "RESET_CLASS",
+                    payload, "unload:" + operationPlanId + ":" + agent.get("id"), 10, now);
         }
         if (agents.isEmpty()) {
             commandMapper.markRollbackSucceeded(rollbackId, timestamp(now));
@@ -424,10 +456,12 @@ public class AgentCommandService {
         Map<String, Object> current = normalizeRow(commandMapper.operationPlan(operationPlanId));
         eventWriter.recordEvent(context, "operation_plan.auto_unload", "operation_plan",
                 operationPlanId, ((Number) current.get("version")).longValue(),
-                operation, current, "UNLOADING", "实例执行失败，已启动自动卸载",
+                operation, current, "UNLOADING", "实例执行失败，已启动精确卸载",
                 Map.of("rollbackExecutionId", rollbackId,
                         "executionCount", executions.size(),
-                        "commandCount", agents.size()));
+                        "commandCount", agents.size(),
+                        "classId", classId,
+                        "commandType", "RESET_CLASS"));
     }
 
     private String commandBusinessName(String commandType, Map<String, Object> payload) {

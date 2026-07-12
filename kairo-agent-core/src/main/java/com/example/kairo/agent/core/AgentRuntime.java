@@ -70,6 +70,7 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     private final BytecodeDiffService diffService;
     private final DecompilerService decompilerService;
     private final ScriptSessionManager scriptSessionManager;
+    private final RuleChainApplier chainApplier;
     private final ConcurrentHashMap<String, PublishedRule> publishedRules = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, EnhancementTarget> targetByRuleId = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, EnhancementTarget> targetByRecordingId = new ConcurrentHashMap<>();
@@ -123,6 +124,8 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
         this.loadedClassRepository = new LoadedClassRepository(instrumentation);
         this.scriptSessionManager = new ScriptSessionManager(this, scriptCompilerFactory,
                 this::resolveScriptSessionTarget, Clock.systemUTC(), ScriptSessionLimits.defaults());
+        this.chainApplier = new RuleChainApplier(ruleRegistry, scriptCompilerFactory, loadedClassRepository,
+                instrumentationRegistry, transformerManager, eventBuffer);
     }
 
     public void start() {
@@ -331,25 +334,81 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
         KairoBridge.uninstall();
         ruleDispatcher.enabled(false);
         try {
+            // V1.4: precise reset. Collect every class Kairo currently enhances, clear the
+            // desired chains, unregister every target (empty Kairo plan), then retransform
+            // each affected class so its bytecode regenerates without Kairo advice. The
+            // transformer itself is NOT reset (no coarse transformer.reset / RESET_ALL):
+            // other agents' advice and the transformer registration are preserved.
+            java.util.Set<EnhancementTarget> targets = instrumentationRegistry.snapshot();
+            java.util.Map<String, Class<?>> affected = new java.util.LinkedHashMap<>();
+            for (EnhancementTarget t : targets) {
+                String classId = loadedClassRepository.classId(
+                        t.method().className(), t.method().classLoaderId());
+                if (!affected.containsKey(classId)) {
+                    try {
+                        Class<?> clazz = loadedClassRepository.resolveClass(classId);
+                        if (clazz != null && instrumentation.isModifiableClass(clazz)) {
+                            affected.put(classId, clazz);
+                        }
+                    } catch (RuntimeException ignored) {
+                        // class no longer loaded; nothing to retransform
+                    }
+                }
+            }
             ruleRegistry.clear();
+            chainApplier.clearCache();
             publishedRules.clear();
+            targetByRuleId.clear();
             scriptSessionManager.clear();
             activeRecordings.clear();
             recordingObserver.clear();
-            instrumentationRegistry.snapshot().forEach(instrumentationRegistry::unregister);
-            transformerManager.close();
-            transformerManager.install();
+            targets.forEach(instrumentationRegistry::unregister);
+            for (Class<?> clazz : affected.values()) {
+                try {
+                    transformerManager.retransform(clazz);
+                    transformerManager.recordRecovery(clazz, "reset-all precise retransform");
+                } catch (RuntimeException ignore) {
+                    degradedClasses.put(clazz.getName(), "reset retransform failed");
+                }
+            }
+            degradedClasses.keySet().removeIf(name -> affected.values().stream()
+                    .noneMatch(c -> c.getName().equals(name)));
             KairoBridge.install(new AgentBridgeDispatcher(ruleDispatcher, recordingObserver));
-            degradedClasses.clear();
             globallyEnabled = true;
             ruleDispatcher.enabled(true);
             state.set(AgentState.ACTIVE);
-            eventBuffer.record("agent.reset-all", actor, null, null, "All rules removed and transformer reset");
+            eventBuffer.record("agent.reset-all", actor, null, null,
+                    "Cleared Kairo chains and regenerated " + affected.size()
+                            + " class(es) via precise retransform (no RESET_ALL)");
         } catch (RuntimeException e) {
             enterDegraded("Reset all failed: " + e.getMessage());
             eventBuffer.record("agent.reset-all.failed", actor, null, null, e.getMessage());
             throw e;
         }
+    }
+
+    // -------------------------------------------------------- V1.4 fenced chain apply
+
+    /**
+     * Apply a fenced rule-chain command: compile the full desired chain, run
+     * conflict analysis, retransform only when the footprint changes, verify via
+     * V1.1 actual-bytecode result, then atomically CAS-replace the running
+     * snapshot. Stale revisions return {@code STALE_COMMAND}; duplicate
+     * idempotency keys replay the previous result.
+     */
+    public com.example.kairo.api.ApplyChainResult applyRuleChain(com.example.kairo.api.ApplyChainRequest request) {
+        return chainApplier.applyChain(request);
+    }
+
+    /** Reconcile the Agent's actual chain against the Platform's desired revision. */
+    public com.example.kairo.api.ReconcileResult reconcileChain(com.example.kairo.api.EnhancementTarget target,
+                                                                com.example.kairo.api.RuleChainRevision desired) {
+        return chainApplier.reconcile(target, desired);
+    }
+
+    /** The V1.4 chain applier, exposed for tests and the platform command layer. */
+    public RuleChainApplier chainApplier() {
+        return chainApplier;
     }
 
     public ResetClassResult resetClass(String classId, String actor) {

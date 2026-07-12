@@ -33,6 +33,26 @@ public final class DefaultMockApi implements MockApi {
     }
 
     @Override
+    public MockDecision replaceReturnValue(Object value) {
+        return MockDecision.replaceReturnValue(value);
+    }
+
+    @Override
+    public MockDecision replaceThrowable(Throwable throwable) {
+        return MockDecision.replaceThrowable(throwable);
+    }
+
+    @Override
+    public MockDecision proceedOriginal() {
+        return MockDecision.proceedOriginal();
+    }
+
+    @Override
+    public MockDecision failOpen() {
+        return MockDecision.failOpen();
+    }
+
+    @Override
     public MockDecision returnJson(String json) {
         Object value = objectFactory.fromJson(
                 json,

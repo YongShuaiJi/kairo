@@ -27,6 +27,44 @@ public interface InvocationContext {
 
     ScriptLog log();
 
+    // -------------------------------------------------------- V1.4 original / current
+
+    /**
+     * The arguments as they entered the enhanced construct, before any BEFORE
+     * rule mutated them. V1.4 requires scripts to explicitly read
+     * {@link #arguments()} (current, possibly mutated by earlier rules) or
+     * {@code originalArguments()} rather than guessing which they hold.
+     * Defaults to {@link #arguments()} for contexts that predate V1.4.
+     */
+    default Object[] originalArguments() {
+        return arguments();
+    }
+
+    /**
+     * The result produced by the original body before return-side rules ran.
+     * Defaults to {@link #result()} for contexts that predate V1.4.
+     */
+    default Object originalResult() {
+        return result();
+    }
+
+    /**
+     * The throwable produced by the original body before return-side rules ran.
+     * Defaults to {@link #throwable()} for contexts that predate V1.4.
+     */
+    default Throwable originalThrowable() {
+        return throwable();
+    }
+
+    /**
+     * The current outcome flavour flowing through the chain at this rule's
+     * execution: {@link OutcomeState#PROCEEDING}, {@link OutcomeState#RETURNING}
+     * or {@link OutcomeState#THROWING}. Defaults to PROCEEDING.
+     */
+    default OutcomeState outcomeState() {
+        return OutcomeState.PROCEEDING;
+    }
+
     // -------------------------------------------------------- V1.3 call-site context
 
     /**
