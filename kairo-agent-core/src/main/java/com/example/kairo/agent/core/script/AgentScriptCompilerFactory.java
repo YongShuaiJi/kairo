@@ -66,6 +66,30 @@ public final class AgentScriptCompilerFactory implements ScriptCompilerFactory, 
         return compiler.compile(ruleId, version, script);
     }
 
+    /**
+     * Compile a script under an explicit capability tier and policy revision against a chosen
+     * target ClassLoader, used by the {@code SCRIPT_COMPILE} command. Unlike
+     * {@link #compile(Method, MockRule)} there is no target method, so the caller supplies the
+     * loader (and its canonical id) directly; {@code null} targets the bootstrap loader and the
+     * agent ClassLoader is substituted as the Groovy parent so Kairo script types still resolve
+     * (the recorded id stays {@code "bootstrap"}).
+     */
+    public CompiledMockScript compile(String script, CapabilityProfile profile,
+                                      ScriptPolicyRevision revision,
+                                      ClassLoader targetLoader, String targetClassLoaderId) {
+        Objects.requireNonNull(script, "script");
+        Objects.requireNonNull(profile, "profile");
+        Objects.requireNonNull(revision, "revision");
+        ClassLoader compileParent = targetLoader != null ? targetLoader : agentClassLoader;
+        ScriptCompilationContext context = ScriptCompilationContext.builder()
+                .profile(profile)
+                .policyRevision(revision)
+                .targetClassLoader(compileParent)
+                .targetClassLoaderId(targetClassLoaderId)
+                .build();
+        return compiler.compile("compile-" + Integer.toHexString(script.hashCode()), 1L, script, context);
+    }
+
     /** The capability profile that would be selected for a rule (for diagnostics/tests). */
     public CapabilityProfile profileFor(MockRule rule) {
         return rule.capabilityProfile();

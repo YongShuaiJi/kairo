@@ -43,6 +43,9 @@ public interface ScriptSessionMapper {
 
     List<ScriptSessionRecord> listByAgent(@Param("agentId") String agentId);
 
+    /** Every session, newest first; used by the Web console's admin list view. */
+    List<ScriptSessionRecord> listAll();
+
     /** Non-terminal sessions whose deadline has passed; candidates for expiry compensation. */
     List<ScriptSessionRecord> findExpirable(@Param("now") Timestamp now);
 

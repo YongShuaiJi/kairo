@@ -1,7 +1,15 @@
 package com.example.kairo.agent.server;
 
 import com.example.kairo.agent.core.AgentRuntime;
+import com.example.kairo.agent.core.script.ScriptSessionManager;
 import com.example.kairo.api.bytecode.DecompilationResult;
+import com.example.kairo.api.CapabilityProfile;
+import com.example.kairo.api.ScriptDiagnostic;
+import com.example.kairo.api.ScriptPolicyRevision;
+import com.example.kairo.api.ScriptSessionResult;
+import com.example.kairo.api.ScriptSessionSpec;
+import com.example.kairo.core.ClassLoaderIdentity;
+import com.example.kairo.groovy.CompiledMockScript;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -119,8 +127,160 @@ final class PlatformCommandPoller implements AutoCloseable {
             case "BYTECODE_PREVIEW" -> bytecodePreview(payload);
             case "BYTECODE_CAPTURE" -> bytecodeCapture(payload);
             case "BYTECODE_DIFF" -> bytecodeDiff(payload);
+            case "SCRIPT_SESSION_CREATE" -> scriptSessionCreate(payload);
+            case "SCRIPT_SESSION_VALIDATE" -> scriptSessionTransition(payload, "validate");
+            case "SCRIPT_SESSION_APPLY" -> scriptSessionTransition(payload, "apply");
+            case "SCRIPT_SESSION_PROMOTE" -> scriptSessionTransition(payload, "promote");
+            case "SCRIPT_SESSION_REVERT" -> scriptSessionTransition(payload, "revert");
+            case "SCRIPT_COMPILE" -> scriptCompile(payload);
             default -> throw new IllegalArgumentException("Unsupported platform command: " + commandType);
         };
+    }
+
+    // -------------------------------------------------------- ScriptSession (V1.2 phase 5)
+
+    /**
+     * Real-JVM trial creation: build a {@link ScriptSessionSpec} from the platform payload (the
+     * exchange splices the transient script source in at poll time) and hand it to the agent's
+     * {@link ScriptSessionManager}. The manager resolves and validates the target method, enforces
+     * the local safety limits and records the deadline; the script is not compiled or applied yet.
+     */
+    private Map<String, Object> scriptSessionCreate(JsonNode payload) {
+        ScriptSessionSpec spec = scriptSessionSpec(payload);
+        ScriptSessionResult result = runtime.scriptSessionManager().create(spec);
+        return scriptSessionResultMap(result);
+    }
+
+    /** Advance one session through validate/apply/promote/revert on the real JVM. */
+    private Map<String, Object> scriptSessionTransition(JsonNode payload, String action) {
+        String sessionId = requiredText(payload, "sessionId");
+        ScriptSessionManager manager = runtime.scriptSessionManager();
+        ScriptSessionResult result = switch (action) {
+            case "validate" -> manager.validate(sessionId);
+            case "apply" -> manager.apply(sessionId);
+            case "promote" -> manager.promote(sessionId, "platform");
+            case "revert" -> manager.revert(sessionId, "platform");
+            default -> throw new IllegalArgumentException("Unsupported script session action: " + action);
+        };
+        return scriptSessionResultMap(result);
+    }
+
+    /**
+     * Real compile against an agent ClassLoader, returning the structured result the platform
+     * reconciles into a {@code ScriptCompilationResult}. The target loader is resolved by id from
+     * the loaded classes; the bootstrap id compiles against the agent loader as parent (Kairo script
+     * types still resolve) while recording {@code "bootstrap"}. Diagnostics are structured so the
+     * platform can surface them without re-parsing Groovy messages.
+     */
+    private Map<String, Object> scriptCompile(JsonNode payload) {
+        String script = requiredText(payload, "script");
+        String targetClassLoaderId = requiredText(payload, "targetClassLoaderId");
+        CapabilityProfile profile = CapabilityProfile.valueOf(
+                text(payload, "capabilityProfile", CapabilityProfile.SAFE.name()));
+        ScriptPolicyRevision revision = scriptPolicyRevision(payload);
+        ClassLoader targetLoader = resolveTargetLoader(targetClassLoaderId);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("targetClassLoaderId", targetClassLoaderId);
+        try {
+            CompiledMockScript compiled = runtime.scriptCompilerFactory().compile(
+                    script, profile, revision, targetLoader, targetClassLoaderId);
+            result.put("successful", true);
+            result.put("compilerVersion", "groovy-" + groovy.lang.GroovySystem.getVersion());
+            result.put("diagnostics", List.of());
+        } catch (RuntimeException e) {
+            result.put("successful", false);
+            result.put("compilerVersion", "groovy-unknown");
+            result.put("diagnostics", List.of(diagnosticMap(compileDiagnostic(e, targetClassLoaderId))));
+        }
+        return result;
+    }
+
+    private ScriptSessionSpec scriptSessionSpec(JsonNode payload) {
+        String sessionId = requiredText(payload, "sessionId");
+        String agentId = requiredText(payload, "agentId");
+        JsonNode targetNode = payload.path("target");
+        String className = requiredText(targetNode, "className");
+        String classLoaderId = text(targetNode, "classLoaderId", null);
+        String methodName = requiredText(targetNode, "methodName");
+        String methodDescriptor = requiredText(targetNode, "methodDescriptor");
+        String script = requiredText(payload, "script");
+        CapabilityProfile profile = CapabilityProfile.valueOf(
+                text(payload, "capabilityProfile", CapabilityProfile.SAFE.name()));
+        ScriptPolicyRevision revision = scriptPolicyRevision(payload);
+        long ttlMillis = requiredPositiveLong(payload, "ttlMillis");
+        long maxHits = requiredPositiveLong(payload, "maxHits");
+        String requestedBy = text(payload, "requestedBy", "platform");
+        return new ScriptSessionSpec(sessionId, agentId,
+                new com.example.kairo.api.MethodSelector(className,
+                        classLoaderId == null || classLoaderId.isBlank() ? null : classLoaderId,
+                        methodName, methodDescriptor),
+                script, profile, revision, ttlMillis, maxHits, requestedBy);
+    }
+
+    private ScriptPolicyRevision scriptPolicyRevision(JsonNode payload) {
+        JsonNode node = payload.path("policyRevision");
+        long revision = node.path("revision").asLong(0L);
+        if (revision < 0) {
+            revision = 0L;
+        }
+        String hash = text(node, "hash", "safe-default");
+        return new ScriptPolicyRevision(revision, hash);
+    }
+
+    private ClassLoader resolveTargetLoader(String targetClassLoaderId) {
+        if (ClassLoaderIdentity.BOOTSTRAP.equals(targetClassLoaderId)) {
+            return null;
+        }
+        return runtime.loadedClassRepository().findClassLoader(targetClassLoaderId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Target ClassLoader not found on agent: " + targetClassLoaderId));
+    }
+
+    private Map<String, Object> scriptSessionResultMap(ScriptSessionResult result) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("sessionId", result.sessionId());
+        map.put("status", result.status().name());
+        map.put("createdAt", result.createdAt());
+        map.put("expiresAt", result.expiresAt());
+        map.put("hitCount", result.hitCount());
+        map.put("diagnostics", result.diagnostics().stream().map(this::diagnosticMap).toList());
+        return map;
+    }
+
+    private Map<String, Object> diagnosticMap(ScriptDiagnostic diagnostic) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("phase", diagnostic.phase().name());
+        map.put("severity", diagnostic.severity().name());
+        map.put("line", diagnostic.line());
+        map.put("column", diagnostic.column());
+        map.put("code", diagnostic.code());
+        map.put("message", diagnostic.message());
+        map.put("targetClassLoaderId", diagnostic.targetClassLoaderId());
+        map.put("suggestion", diagnostic.suggestion());
+        return map;
+    }
+
+    private ScriptDiagnostic compileDiagnostic(Throwable throwable, String targetClassLoaderId) {
+        Throwable cursor = throwable;
+        while (cursor.getCause() != null) {
+            cursor = cursor.getCause();
+        }
+        String message = cursor.getMessage();
+        if (message == null || message.isBlank()) {
+            message = throwable.getClass().getSimpleName();
+        }
+        return new ScriptDiagnostic(ScriptDiagnostic.Phase.COMPILATION,
+                ScriptDiagnostic.Severity.ERROR, 0, 0,
+                message.toLowerCase(Locale.ROOT).contains("forbidden") ? "FORBIDDEN_SCRIPT" : "SCRIPT_COMPILE_ERROR",
+                message, targetClassLoaderId,
+                "Fix the script and retry; the script was not applied to any target.");
+    }
+
+    private long requiredPositiveLong(JsonNode payload, String field) {
+        if (!payload.has(field) || !payload.path(field).canConvertToLong() || payload.path(field).asLong() <= 0) {
+            throw new IllegalArgumentException(field + " must be a positive integer");
+        }
+        return payload.path(field).asLong();
     }
 
     private Map<String, Object> bytecodeTransformations(JsonNode payload) {

@@ -60,6 +60,35 @@ public final class LoadedClassRepository {
     }
 
     /**
+     * Find a live {@code ClassLoader} by its stable id (the value
+     * {@link ClassLoaderIdentity#idOf(ClassLoader)} produces), scanning the loaders of
+     * all currently loaded classes. The canonical {@code "bootstrap"} id resolves to the
+     * bootstrap loader, which is {@code null} &mdash; since an {@code Optional} cannot
+     * carry {@code null}, callers that need to compile against the bootstrap loader should
+     * branch on {@link ClassLoaderIdentity#BOOTSTRAP} first (the compile factory then
+     * substitutes the agent ClassLoader as the Groovy parent, exactly as it does for a
+     * target method defined by a JDK class).
+     *
+     * <p>Used by the script-compile command, which is given only a target loader id (no
+     * class name) and must compile against that loader so business types resolve. Returns
+     * empty when no loaded class is owned by that loader &mdash; the caller reports a
+     * clear "loader not found" diagnostic rather than compiling against the wrong loader.
+     */
+    public Optional<ClassLoader> findClassLoader(String classLoaderId) {
+        Objects.requireNonNull(classLoaderId, "classLoaderId");
+        if (ClassLoaderIdentity.BOOTSTRAP.equals(classLoaderId)) {
+            return Optional.empty();
+        }
+        for (Class<?> type : instrumentation.getAllLoadedClasses()) {
+            ClassLoader loader = type.getClassLoader();
+            if (loader != null && ClassLoaderIdentity.idOf(loader).equals(classLoaderId)) {
+                return Optional.of(loader);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
      * Decode a {@link #classId(Class)} into the frozen {@link ClassIdentity} without
      * resolving a live {@code Class}. This is the identity-only path used by read-only
      * bytecode routes that operate on stored snapshots and journal history, which may

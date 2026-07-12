@@ -50,6 +50,58 @@ const datasets: Record<string, PlatformRecord[]> = {
   tokens: [
     { id: "token-01", subjectId: "system", subjectType: "USER", status: "VALID", expiresAt: "2026-09-18T00:00:00+08:00" },
   ],
+  "script-sessions": [
+    {
+      sessionId: "ss-01",
+      agentId: "agt-01",
+      applicationId: "kairo-demo",
+      target: { className: "com.example.demo.OrderService", classLoaderId: "loader-01", methodName: "createOrder", methodDescriptor: "(Lcom/example/demo/CreateOrderRequest;)Lcom/example/demo/Order;" },
+      scriptHash: "demo-hash-ss-01",
+      requestedProfile: "EXTENDED",
+      effectiveProfile: "SAFE",
+      platformMaxProfile: "UNRESTRICTED",
+      applicationMaxProfile: "SAFE",
+      policyRevision: { revision: 2, hash: "demo-policy-hash" },
+      ttlMillis: 60000,
+      maxHits: 10,
+      status: "APPLIED",
+      hitCount: 3,
+      version: 3,
+      requestedBy: "demo-admin",
+      formalRuleId: null,
+      createdAt: Date.now() - 120_000,
+      expiresAt: Date.now() + 30_000,
+      appliedAt: Date.now() - 90_000,
+      revertedAt: null,
+      updatedAt: Date.now() - 5_000,
+      diagnostics: [],
+    },
+    {
+      sessionId: "ss-02",
+      agentId: "agt-01",
+      applicationId: "kairo-demo",
+      target: { className: "com.example.demo.OrderService", classLoaderId: "loader-01", methodName: "calculateScore", methodDescriptor: "(I)I" },
+      scriptHash: "demo-hash-ss-02",
+      requestedProfile: "SAFE",
+      effectiveProfile: "SAFE",
+      platformMaxProfile: "UNRESTRICTED",
+      applicationMaxProfile: "SAFE",
+      policyRevision: { revision: 2, hash: "demo-policy-hash" },
+      ttlMillis: 60000,
+      maxHits: 5,
+      status: "EXPIRED",
+      hitCount: 5,
+      version: 4,
+      requestedBy: "demo-operator",
+      formalRuleId: null,
+      createdAt: Date.now() - 300_000,
+      expiresAt: Date.now() - 240_000,
+      appliedAt: Date.now() - 290_000,
+      revertedAt: Date.now() - 240_000,
+      updatedAt: Date.now() - 240_000,
+      diagnostics: [],
+    },
+  ],
 };
 function normalize(path: string) {
   return path.replace(/^\/+|\/+$/g, "").split("?")[0];
@@ -184,6 +236,92 @@ export function demoHealth() {
       redis: { status: "UP", latencyMs: 3 },
     },
     checkedAt: stamp,
+  };
+}
+
+// -------------------------------------------------------- V1.2 script sessions
+
+export function demoScriptSessions(applicationId?: string): PlatformRecord[] {
+  const rows = datasets["script-sessions"] ?? [];
+  return applicationId ? rows.filter((row) => row.applicationId === applicationId) : rows;
+}
+
+export function demoScriptSession(id: string): PlatformRecord | undefined {
+  return (datasets["script-sessions"] ?? []).find((row) => String(row.sessionId) === id);
+}
+
+export function demoScriptSessionEvents(id: string): PlatformRecord[] {
+  const session = demoScriptSession(id);
+  if (!session) return [];
+  const status = String(session.status);
+  const events: PlatformRecord[] = [
+    { id: `${id}-ev-1`, sessionId: id, action: "script.session.create", fromStatus: null, toStatus: "CREATED", actor: String(session.requestedBy), detail: "Created session profile=SAFE ttl=60000ms", createdAt: new Date(Number(session.createdAt)).toISOString() },
+  ];
+  if (status === "VALIDATED" || status === "APPLIED" || status === "EXPIRED" || status === "REVERTED") {
+    events.push({ id: `${id}-ev-2`, sessionId: id, action: "script.session.validate", fromStatus: "CREATED", toStatus: "VALIDATED", actor: String(session.requestedBy), detail: "Validated script", createdAt: new Date(Number(session.createdAt) + 5_000).toISOString() });
+  }
+  if (status === "APPLIED" || status === "EXPIRED" || status === "REVERTED") {
+    events.push({ id: `${id}-ev-3`, sessionId: id, action: "script.session.apply", fromStatus: "VALIDATED", toStatus: "APPLIED", actor: String(session.requestedBy), detail: "Applied trial rule", createdAt: new Date(Number(session.appliedAt ?? session.createdAt)).toISOString() });
+  }
+  if (status === "EXPIRED") {
+    events.push({ id: `${id}-ev-4`, sessionId: id, action: "script.session.expire", fromStatus: "APPLIED", toStatus: "EXPIRED", actor: "ttl-cleanup", detail: "Session expired (TTL elapsed)", createdAt: new Date(Number(session.expiresAt)).toISOString() });
+  }
+  if (status === "REVERTED") {
+    events.push({ id: `${id}-ev-4`, sessionId: id, action: "script.session.revert", fromStatus: "APPLIED", toStatus: "REVERTED", actor: String(session.requestedBy), detail: "Reverted session", createdAt: new Date(Number(session.revertedAt ?? session.updatedAt)).toISOString() });
+  }
+  return events;
+}
+
+export function demoScriptPolicy(applicationId: string): PlatformRecord {
+  return {
+    applicationId,
+    platformMaxProfile: "UNRESTRICTED",
+    applicationMaxProfile: "SAFE",
+    effectiveMaxProfile: "SAFE",
+    hasApplicationPolicy: true,
+    revision: 2,
+    policyHash: "demo-policy-hash-abcdef",
+    modifiedBy: "demo-admin",
+    updatedAt: stamp,
+  };
+}
+
+export function demoScriptCompile(body: PlatformRecord): PlatformRecord {
+  const script = String(body.script ?? "");
+  const profile = String(body.capabilityProfile ?? "SAFE");
+  const targetClassLoaderId = String(body.targetClassLoaderId ?? "bootstrap");
+  const forbidden = script.includes("java.io.File") || script.includes("System.exit") || script.includes("Runtime.getRuntime");
+  const syntaxError = script.includes("return mock.proceed(") && !script.includes(")");
+  if (forbidden) {
+    return {
+      successful: false,
+      scriptHash: "demo-compile-hash",
+      capabilityProfile: profile,
+      policyRevision: { revision: 2, hash: "demo-policy-hash" },
+      compilerVersion: "groovy-4.0.24",
+      targetClassLoaderId,
+      diagnostics: [{ phase: "COMPILATION", severity: "ERROR", line: 1, column: 1, code: "FORBIDDEN_SCRIPT", message: "脚本使用了 SAFE 档位禁止的 API", targetClassLoaderId, suggestion: "改用 EXTENDED/UNRESTRICTED 档位或移除敏感调用" }],
+    };
+  }
+  if (syntaxError) {
+    return {
+      successful: false,
+      scriptHash: "demo-compile-hash",
+      capabilityProfile: profile,
+      policyRevision: { revision: 2, hash: "demo-policy-hash" },
+      compilerVersion: "groovy-4.0.24",
+      targetClassLoaderId,
+      diagnostics: [{ phase: "COMPILATION", severity: "ERROR", line: 1, column: 19, code: "SCRIPT_COMPILE_ERROR", message: "意外的脚本结束，缺少 ')'", targetClassLoaderId, suggestion: "补全括号后重试" }],
+    };
+  }
+  return {
+    successful: true,
+    scriptHash: "demo-compile-hash",
+    capabilityProfile: profile,
+    policyRevision: { revision: 2, hash: "demo-policy-hash" },
+    compilerVersion: "groovy-4.0.24",
+    targetClassLoaderId,
+    diagnostics: [],
   };
 }
 

@@ -488,6 +488,11 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
         return scriptSessionManager;
     }
 
+    /** The ClassLoader-aware compiler factory shared by rule publishing and the script-compile command. */
+    public AgentScriptCompilerFactory scriptCompilerFactory() {
+        return scriptCompilerFactory;
+    }
+
     @Override
     public void close() {
         state.set(AgentState.STOPPING);

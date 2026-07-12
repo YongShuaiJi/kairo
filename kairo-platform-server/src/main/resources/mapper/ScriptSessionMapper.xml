@@ -75,6 +75,12 @@
          order by updated_at desc
     </select>
 
+    <select id="listAll" resultType="com.example.kairo.platform.script.ScriptSessionRecord">
+        select <include refid="cols"/>
+          from script_session
+         order by created_at desc
+    </select>
+
     <select id="findExpirable" resultType="com.example.kairo.platform.script.ScriptSessionRecord">
         select <include refid="cols"/>
           from script_session

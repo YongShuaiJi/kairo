@@ -15,6 +15,7 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
+  Terminal,
   X,
   Zap,
 } from "lucide-react";
@@ -41,6 +42,7 @@ const navigation = [
     label: "故障注入",
     items: [
       { href: "/rules", label: "规则中心", icon: SlidersHorizontal },
+      { href: "/script-sessions", label: "脚本会话", icon: Terminal },
       { href: "/rollouts", label: "发布管理", icon: Zap },
     ],
   },

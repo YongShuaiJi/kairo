@@ -15,6 +15,11 @@ import {
   demoMutation,
   demoPage,
   demoRuleDetail,
+  demoScriptCompile,
+  demoScriptPolicy,
+  demoScriptSession,
+  demoScriptSessionEvents,
+  demoScriptSessions,
   demoTargets,
   demoTest,
   demoValidate,
@@ -84,6 +89,41 @@ async function forward(request: Request, context: RouteContext) {
     if (resourcePath === "dashboard/overview") return NextResponse.json(demoDashboard());
     if (resourcePath === "scripts/validate") return NextResponse.json(demoValidate(jsonBody ?? {}));
     if (resourcePath === "scripts/test" || resourcePath === "scripts/preview") return NextResponse.json(demoTest(jsonBody ?? {}));
+    if (resourcePath === "scripts/compile") return NextResponse.json(demoScriptCompile(jsonBody ?? {}));
+    const scriptSessionMatch = resourcePath.match(/^script-sessions(?:\/([^/]+))?(?:\/(events))?$/);
+    if (scriptSessionMatch) {
+      const [, id, sub] = scriptSessionMatch;
+      if (!id) {
+        if (request.method === "GET") {
+          const app = new URL(request.url).searchParams.get("applicationId") ?? "";
+          return NextResponse.json(demoScriptSessions(app || undefined));
+        }
+        if (request.method === "POST") {
+          return NextResponse.json({ sessionId: `ss-${Date.now()}`, status: "CREATED", createdAt: Date.now(), expiresAt: Date.now() + 60_000, hitCount: 0, diagnostics: [] }, { status: 201 });
+        }
+      }
+      if (id && sub === "events") return NextResponse.json(demoScriptSessionEvents(id));
+      if (id && request.method === "GET") {
+        const session = demoScriptSession(id);
+        return session ? NextResponse.json(session) : NextResponse.json({ code: "NOT_FOUND", message: "会话不存在", retryable: false }, { status: 404 });
+      }
+      if (id && (request.method === "POST" || request.method === "DELETE")) {
+        const session = demoScriptSession(id);
+        if (!session) return NextResponse.json({ code: "NOT_FOUND", message: "会话不存在", retryable: false }, { status: 404 });
+        const action = request.method === "DELETE" ? "revert" : resourcePath.endsWith("/validate") ? "validate" : resourcePath.endsWith("/apply") ? "apply" : resourcePath.endsWith("/promote") ? "promote" : "validate";
+        const nextStatus = action === "validate" ? "VALIDATED" : action === "apply" ? "APPLIED" : action === "promote" ? "REVERTED" : "REVERTED";
+        return NextResponse.json({ sessionId: id, status: nextStatus, createdAt: Number(session.createdAt), expiresAt: Number(session.expiresAt), hitCount: Number(session.hitCount), diagnostics: [] });
+      }
+    }
+    const scriptPolicyMatch = resourcePath.match(/^apps\/([^/]+)\/script-policy$/);
+    if (scriptPolicyMatch) {
+      const appId = decodeURIComponent(scriptPolicyMatch[1]);
+      if (request.method === "GET") return NextResponse.json(demoScriptPolicy(appId));
+      if (request.method === "PUT") {
+        const profile = String(jsonBody?.allowedMaxProfile ?? "SAFE");
+        return NextResponse.json({ ...demoScriptPolicy(appId), applicationMaxProfile: profile, effectiveMaxProfile: profile, revision: Number(jsonBody?.expectedRevision ?? 2) + 1 });
+      }
+    }
     if (request.method === "GET") {
       const incomingUrl = new URL(request.url);
       if (resourcePath === "targets/search") {

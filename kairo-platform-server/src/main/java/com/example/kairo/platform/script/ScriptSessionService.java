@@ -309,6 +309,29 @@ public class ScriptSessionService {
         return sessionMapper.listByApplication(applicationId).stream().map(this::toResult).toList();
     }
 
+    /**
+     * Full record view for the Web console: the frozen {@link ScriptSessionResult} DTO carries only
+     * the lifecycle snapshot, but the page must show the tier, target, TTL and policy revision
+     * (§3.6). Returns the persisted row as a map so the page can render every field without a DTO
+     * change; diagnostics are parsed back into structured objects for the client.
+     */
+    public Map<String, Object> detail(RequestContext context, String sessionId) {
+        rbacService.require(context, "RULE_MANAGE");
+        return toDetailMap(requireSession(sessionId));
+    }
+
+    /**
+     * List sessions for the console, optionally filtered by application. Returns full record maps
+     * (not the lifecycle DTO) so the page can show tier, target and TTL alongside status.
+     */
+    public List<Map<String, Object>> list(RequestContext context, String applicationId) {
+        rbacService.require(context, "RULE_MANAGE");
+        List<ScriptSessionRecord> rows = (applicationId == null || applicationId.isBlank())
+                ? sessionMapper.listAll()
+                : sessionMapper.listByApplication(applicationId);
+        return rows.stream().map(this::toDetailMap).toList();
+    }
+
     public List<ScriptSessionEvent> history(RequestContext context, String sessionId) {
         rbacService.require(context, "RULE_MANAGE");
         requireSession(sessionId);
@@ -586,6 +609,40 @@ public class ScriptSessionService {
         return new ScriptSessionResult(record.id(), record.status(),
                 record.createdAt().getTime(), record.expiresAt().getTime(),
                 record.hitCount(), parseDiagnostics(record.diagnosticsJson()));
+    }
+
+    /** Full record as a map for the Web console (tier, target, TTL, policy revision, diagnostics). */
+    private Map<String, Object> toDetailMap(ScriptSessionRecord record) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("sessionId", record.id());
+        map.put("agentId", record.agentId());
+        map.put("applicationId", record.applicationId());
+        Map<String, Object> target = new LinkedHashMap<>();
+        target.put("className", record.targetClassName());
+        target.put("classLoaderId", record.targetClassLoaderId());
+        target.put("methodName", record.targetMethodName());
+        target.put("methodDescriptor", record.targetMethodDescriptor());
+        map.put("target", target);
+        map.put("scriptHash", record.scriptHash());
+        map.put("requestedProfile", record.requestedProfile().name());
+        map.put("effectiveProfile", record.effectiveProfile().name());
+        map.put("platformMaxProfile", record.platformMaxProfile().name());
+        map.put("applicationMaxProfile", record.applicationMaxProfile().name());
+        map.put("policyRevision", Map.of("revision", record.policyRevision(), "hash", record.policyHash()));
+        map.put("ttlMillis", record.ttlMillis());
+        map.put("maxHits", record.maxHits());
+        map.put("status", record.status().name());
+        map.put("hitCount", record.hitCount());
+        map.put("version", record.version());
+        map.put("requestedBy", record.requestedBy());
+        map.put("formalRuleId", record.formalRuleId());
+        map.put("createdAt", record.createdAt().getTime());
+        map.put("expiresAt", record.expiresAt().getTime());
+        map.put("appliedAt", record.appliedAt() == null ? null : record.appliedAt().getTime());
+        map.put("revertedAt", record.revertedAt() == null ? null : record.revertedAt().getTime());
+        map.put("updatedAt", record.updatedAt().getTime());
+        map.put("diagnostics", parseDiagnostics(record.diagnosticsJson()));
+        return map;
     }
 
     private long hitCount(AgentAck ack, ScriptSessionRecord session) {

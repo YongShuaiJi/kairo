@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -54,9 +55,15 @@ public final class ScriptSessionController {
         return service.create(context(httpRequest), request);
     }
 
+    @GetMapping
+    public List<Map<String, Object>> list(@RequestParam(name = "applicationId", required = false) String applicationId,
+                                          HttpServletRequest httpRequest) {
+        return service.list(context(httpRequest), applicationId);
+    }
+
     @GetMapping("/{id}")
-    public ScriptSessionResult describe(@PathVariable String id, HttpServletRequest httpRequest) {
-        return service.describe(context(httpRequest), id);
+    public Map<String, Object> describe(@PathVariable String id, HttpServletRequest httpRequest) {
+        return service.detail(context(httpRequest), id);
     }
 
     @PostMapping("/{id}/validate")
