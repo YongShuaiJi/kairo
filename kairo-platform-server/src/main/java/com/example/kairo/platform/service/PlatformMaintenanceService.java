@@ -3,6 +3,7 @@ package com.example.kairo.platform.service;
 import com.example.kairo.platform.persistence.mapper.PlatformMaintenanceMapper;
 import com.example.kairo.platform.persistence.mapper.RuleVersionLifecycleMapper;
 import com.example.kairo.platform.rollout.RolloutExecutor;
+import com.example.kairo.platform.script.ScriptSessionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,6 +23,7 @@ public class PlatformMaintenanceService {
     private final PlatformMaintenanceMapper maintenanceMapper;
     private final RuleVersionLifecycleMapper ruleVersionLifecycleMapper;
     private final ObjectProvider<RolloutExecutor> rolloutExecutor;
+    private final ObjectProvider<ScriptSessionService> scriptSessionService;
     private final Clock clock;
 
     @Value("${kairo.platform.runtime-cleanup.retention-ms:1800000}")
@@ -31,19 +33,23 @@ public class PlatformMaintenanceService {
     public PlatformMaintenanceService(RbacService rbacService,
                                       PlatformMaintenanceMapper maintenanceMapper,
                                       RuleVersionLifecycleMapper ruleVersionLifecycleMapper,
-                                      ObjectProvider<RolloutExecutor> rolloutExecutor) {
-        this(rbacService, maintenanceMapper, ruleVersionLifecycleMapper, rolloutExecutor, Clock.systemUTC());
+                                      ObjectProvider<RolloutExecutor> rolloutExecutor,
+                                      ObjectProvider<ScriptSessionService> scriptSessionService) {
+        this(rbacService, maintenanceMapper, ruleVersionLifecycleMapper, rolloutExecutor,
+                scriptSessionService, Clock.systemUTC());
     }
 
     PlatformMaintenanceService(RbacService rbacService,
                                       PlatformMaintenanceMapper maintenanceMapper,
                                       RuleVersionLifecycleMapper ruleVersionLifecycleMapper,
                                       ObjectProvider<RolloutExecutor> rolloutExecutor,
+                                      ObjectProvider<ScriptSessionService> scriptSessionService,
                                       Clock clock) {
         this.rbacService = rbacService;
         this.maintenanceMapper = maintenanceMapper;
         this.ruleVersionLifecycleMapper = ruleVersionLifecycleMapper;
         this.rolloutExecutor = rolloutExecutor;
+        this.scriptSessionService = scriptSessionService;
         this.clock = clock;
     }
 
@@ -53,6 +59,7 @@ public class PlatformMaintenanceService {
         result.put("runtimeLeases", expireRuntimeLeases());
         result.put("runtimeCleanup", cleanupOfflineRuntime());
         result.put("disabledRuleCleanup", cleanupExpiredDisabledRules());
+        result.put("scriptSessionExpiry", expireScriptSessions());
         RolloutExecutor rollout = rolloutExecutor.getIfAvailable();
         result.put("rollout", rollout == null ? Map.of("status", "DISABLED") : rollout.runOnce(context));
         return result;
@@ -63,6 +70,18 @@ public class PlatformMaintenanceService {
             fixedDelayString = "${kairo.platform.runtime-lease.fixed-delay-ms:5000}")
     public void expireRuntimeLeasesScheduled() {
         expireRuntimeLeases();
+    }
+
+    @Scheduled(
+            initialDelayString = "${kairo.platform.script.expiry.initial-delay-ms:5000}",
+            fixedDelayString = "${kairo.platform.script.expiry.fixed-delay-ms:5000}")
+    public void expireScriptSessionsScheduled() {
+        expireScriptSessions();
+    }
+
+    public Map<String, Object> expireScriptSessions() {
+        ScriptSessionService service = scriptSessionService.getIfAvailable();
+        return service == null ? Map.of("status", "DISABLED") : service.expireSessions();
     }
 
     @Scheduled(

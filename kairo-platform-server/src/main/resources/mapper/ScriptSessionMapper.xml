@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.kairo.platform.persistence.mapper.ScriptSessionMapper">
+
+    <sql id="cols">
+        id, agent_id, application_id, target_class_name, target_class_loader_id,
+        target_method_name, target_method_descriptor, script_hash, requested_profile,
+        effective_profile, platform_max_profile, application_max_profile, policy_revision,
+        policy_hash, ttl_millis, max_hits, status, hit_count, version, idempotency_key,
+        requested_by, formal_rule_id, agent_result_json, diagnostics_json, created_at,
+        expires_at, applied_at, reverted_at, updated_at, created_by, correlation_id
+    </sql>
+
+    <insert id="insert">
+        insert into script_session(
+            id, agent_id, application_id, target_class_name, target_class_loader_id,
+            target_method_name, target_method_descriptor, script_hash, requested_profile,
+            effective_profile, platform_max_profile, application_max_profile, policy_revision,
+            policy_hash, ttl_millis, max_hits, status, hit_count, version, idempotency_key,
+            requested_by, formal_rule_id, agent_result_json, diagnostics_json, created_at,
+            expires_at, applied_at, reverted_at, updated_at, created_by, correlation_id)
+        values(
+            #{id}, #{agentId}, #{applicationId}, #{targetClassName}, #{targetClassLoaderId},
+            #{targetMethodName}, #{targetMethodDescriptor}, #{scriptHash}, #{requestedProfile},
+            #{effectiveProfile}, #{platformMaxProfile}, #{applicationMaxProfile}, #{policyRevision},
+            #{policyHash}, #{ttlMillis}, #{maxHits}, #{status}, #{hitCount}, #{version}, #{idempotencyKey},
+            #{requestedBy}, #{formalRuleId}, #{agentResultJson}, #{diagnosticsJson}, #{createdAt},
+            #{expiresAt}, #{appliedAt}, #{revertedAt}, #{updatedAt}, #{createdBy}, #{correlationId})
+    </insert>
+
+    <select id="findById" resultType="com.example.kairo.platform.script.ScriptSessionRecord">
+        select <include refid="cols"/> from script_session where id = #{id}
+    </select>
+
+    <select id="findByIdempotencyKey" resultType="com.example.kairo.platform.script.ScriptSessionRecord">
+        select <include refid="cols"/> from script_session where idempotency_key = #{idempotencyKey}
+    </select>
+
+    <update id="transition">
+        update script_session
+           set status = #{status},
+               hit_count = #{hitCount},
+               agent_result_json = #{agentResultJson},
+               diagnostics_json = #{diagnosticsJson},
+               formal_rule_id = #{formalRuleId},
+               applied_at = #{appliedAt},
+               reverted_at = #{revertedAt},
+               version = version + 1,
+               updated_at = #{now}
+         where id = #{id} and version = #{expectedVersion}
+    </update>
+
+    <update id="applyAgentResult">
+        update script_session
+           set hit_count = #{hitCount},
+               agent_result_json = #{agentResultJson},
+               diagnostics_json = #{diagnosticsJson},
+               version = version + 1,
+               updated_at = #{now}
+         where id = #{id} and version = #{expectedVersion}
+    </update>
+
+    <select id="listByApplication" resultType="com.example.kairo.platform.script.ScriptSessionRecord">
+        select <include refid="cols"/>
+          from script_session
+         where application_id = #{applicationId}
+         order by created_at desc
+    </select>
+
+    <select id="listByAgent" resultType="com.example.kairo.platform.script.ScriptSessionRecord">
+        select <include refid="cols"/>
+          from script_session
+         where agent_id = #{agentId}
+         order by updated_at desc
+    </select>
+
+    <select id="findExpirable" resultType="com.example.kairo.platform.script.ScriptSessionRecord">
+        select <include refid="cols"/>
+          from script_session
+         where status in ('CREATED', 'VALIDATED', 'APPLIED')
+           and expires_at &lt;= #{now}
+         order by expires_at
+    </select>
+
+    <select id="countActiveByTarget" resultType="int">
+        select count(*)
+          from script_session
+         where agent_id = #{agentId}
+           and target_class_name = #{className}
+           <if test="classLoaderId != null and classLoaderId != ''">
+             and target_class_loader_id = #{classLoaderId}
+           </if>
+           <if test="classLoaderId == null or classLoaderId == ''">
+             and target_class_loader_id is null
+           </if>
+           and status in ('CREATED', 'VALIDATED', 'APPLIED')
+           and expires_at &gt; #{now}
+    </select>
+
+    <select id="findAgentApplication" resultType="string">
+        select i.application_id
+          from agent_instance a
+          join instance i on a.instance_id = i.id
+         where a.id = #{agentId}
+    </select>
+</mapper>

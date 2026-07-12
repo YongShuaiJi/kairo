@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.kairo.platform.persistence.mapper.ScriptCapabilityPolicyMapper">
+
+    <select id="find" resultType="com.example.kairo.platform.script.ScriptCapabilityPolicy">
+        select scope, application_id, allowed_max_profile, revision, policy_hash, modified_by,
+               created_at, updated_at
+          from script_capability_policy
+         where scope = #{scope} and application_id = #{applicationId}
+    </select>
+
+    <select id="findPlatform" resultType="com.example.kairo.platform.script.ScriptCapabilityPolicy">
+        select scope, application_id, allowed_max_profile, revision, policy_hash, modified_by,
+               created_at, updated_at
+          from script_capability_policy
+         where scope = 'PLATFORM'
+    </select>
+
+    <select id="findApplication" resultType="com.example.kairo.platform.script.ScriptCapabilityPolicy">
+        select scope, application_id, allowed_max_profile, revision, policy_hash, modified_by,
+               created_at, updated_at
+          from script_capability_policy
+         where scope = 'APPLICATION' and application_id = #{applicationId}
+    </select>
+
+    <select id="listApplications" resultType="com.example.kairo.platform.script.ScriptCapabilityPolicy">
+        select scope, application_id, allowed_max_profile, revision, policy_hash, modified_by,
+               created_at, updated_at
+          from script_capability_policy
+         where scope = 'APPLICATION'
+           <if test="applicationId != null and applicationId != ''">
+             and application_id = #{applicationId}
+           </if>
+         order by updated_at desc
+    </select>
+
+    <insert id="insert">
+        insert into script_capability_policy(scope, application_id, allowed_max_profile, revision,
+            policy_hash, modified_by, created_at, updated_at)
+        values (#{scope}, #{applicationId}, #{allowedMaxProfile}, #{revision},
+            #{policyHash}, #{modifiedBy}, #{createdAt}, #{updatedAt})
+    </insert>
+
+    <update id="update">
+        update script_capability_policy
+           set allowed_max_profile = #{policy.allowedMaxProfile},
+               revision = #{policy.revision},
+               policy_hash = #{policy.policyHash},
+               modified_by = #{policy.modifiedBy},
+               updated_at = #{policy.updatedAt}
+         where scope = #{policy.scope}
+           and application_id = #{policy.applicationId}
+           and revision = #{expectedRevision}
+    </update>
+</mapper>

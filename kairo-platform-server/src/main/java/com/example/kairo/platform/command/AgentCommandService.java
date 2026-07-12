@@ -29,10 +29,16 @@ public class AgentCommandService {
     private final BusinessIdService businessIdService;
     private final Clock clock;
     private BytecodeDiagnosticExchange bytecodeExchange;
+    private ScriptSessionExchange scriptSessionExchange;
 
     @Autowired
     void setBytecodeExchange(BytecodeDiagnosticExchange bytecodeExchange) {
         this.bytecodeExchange = bytecodeExchange;
+    }
+
+    @Autowired
+    void setScriptSessionExchange(ScriptSessionExchange scriptSessionExchange) {
+        this.scriptSessionExchange = scriptSessionExchange;
     }
 
     @Autowired
@@ -91,6 +97,31 @@ public class AgentCommandService {
         return created;
     }
 
+    /**
+     * Enqueues a script-session or script-compile command and registers it with the script-session
+     * exchange so the dispatching API request can await the agent ack. Script commands are not
+     * retried ({@code maxAttempts = 1}) because the agent's session state machine is single-flight:
+     * a replayed command would observe the wrong state, so a timeout must surface as failure rather
+     * than silent re-execution. The {@code scriptSource} is carried in the in-memory exchange only
+     * (spliced into the payload at poll time) so the durable command row stores just the script hash.
+     */
+    @Transactional
+    public Map<String, Object> createScriptCommand(RequestContext context, String agentId,
+                                                    String commandType, Map<String, Object> payload,
+                                                    String scriptSource, String idempotencyKey) {
+        rbacService.require(context, "RULE_MANAGE");
+        if (!commandType.startsWith("SCRIPT_")) {
+            throw PlatformException.badRequest("INVALID_FIELD", "Not a script command: " + commandType);
+        }
+        Map<String, Object> created = enqueue(context, agentId, commandType, payload,
+                idempotencyKey, 1, clock.instant());
+        if (scriptSessionExchange == null) {
+            throw new IllegalStateException("Script session exchange unavailable");
+        }
+        scriptSessionExchange.register(String.valueOf(created.get("id")), scriptSource);
+        return created;
+    }
+
     @Transactional
     public Map<String, Object> enqueue(RequestContext context, String agentId, String commandType,
                                        Map<String, Object> payload, String idempotencyKey,
@@ -140,8 +171,16 @@ public class AgentCommandService {
                 Map.of("agentId", agentId, "leaseExpiresAt", leaseExpiresAt.toString()));
         Map<String, Object> response = new LinkedHashMap<>(command);
         Map<String, Object> persistedPayload = PlatformJson.readMap(String.valueOf(command.get("payload_json")));
-        response.put("payload", bytecodeExchange == null ? persistedPayload
-                : bytecodeExchange.enrichPayload(String.valueOf(command.get("id")), persistedPayload));
+        String commandId = String.valueOf(command.get("id"));
+        String commandType = String.valueOf(command.get("command_type"));
+        Map<String, Object> enriched = persistedPayload;
+        if (bytecodeExchange != null && commandType.startsWith("BYTECODE_")) {
+            enriched = bytecodeExchange.enrichPayload(commandId, enriched);
+        }
+        if (scriptSessionExchange != null && commandType.startsWith("SCRIPT_")) {
+            enriched = scriptSessionExchange.enrichPayload(commandId, enriched);
+        }
+        response.put("payload", enriched);
         return response;
     }
 
@@ -170,6 +209,14 @@ public class AgentCommandService {
         if (bytecodeDiagnostic && bytecodeExchange != null) {
             if ("ACKED".equals(resultStatus)) bytecodeExchange.complete(commandId, result);
             else bytecodeExchange.fail(commandId, errorMessage == null ? "diagnostic failed" : errorMessage);
+        }
+        if (String.valueOf(current.get("command_type")).startsWith("SCRIPT_") && scriptSessionExchange != null) {
+            if ("ACKED".equals(resultStatus)) {
+                scriptSessionExchange.complete(commandId, result);
+            } else {
+                scriptSessionExchange.fail(commandId,
+                        errorMessage == null ? "script command failed" : errorMessage, result);
+            }
         }
         eventWriter.recordEvent(context, "agent_command.ack", "agent_command", commandId,
                 ((Number) updated.get("attempts")).longValue(), current, updated, resultStatus,

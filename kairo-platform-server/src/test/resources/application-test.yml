@@ -14,3 +14,8 @@ kairo:
     rollout:
       scheduler:
         enabled: false
+    script:
+      command-timeout-ms: 5000
+      expiry:
+        initial-delay-ms: 999999
+        fixed-delay-ms: 999999
