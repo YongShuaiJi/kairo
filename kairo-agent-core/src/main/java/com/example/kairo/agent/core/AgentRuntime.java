@@ -7,6 +7,11 @@ import com.example.kairo.agent.core.bytecode.TransformationJournal;
 import com.example.kairo.agent.core.bytecode.TransformationPreviewService;
 import com.example.kairo.agent.core.bytecode.diff.BytecodeDiffService;
 import com.example.kairo.agent.core.script.AgentScriptCompilerFactory;
+import com.example.kairo.agent.core.script.ScriptSessionHost;
+import com.example.kairo.agent.core.script.ScriptSessionLimits;
+import com.example.kairo.agent.core.script.ScriptSessionManager;
+import com.example.kairo.agent.core.script.ScriptSessionTarget;
+import com.example.kairo.api.MethodSelector;
 import com.example.kairo.api.MockRule;
 import com.example.kairo.bridge.KairoBridge;
 import com.example.kairo.core.AgentBridgeDispatcher;
@@ -26,6 +31,7 @@ import java.lang.instrument.Instrumentation;
 import java.lang.management.ManagementFactory;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
+import java.time.Clock;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -36,7 +42,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-public final class AgentRuntime implements AutoCloseable {
+public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
 
     private final Instrumentation instrumentation;
     private final DefaultInstrumentationRegistry instrumentationRegistry;
@@ -55,6 +61,7 @@ public final class AgentRuntime implements AutoCloseable {
     private final BytecodeCaptureService captureService;
     private final BytecodeDiffService diffService;
     private final DecompilerService decompilerService;
+    private final ScriptSessionManager scriptSessionManager;
     private final ConcurrentHashMap<String, PublishedRule> publishedRules = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, RecordingRegistration> activeRecordings = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> degradedClasses = new ConcurrentHashMap<>();
@@ -103,6 +110,8 @@ public final class AgentRuntime implements AutoCloseable {
                 com.example.kairo.agent.core.bytecode.BytecodeDecompilers.defaultDecompiler(),
                 2 * 1024 * 1024, 5000L);
         this.loadedClassRepository = new LoadedClassRepository(instrumentation);
+        this.scriptSessionManager = new ScriptSessionManager(this, scriptCompilerFactory,
+                this::resolveScriptSessionTarget, Clock.systemUTC(), ScriptSessionLimits.defaults());
     }
 
     public void start() {
@@ -110,6 +119,7 @@ public final class AgentRuntime implements AutoCloseable {
             KairoBridge.install(new AgentBridgeDispatcher(ruleDispatcher, recordingObserver));
             transformerManager.install();
             cleanupExecutor.scheduleWithFixedDelay(this::cleanupExpiredRules, 1, 1, TimeUnit.SECONDS);
+            cleanupExecutor.scheduleWithFixedDelay(scriptSessionManager::expireDue, 1, 1, TimeUnit.SECONDS);
             cleanupExecutor.scheduleWithFixedDelay(snapshotRepository::evictExpired, 5, 5, TimeUnit.SECONDS);
             state.set(AgentState.ACTIVE);
             eventBuffer.record("agent.start", "system", null, null, "Kairo agent started");
@@ -239,6 +249,7 @@ public final class AgentRuntime implements AutoCloseable {
         try {
             ruleRegistry.clear();
             publishedRules.clear();
+            scriptSessionManager.clear();
             activeRecordings.clear();
             recordingObserver.clear();
             instrumentationRegistry.snapshot().forEach(instrumentationRegistry::unregister);
@@ -258,6 +269,7 @@ public final class AgentRuntime implements AutoCloseable {
     }
 
     public ResetClassResult resetClass(String classId, String actor) {
+        scriptSessionManager.deactivateTarget(classId, actor);
         activeRecordings.values().stream()
                 .filter(recording -> classId.equals(recording.classId()) || classId.equals(recording.className()))
                 .map(RecordingRegistration::sessionId)
@@ -472,12 +484,17 @@ public final class AgentRuntime implements AutoCloseable {
         return decompilerService;
     }
 
+    public ScriptSessionManager scriptSessionManager() {
+        return scriptSessionManager;
+    }
+
     @Override
     public void close() {
         state.set(AgentState.STOPPING);
         KairoBridge.uninstall();
         ruleRegistry.clear();
         publishedRules.clear();
+        scriptSessionManager.close();
         activeRecordings.clear();
         recordingObserver.clear();
         transformerManager.close();
@@ -488,6 +505,39 @@ public final class AgentRuntime implements AutoCloseable {
         cleanupExecutor.shutdownNow();
         state.set(AgentState.STOPPED);
         eventBuffer.record("agent.stop", "system", null, null, "Kairo agent stopped");
+    }
+
+    // ------------------------------------------------------------------ ScriptSessionHost
+
+    @Override
+    public CompiledRule applyTrialRule(Method targetMethod, MockRule rule, String actor) {
+        return publish(targetMethod, rule, actor);
+    }
+
+    @Override
+    public void revertTrialRule(String ruleId, String actor) {
+        remove(ruleId, actor);
+    }
+
+    @Override
+    public void recordSessionEvent(String type, String actor, String sessionId, String target, String message) {
+        eventBuffer.record(type, actor, sessionId, target, message);
+    }
+
+    /** Resolve a {@link MethodSelector} to a live method plus its stable class id for a session. */
+    private ScriptSessionTarget resolveScriptSessionTarget(MethodSelector target) {
+        Method method;
+        if (target.classLoaderId() != null && !target.classLoaderId().isBlank()) {
+            String classId = loadedClassRepository.classId(target.className(), target.classLoaderId());
+            method = loadedClassRepository.resolveMethod(classId,
+                    target.methodName(), target.methodDescriptor());
+        } else {
+            method = loadedClassRepository.resolveMethodTarget(
+                    target.className(), target.methodName(), target.methodDescriptor());
+        }
+        return new ScriptSessionTarget(method,
+                loadedClassRepository.classId(method.getDeclaringClass()),
+                method.getDeclaringClass().getName());
     }
 
     private MethodSignature signatureOf(Method method) {

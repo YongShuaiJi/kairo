@@ -6,10 +6,16 @@ import com.example.demo.Order;
 import com.example.demo.OrderService;
 import com.example.kairo.agent.core.AgentRuntime;
 import com.example.kairo.agent.core.RecordedInvocation;
+import com.example.kairo.agent.core.RuleInfo;
 import com.example.kairo.agent.server.AgentHttpServer;
+import com.example.kairo.api.CapabilityProfile;
 import com.example.kairo.api.InvokePhase;
 import com.example.kairo.api.MethodSelector;
 import com.example.kairo.api.MockRule;
+import com.example.kairo.api.ScriptPolicyRevision;
+import com.example.kairo.api.ScriptSessionResult;
+import com.example.kairo.api.ScriptSessionSpec;
+import com.example.kairo.api.ScriptSessionStatus;
 import com.example.kairo.core.ClassLoaderIdentity;
 import com.example.kairo.core.CompiledRule;
 import com.example.kairo.core.MethodDescriptor;
@@ -363,6 +369,131 @@ class KairoAgentIntegrationTest {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    // -------------------------------------------------------- ScriptSession (V1.2 phase 3)
+
+    @Test
+    void trialSessionAppliesAndInterceptsLiveMethod() throws Exception {
+        Method method = OrderService.class.getMethod("calculateScore", int.class);
+        ScriptSessionSpec spec = sessionSpec("trial-live", method,
+                "return mock.returnValue(999)", CapabilityProfile.SAFE, 60_000L, 10L);
+
+        runtime.scriptSessionManager().create(spec);
+        assertThat(runtime.scriptSessionManager().validate("trial-live").status())
+                .isEqualTo(ScriptSessionStatus.VALIDATED);
+        ScriptSessionResult applied = runtime.scriptSessionManager().apply("trial-live");
+        assertThat(applied.status()).isEqualTo(ScriptSessionStatus.APPLIED);
+
+        // The trial rule is live on the real JVM: the original calculateScore(7)=14 is replaced.
+        assertThat(new OrderService().calculateScore(7)).isEqualTo(999);
+        ScriptSessionResult result = runtime.scriptSessionManager().result("trial-live");
+        assertThat(result.hitCount()).isEqualTo(1);
+        // The trial rule is published on the live method like a formal rule.
+        assertThat(runtime.rules().stream().map(RuleInfo::id).toList()).contains("trial-live");
+    }
+
+    @Test
+    void trialSessionExpiresByTtlAndRestoresOriginalBehavior() throws Exception {
+        Method method = OrderService.class.getMethod("calculateScore", int.class);
+        runtime.scriptSessionManager().create(sessionSpec("trial-ttl", method,
+                "return mock.returnValue(999)", CapabilityProfile.SAFE, 1_000L, 10L));
+        runtime.scriptSessionManager().validate("trial-ttl");
+        runtime.scriptSessionManager().apply("trial-ttl");
+        assertThat(new OrderService().calculateScore(7)).isEqualTo(999);
+
+        // The agent's local deadline drives expiry; no Platform or client is involved. Poll the
+        // snapshot (which lazily expires) until the session reaches a terminal state.
+        ScriptSessionResult result = waitForTerminal("trial-ttl", 5_000L);
+        assertThat(result.status()).isEqualTo(ScriptSessionStatus.EXPIRED);
+
+        // Once expired the trial rule is removed and the original behavior is restored, even
+        // though nothing but the local clock swept it.
+        assertThat(new OrderService().calculateScore(7)).isEqualTo(14);
+    }
+
+    @Test
+    void trialSessionExpiresByHitCapAndRestoresOriginalBehavior() throws Exception {
+        Method method = OrderService.class.getMethod("calculateScore", int.class);
+        runtime.scriptSessionManager().create(sessionSpec("trial-hits", method,
+                "return mock.returnValue(999)", CapabilityProfile.SAFE, 60_000L, 2L));
+        runtime.scriptSessionManager().validate("trial-hits");
+        runtime.scriptSessionManager().apply("trial-hits");
+
+        OrderService service = new OrderService();
+        assertThat(service.calculateScore(7)).isEqualTo(999);  // hit 1
+        assertThat(service.calculateScore(7)).isEqualTo(999);  // hit 2, cap reached
+        // The rule itself stops matching once the cap is hit, so the original method runs again
+        // before the manager sweeps.
+        assertThat(service.calculateScore(7)).isEqualTo(14);
+
+        assertThat(runtime.scriptSessionManager().result("trial-hits").status())
+                .isEqualTo(ScriptSessionStatus.EXPIRED);
+    }
+
+    @Test
+    void promoteToFormalRuleSurvivesSessionRevertWithSameScope() throws Exception {
+        Method method = OrderService.class.getMethod("calculateScore", int.class);
+        runtime.scriptSessionManager().create(sessionSpec("trial-promote", method,
+                "return mock.returnValue(999)", CapabilityProfile.EXTENDED, 1_000L, 5L));
+        runtime.scriptSessionManager().validate("trial-promote");
+        runtime.scriptSessionManager().apply("trial-promote");
+        assertThat(new OrderService().calculateScore(7)).isEqualTo(999);
+
+        runtime.scriptSessionManager().promote("trial-promote", "operator");
+
+        // The formal rule (same id, unbounded) keeps intercepting...
+        assertThat(new OrderService().calculateScore(7)).isEqualTo(999);
+        // ...and reverting the now-terminal session must NOT delete the formal rule.
+        runtime.scriptSessionManager().revert("trial-promote");
+        assertThat(new OrderService().calculateScore(7)).isEqualTo(999);
+
+        // The formal rule is a normal published rule now, traced to its session origin, with the
+        // session's original capability profile (promotion does not widen permissions/scope).
+        RuleInfo formal = runtime.rules().stream()
+                .filter(r -> "trial-promote".equals(r.id()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(formal.enabled()).isTrue();
+        // Remove via the normal rule path to clean up.
+        runtime.remove("trial-promote", "test");
+        assertThat(new OrderService().calculateScore(7)).isEqualTo(14);
+    }
+
+    @Test
+    void emergencyDeactivateTargetRevertsTrialAndRestoresBehavior() throws Exception {
+        Method method = OrderService.class.getMethod("calculateScore", int.class);
+        runtime.scriptSessionManager().create(sessionSpec("trial-panic", method,
+                "return mock.returnValue(999)", CapabilityProfile.SAFE, 60_000L, 10L));
+        runtime.scriptSessionManager().validate("trial-panic");
+        runtime.scriptSessionManager().apply("trial-panic");
+        assertThat(new OrderService().calculateScore(7)).isEqualTo(999);
+
+        int deactivated = runtime.scriptSessionManager()
+                .deactivateTarget(OrderService.class.getName(), "operator");
+        assertThat(deactivated).isEqualTo(1);
+        assertThat(runtime.scriptSessionManager().result("trial-panic").status())
+                .isEqualTo(ScriptSessionStatus.REVERTED);
+        assertThat(new OrderService().calculateScore(7)).isEqualTo(14);
+    }
+
+    private ScriptSessionResult waitForTerminal(String sessionId, long timeoutMillis) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        ScriptSessionResult result = runtime.scriptSessionManager().result(sessionId);
+        while (!result.status().terminal() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(50L);
+            result = runtime.scriptSessionManager().result(sessionId);
+        }
+        return result;
+    }
+
+    private static ScriptSessionSpec sessionSpec(String sessionId, Method method, String script,
+                                                 CapabilityProfile profile, long ttlMillis, long maxHits) {
+        return new ScriptSessionSpec(sessionId, "agent-1",
+                new MethodSelector(method.getDeclaringClass().getName(),
+                        ClassLoaderIdentity.idOf(method.getDeclaringClass().getClassLoader()),
+                        method.getName(), MethodDescriptor.of(method)),
+                script, profile, new ScriptPolicyRevision(1, "test"), ttlMillis, maxHits, "tester");
     }
 
     @Test
