@@ -9,6 +9,7 @@ import com.example.kairo.groovy.GroovyScriptCompiler;
 import com.example.kairo.groovy.ScriptCompilationContext;
 import com.example.kairo.groovy.ScriptCompilerFactory;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.Objects;
 
@@ -45,6 +46,29 @@ public final class AgentScriptCompilerFactory implements ScriptCompilerFactory, 
         Objects.requireNonNull(targetMethod, "targetMethod");
         Objects.requireNonNull(rule, "rule");
         ClassLoader targetLoader = targetMethod.getDeclaringClass().getClassLoader();
+        ClassLoader compileParent = targetLoader != null ? targetLoader : agentClassLoader;
+        ScriptPolicyRevision revision = rule.policyRevision() != null
+                ? rule.policyRevision()
+                : ScriptCompilationContext.DEFAULT_SAFE_REVISION;
+        ScriptCompilationContext context = ScriptCompilationContext.builder()
+                .profile(rule.capabilityProfile())
+                .policyRevision(revision)
+                .targetClassLoader(compileParent)
+                .targetClassLoaderId(ClassLoaderIdentity.idOf(targetLoader))
+                .build();
+        return compiler.compile(rule.id(), rule.version(), rule.script(), context);
+    }
+
+    /**
+     * Compile a script for a V1.3 constructor-enhancement rule. The constructor's
+     * declaring class determines the target ClassLoader exactly as the method path
+     * does; only the entry point to the declaring class differs.
+     */
+    @Override
+    public CompiledMockScript compile(Constructor<?> targetConstructor, MockRule rule) {
+        Objects.requireNonNull(targetConstructor, "targetConstructor");
+        Objects.requireNonNull(rule, "rule");
+        ClassLoader targetLoader = targetConstructor.getDeclaringClass().getClassLoader();
         ClassLoader compileParent = targetLoader != null ? targetLoader : agentClassLoader;
         ScriptPolicyRevision revision = rule.policyRevision() != null
                 ? rule.policyRevision()

@@ -1,5 +1,6 @@
 package com.example.kairo.platform.rollout;
 
+import com.example.kairo.api.EnhancementLocation;
 import com.example.kairo.platform.command.AgentCommandService;
 import com.example.kairo.platform.persistence.mapper.RolloutExecutionMapper;
 import com.example.kairo.platform.service.BusinessIdService;
@@ -19,6 +20,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -264,7 +266,21 @@ public class RolloutExecutor {
         payload.put("classLoaderId", String.valueOf(matcher.getOrDefault("classLoaderId", "")));
         payload.put("methodName", optionalText(target, "method_name", ""));
         payload.put("methodDescriptor", String.valueOf(matcher.getOrDefault("descriptor", "")));
-        payload.put("phase", String.valueOf(script.getOrDefault("phase", "BEFORE")));
+        // V1.3: an explicit location is authoritative; derive the legacy phase from it so the
+        // APPLY_RULE payload stays internally consistent. Legacy rules (no location) keep using
+        // the script's phase, preserving V1.0/V1.2 behaviour exactly.
+        String locationText = optionalText(target, "location", null);
+        EnhancementLocation location = parseLocation(locationText);
+        payload.put("phase", location != null
+                ? location.toLegacyPhase().name()
+                : String.valueOf(script.getOrDefault("phase", "BEFORE")));
+        if (location != null) {
+            payload.put("location", location.name());
+            String callSiteSelectorJson = optionalText(target, "call_site_selector_json", null);
+            if (callSiteSelectorJson != null && !callSiteSelectorJson.isBlank()) {
+                payload.put("callSiteSelector", PlatformJson.readMap(callSiteSelectorJson));
+            }
+        }
         payload.put("script", scriptText(script));
         payload.put("priority", 0);
         payload.put("percentage", 100);
@@ -314,6 +330,17 @@ public class RolloutExecutor {
     private String optionalText(Map<String, Object> values, String key, String defaultValue) {
         Object value = values.get(key);
         return value == null ? defaultValue : String.valueOf(value);
+    }
+
+    private EnhancementLocation parseLocation(String locationText) {
+        if (locationText == null || locationText.isBlank()) {
+            return null;
+        }
+        try {
+            return EnhancementLocation.valueOf(locationText.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("Stored rule target has invalid location: " + locationText, e);
+        }
     }
 
     private String snapshotText(Map<String, Object> values, String key, String defaultValue) {

@@ -1,5 +1,6 @@
 package com.example.kairo.core;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 
 public final class MethodDescriptor {
@@ -13,6 +14,15 @@ public final class MethodDescriptor {
             descriptor.append(of(parameterType));
         }
         descriptor.append(')').append(of(method.getReturnType()));
+        return descriptor.toString();
+    }
+
+    public static String of(Constructor<?> constructor) {
+        StringBuilder descriptor = new StringBuilder("(");
+        for (Class<?> parameterType : constructor.getParameterTypes()) {
+            descriptor.append(of(parameterType));
+        }
+        descriptor.append(")V");
         return descriptor.toString();
     }
 

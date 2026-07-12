@@ -1,21 +1,51 @@
 package com.example.kairo.core;
 
+import com.example.kairo.api.CallSiteSelector;
 import com.example.kairo.api.MethodMetadata;
 import com.example.kairo.api.MockDecision;
 
+import java.util.Arrays;
+
+/**
+ * Unified execution state carried from enter to exit across one enhancement
+ * invocation. V1.3 extends the V1.2 holder so a single state object tracks the
+ * original arguments (before any BEFORE rule mutated them), the current
+ * arguments, the original result/throwable produced by the body, and the
+ * call-site context for call-site locations.
+ *
+ * <p>The state is mutated only on the single business thread driving the
+ * invocation; it is not published across threads.
+ */
 public final class InvocationState {
 
     private final MethodKey methodKey;
     private final MethodMetadata method;
     private final Object target;
+    private final Object[] originalArguments;
     private Object[] arguments;
+    private Object originalResult;
+    private Object result;
+    private Throwable originalThrowable;
     private MockDecision beforeTerminalDecision;
 
+    // call-site context (null for method / constructor locations)
+    private final CallSiteSelector callSiteSelector;
+    private Object[] callArguments;
+    private Object callResult;
+    private Throwable callThrowable;
+
     public InvocationState(MethodKey methodKey, MethodMetadata method, Object target, Object[] arguments) {
+        this(methodKey, method, target, arguments, null);
+    }
+
+    public InvocationState(MethodKey methodKey, MethodMetadata method, Object target, Object[] arguments,
+                           CallSiteSelector callSiteSelector) {
         this.methodKey = methodKey;
         this.method = method;
         this.target = target;
-        this.arguments = arguments;
+        this.arguments = arguments == null ? new Object[0] : arguments;
+        this.originalArguments = this.arguments.clone();
+        this.callSiteSelector = callSiteSelector;
     }
 
     public MethodKey methodKey() {
@@ -38,6 +68,40 @@ public final class InvocationState {
         this.arguments = arguments;
     }
 
+    /** Arguments as they entered the enhanced construct, before any rule mutated them. */
+    public Object[] originalArguments() {
+        return originalArguments.clone();
+    }
+
+    /** The result produced by the original body before return-side rules ran. */
+    public Object originalResult() {
+        return originalResult;
+    }
+
+    public void originalResult(Object originalResult) {
+        this.originalResult = originalResult;
+        if (this.result == null) {
+            this.result = originalResult;
+        }
+    }
+
+    /** The current result, possibly already replaced by a return-side rule. */
+    public Object result() {
+        return result;
+    }
+
+    public void result(Object result) {
+        this.result = result;
+    }
+
+    public Throwable originalThrowable() {
+        return originalThrowable;
+    }
+
+    public void originalThrowable(Throwable originalThrowable) {
+        this.originalThrowable = originalThrowable;
+    }
+
     public MockDecision beforeTerminalDecision() {
         return beforeTerminalDecision;
     }
@@ -48,5 +112,42 @@ public final class InvocationState {
 
     public boolean hasBeforeTerminalDecision() {
         return beforeTerminalDecision != null;
+    }
+
+    public CallSiteSelector callSiteSelector() {
+        return callSiteSelector;
+    }
+
+    public boolean isCallSite() {
+        return callSiteSelector != null;
+    }
+
+    public Object[] callArguments() {
+        return callArguments;
+    }
+
+    public void callArguments(Object[] callArguments) {
+        this.callArguments = callArguments == null ? null : callArguments.clone();
+    }
+
+    public Object callResult() {
+        return callResult;
+    }
+
+    public void callResult(Object callResult) {
+        this.callResult = callResult;
+    }
+
+    public Throwable callThrowable() {
+        return callThrowable;
+    }
+
+    public void callThrowable(Throwable callThrowable) {
+        this.callThrowable = callThrowable;
+    }
+
+    /** Defensive snapshot of the arguments array for diagnostics / recording. */
+    public Object[] argumentsSnapshot() {
+        return Arrays.copyOf(arguments, arguments.length);
     }
 }

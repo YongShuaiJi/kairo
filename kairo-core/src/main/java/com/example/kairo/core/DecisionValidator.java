@@ -1,5 +1,6 @@
 package com.example.kairo.core;
 
+import com.example.kairo.api.CallSiteSelector;
 import com.example.kairo.api.MethodMetadata;
 import com.example.kairo.object.TypeConverter;
 
@@ -53,5 +54,51 @@ public final class DecisionValidator {
         }
         throw new IllegalArgumentException("Checked exception " + throwable.getClass().getName()
                 + " is not declared by " + method);
+    }
+
+    // -------------------------------------------------------- V1.3 call-site validation
+
+    /**
+     * Validate arguments a call-site BEFORE rule wants to pass to the callee,
+     * resolved from the callee descriptor carried by the selector. The loader is
+     * the caller method's defining loader, so callee business types resolve the
+     * same way they do for the original invoke.
+     */
+    public Object[] validateCallArguments(CallSiteSelector selector, Object[] callArguments, ClassLoader loader) {
+        Class<?>[] parameterTypes = MethodDescriptorTypes.parameterTypes(selector.descriptor(), loader);
+        if (callArguments == null) {
+            throw new IllegalArgumentException("call arguments must not be null");
+        }
+        if (parameterTypes.length != callArguments.length) {
+            throw new IllegalArgumentException("Call argument length mismatch, expected "
+                    + parameterTypes.length + " but got " + callArguments.length);
+        }
+        Object[] converted = callArguments.clone();
+        for (int i = 0; i < converted.length; i++) {
+            if (!TypeConverter.isAssignable(parameterTypes[i], converted[i])) {
+                throw new IllegalArgumentException("Call argument " + i + " is not assignable to "
+                        + parameterTypes[i].getName());
+            }
+            converted[i] = TypeConverter.convert(converted[i], parameterTypes[i]);
+        }
+        return converted;
+    }
+
+    /**
+     * Validate the replacement result a call-site RETURN rule produces, resolved
+     * from the callee descriptor. A void callee rejects a non-null result.
+     */
+    public Object validateCallResult(CallSiteSelector selector, Object callResult, ClassLoader loader) {
+        Class<?> returnType = MethodDescriptorTypes.returnType(selector.descriptor(), loader);
+        if (returnType == void.class) {
+            if (callResult != null) {
+                throw new IllegalArgumentException("void callee cannot return a value");
+            }
+            return null;
+        }
+        if (!TypeConverter.isAssignable(returnType, callResult)) {
+            throw new IllegalArgumentException("Call result is not assignable to " + returnType.getName());
+        }
+        return TypeConverter.convert(callResult, returnType);
     }
 }

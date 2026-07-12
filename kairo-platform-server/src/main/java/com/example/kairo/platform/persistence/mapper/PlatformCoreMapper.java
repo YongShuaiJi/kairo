@@ -182,6 +182,8 @@ public interface PlatformCoreMapper {
     int insertRuleTarget(@Param("id") String id, @Param("ruleVersionId") String ruleVersionId,
                          @Param("protocol") String protocol, @Param("className") String className,
                          @Param("methodName") String methodName, @Param("matcherJson") String matcherJson,
+                         @Param("location") String location,
+                         @Param("callSiteSelectorJson") String callSiteSelectorJson,
                          @Param("createdAt") Timestamp createdAt);
     int insertRuleCapability(@Param("id") String id, @Param("ruleVersionId") String ruleVersionId,
                              @Param("capability") String capability, @Param("createdAt") Timestamp createdAt);

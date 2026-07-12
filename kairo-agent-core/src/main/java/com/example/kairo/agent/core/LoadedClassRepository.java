@@ -5,6 +5,7 @@ import com.example.kairo.core.ClassLoaderIdentity;
 import com.example.kairo.core.MethodDescriptor;
 
 import java.lang.instrument.Instrumentation;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
@@ -107,6 +108,64 @@ public final class LoadedClassRepository {
                 .sorted(Comparator.comparing(Method::getName).thenComparing(MethodDescriptor::of))
                 .map(this::toMethodInfo)
                 .toList();
+    }
+
+    /**
+     * Declared constructors of a loaded class, for V1.3 constructor enhancement
+     * discovery. Synthetic constructors are filtered exactly as methods are.
+     * Each result carries {@code name = "<init>"} and
+     * {@code memberKind = "CONSTRUCTOR"} so the platform can present constructors
+     * as a distinct selection step.
+     */
+    public List<MethodInfo> constructors(String classId) {
+        Class<?> type = resolveClass(classId);
+        return Arrays.stream(type.getDeclaredConstructors())
+                .filter(constructor -> !constructor.isSynthetic())
+                .sorted(Comparator.comparing(MethodDescriptor::of))
+                .map(this::toConstructorInfo)
+                .toList();
+    }
+
+    /** Resolve a declared constructor by class id and JVM descriptor. */
+    public Constructor<?> resolveConstructor(String classId, String constructorDescriptor) {
+        Class<?> type = resolveClass(classId);
+        return resolveConstructor(type, constructorDescriptor);
+    }
+
+    /**
+     * Resolve a declared constructor by class id or binary name and descriptor,
+     * mirroring {@link #resolveMethodTarget}. Used by the platform publish path
+     * when a V1.3 constructor rule arrives over the command channel.
+     */
+    public Constructor<?> resolveConstructorTarget(String classIdOrName, String constructorDescriptor) {
+        if (classIdOrName == null || classIdOrName.isBlank()) {
+            throw new IllegalArgumentException("classId or className is required");
+        }
+        try {
+            return resolveConstructor(classIdOrName, constructorDescriptor);
+        } catch (IllegalArgumentException invalidClassId) {
+            return Arrays.stream(instrumentation.getAllLoadedClasses())
+                    .filter(type -> type.getName().equals(classIdOrName))
+                    .map(type -> {
+                        try {
+                            return resolveConstructor(type, constructorDescriptor);
+                        } catch (IllegalArgumentException ignored) {
+                            return null;
+                        }
+                    })
+                    .filter(Objects::nonNull)
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Constructor not found: "
+                            + classIdOrName + "#" + "<init>" + constructorDescriptor));
+        }
+    }
+
+    private Constructor<?> resolveConstructor(Class<?> type, String constructorDescriptor) {
+        return Arrays.stream(type.getDeclaredConstructors())
+                .filter(constructor -> MethodDescriptor.of(constructor).equals(constructorDescriptor))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Constructor not found: "
+                        + type.getName() + "<init>" + constructorDescriptor));
     }
 
     public Method resolveMethod(String classId, String methodName, String methodDescriptor) {
@@ -217,15 +276,44 @@ public final class LoadedClassRepository {
     }
 
     private MethodInfo toMethodInfo(Method method) {
+        int mods = method.getModifiers();
         return new MethodInfo(
                 method.getName(),
                 MethodDescriptor.of(method),
                 method.getReturnType().getName(),
                 Arrays.stream(method.getParameterTypes()).map(Class::getName).toList(),
                 Arrays.stream(method.getExceptionTypes()).map(Class::getName).toList(),
-                method.getModifiers(),
-                Modifier.isStatic(method.getModifiers()),
-                Modifier.isPrivate(method.getModifiers())
+                mods,
+                Modifier.isStatic(mods),
+                Modifier.isPrivate(mods),
+                "METHOD",
+                Modifier.isNative(mods),
+                Modifier.isAbstract(mods),
+                Modifier.isFinal(mods),
+                Modifier.isSynchronized(mods),
+                method.isSynthetic(),
+                method.isBridge()
+        );
+    }
+
+    private MethodInfo toConstructorInfo(Constructor<?> constructor) {
+        int mods = constructor.getModifiers();
+        return new MethodInfo(
+                "<init>",
+                MethodDescriptor.of(constructor),
+                constructor.getDeclaringClass().getName(),
+                Arrays.stream(constructor.getParameterTypes()).map(Class::getName).toList(),
+                Arrays.stream(constructor.getExceptionTypes()).map(Class::getName).toList(),
+                mods,
+                false,
+                Modifier.isPrivate(mods),
+                "CONSTRUCTOR",
+                Modifier.isNative(mods),
+                false,
+                Modifier.isFinal(mods),
+                false,
+                constructor.isSynthetic(),
+                false
         );
     }
 }

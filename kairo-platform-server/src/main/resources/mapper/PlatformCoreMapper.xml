@@ -109,7 +109,7 @@
     <insert id="insertLabel">insert into instance_label(id, instance_id, label_key, label_value, created_at) values (#{id}, #{instanceId}, #{labelKey}, #{labelValue}, #{createdAt})</insert>
     <insert id="insertAgentCapability">insert into agent_capability(id, agent_id, capability, metadata_json, created_at) values (#{id}, #{agentId}, #{capability}, #{metadataJson}, #{createdAt})</insert>
     <insert id="insertRuleVersion">insert into rule_version(id, rule_id, version, status, risk_level, matcher_json, script_hash, script_json, governance_json, created_by, created_at) values (#{id}, #{ruleId}, #{version}, #{status}, #{riskLevel}, #{matcherJson}, #{scriptHash}, #{scriptJson}, #{governanceJson}, #{createdBy}, #{createdAt})</insert>
-    <insert id="insertRuleTarget">insert into rule_target(id, rule_version_id, protocol, class_name, method_name, matcher_json, created_at) values (#{id}, #{ruleVersionId}, #{protocol}, #{className}, #{methodName}, #{matcherJson}, #{createdAt})</insert>
+    <insert id="insertRuleTarget">insert into rule_target(id, rule_version_id, protocol, class_name, method_name, matcher_json, location, call_site_selector_json, created_at) values (#{id}, #{ruleVersionId}, #{protocol}, #{className}, #{methodName}, #{matcherJson}, #{location}, #{callSiteSelectorJson}, #{createdAt})</insert>
     <insert id="insertRuleCapability">insert into rule_capability(id, rule_version_id, capability, created_at) values (#{id}, #{ruleVersionId}, #{capability}, #{createdAt})</insert>
 
     <select id="maxRuleVersion" resultType="long">select coalesce(max(version), 0) from rule_version where rule_id = #{ruleId}</select>

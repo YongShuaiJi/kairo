@@ -121,6 +121,8 @@ final class PlatformCommandPoller implements AutoCloseable {
             case "START_RECORDING" -> startRecording(payload);
             case "STOP_RECORDING" -> stopRecording(payload);
             case "DISCOVER_TARGETS" -> discoverTargets(payload);
+            case "LIST_CALL_SITES" -> listCallSites(payload);
+            case "RESOLVE_TARGET" -> resolveTarget(payload);
             case "REFRESH_RUNTIME_STATE" -> Map.of("refreshed", true);
             case "BYTECODE_TRANSFORMATIONS" -> bytecodeTransformations(payload);
             case "BYTECODE_GET" -> bytecodeGet(payload);
@@ -454,35 +456,172 @@ final class PlatformCommandPoller implements AutoCloseable {
         int limit = Math.min(200, Math.max(1, payload.path("limit").asInt(100)));
         List<Map<String, Object>> targets = new ArrayList<>();
         for (var classInfo : runtime.searchClasses(query, limit)) {
-            for (var method : runtime.methods(classInfo.classId())) {
-                String targetSignature = (classInfo.className() + "#" + method.name() + method.descriptor())
+            for (var member : membersOf(classInfo.classId())) {
+                String targetSignature = (classInfo.className() + "#" + member.name() + member.descriptor())
                         .toLowerCase(Locale.ROOT);
                 if (!normalizedQuery.isBlank()
                         && !classInfo.className().toLowerCase(Locale.ROOT).contains(normalizedQuery)
-                        && !method.name().toLowerCase(Locale.ROOT).contains(normalizedQuery)
+                        && !member.name().toLowerCase(Locale.ROOT).contains(normalizedQuery)
                         && !targetSignature.contains(normalizedQuery)) {
                     continue;
                 }
-                Map<String, Object> target = new LinkedHashMap<>();
-                target.put("classId", classInfo.classId());
-                target.put("className", classInfo.className());
-                target.put("classLoaderId", classInfo.classLoaderId());
-                target.put("classLoaderClassName", classInfo.classLoaderClassName());
-                target.put("modifiable", classInfo.modifiable());
-                target.put("methodName", method.name());
-                target.put("descriptor", method.descriptor());
-                target.put("returnType", method.returnType());
-                target.put("parameterTypes", method.parameterTypes());
-                target.put("exceptionTypes", method.exceptionTypes());
-                target.put("static", method.isStatic());
-                target.put("private", method.isPrivate());
-                targets.add(target);
+                targets.add(memberTargetMap(classInfo, member));
                 if (targets.size() >= limit) {
                     return Map.of("targets", targets, "truncated", true);
                 }
             }
         }
         return Map.of("targets", targets, "truncated", false);
+    }
+
+    /**
+     * V1.3 discovery returns methods <em>and</em> constructors so the platform can
+     * present constructor enhancement as a first-class selection step. Constructors
+     * are emitted with {@code name = "<init>"} and {@code memberKind = "CONSTRUCTOR"}.
+     */
+    private List<com.example.kairo.agent.core.MethodInfo> membersOf(String classId) {
+        List<com.example.kairo.agent.core.MethodInfo> members = new ArrayList<>();
+        members.addAll(runtime.methods(classId));
+        members.addAll(runtime.constructors(classId));
+        return members;
+    }
+
+    private Map<String, Object> memberTargetMap(
+            com.example.kairo.agent.core.ClassInfo classInfo,
+            com.example.kairo.agent.core.MethodInfo member) {
+        Map<String, Object> target = new LinkedHashMap<>();
+        target.put("classId", classInfo.classId());
+        target.put("className", classInfo.className());
+        target.put("classLoaderId", classInfo.classLoaderId());
+        target.put("classLoaderClassName", classInfo.classLoaderClassName());
+        target.put("modifiable", classInfo.modifiable());
+        target.put("methodName", member.name());
+        target.put("descriptor", member.descriptor());
+        target.put("returnType", member.returnType());
+        target.put("parameterTypes", member.parameterTypes());
+        target.put("exceptionTypes", member.exceptionTypes());
+        target.put("static", member.isStatic());
+        target.put("private", member.isPrivate());
+        target.put("memberKind", member.memberKind());
+        target.put("constructor", member.isConstructor());
+        target.put("native", member.nativeMethod());
+        target.put("abstract", member.abstractMethod());
+        target.put("final", member.finalMethod());
+        target.put("synchronized", member.synchronizedMethod());
+        target.put("synthetic", member.synthetic());
+        target.put("bridge", member.bridge());
+        target.put("modifiers", member.modifiers());
+        return target;
+    }
+
+    /**
+     * Read-only enumeration of call-site candidates inside a caller method, for the
+     * V1.3 guided call-site selector. Returns every matching {@code invoke*}
+     * instruction in visit order with its occurrence index and freshly captured
+     * fingerprint, so the platform can present choices and persist a stable
+     * identity. An optional callee filter narrows the scan.
+     */
+    private Map<String, Object> listCallSites(JsonNode payload) {
+        String classId = requiredText(payload, "classId");
+        String callerMethodName = requiredText(payload, "callerMethodName");
+        String callerDescriptor = requiredText(payload, "callerMethodDescriptor");
+        Class<?> callerClass = runtime.loadedClassRepository().findClass(classId)
+                .orElseThrow(() -> new IllegalArgumentException("class is not loaded: " + classId));
+        String calleeOwner = text(payload, "calleeOwner", null);
+        String calleeName = text(payload, "calleeName", null);
+        String calleeDescriptor = text(payload, "calleeDescriptor", null);
+        String opcodeText = text(payload, "opcode", null);
+        com.example.kairo.api.InvokeOpcode opcode = opcodeText == null
+                ? null
+                : com.example.kairo.api.InvokeOpcode.valueOf(opcodeText.toUpperCase(Locale.ROOT));
+        List<com.example.kairo.api.CallSiteIdentity> hits = runtime.listCallSites(
+                callerClass, callerMethodName, callerDescriptor,
+                calleeOwner, calleeName, calleeDescriptor, opcode);
+        List<Map<String, Object>> candidates = hits.stream().map(this::callSiteMap).toList();
+        return Map.of("classId", classId, "className", callerClass.getName(),
+                "callerMethodName", callerMethodName, "callerMethodDescriptor", callerDescriptor,
+                "candidates", candidates, "count", candidates.size());
+    }
+
+    private Map<String, Object> callSiteMap(com.example.kairo.api.CallSiteIdentity identity) {
+        com.example.kairo.api.CallSiteSelector selector = identity.selector();
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("owner", selector.owner());
+        map.put("name", selector.name());
+        map.put("descriptor", selector.descriptor());
+        map.put("opcode", selector.opcode().name());
+        map.put("occurrenceIndex", selector.occurrenceIndex());
+        map.put("fingerprint", selector.fingerprint());
+        return map;
+    }
+
+    /**
+     * Save-time target resolution + drift validation. Resolves an enhancement
+     * target against live bytecode and returns a {@link com.example.kairo.api.TargetMatchResult}
+     * so the platform can refuse to save a rule whose target has drifted, points
+     * at an unenhanceable member, or no longer exists. For call-site targets the
+     * total occurrence count is included so the platform can show "occurrence N of M".
+     */
+    private Map<String, Object> resolveTarget(JsonNode payload) {
+        String classId = requiredText(payload, "classId");
+        Class<?> declaringClass = runtime.loadedClassRepository().findClass(classId)
+                .orElseThrow(() -> new IllegalArgumentException("class is not loaded: " + classId));
+        com.example.kairo.api.MethodSelector method = new com.example.kairo.api.MethodSelector(
+                declaringClass.getName(),
+                com.example.kairo.core.ClassLoaderIdentity.idOf(declaringClass.getClassLoader()),
+                requiredText(payload, "methodName"),
+                requiredText(payload, "methodDescriptor"));
+        com.example.kairo.api.EnhancementLocation location = com.example.kairo.api.EnhancementLocation
+                .valueOf(requiredText(payload, "location").toUpperCase(Locale.ROOT));
+        com.example.kairo.api.EnhancementTarget target = location.isCallSiteLocation()
+                ? com.example.kairo.api.EnhancementTarget.callSite(method, location, readCallSiteSelector(payload))
+                : com.example.kairo.api.EnhancementTarget.of(method, location);
+        com.example.kairo.api.TargetMatchResult result = runtime.resolveTarget(declaringClass, target);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", result.status().name());
+        response.put("matchedCount", result.matchedCount());
+        response.put("reason", result.reason());
+        response.put("risk", resolveRisk(result, target));
+        if (target.isCallSite()) {
+            int occurrenceCount = countCallSiteOccurrences(declaringClass, method, target.callSiteSelector());
+            response.put("occurrenceCount", occurrenceCount);
+            response.put("occurrenceIndex", target.callSiteSelector().occurrenceIndex());
+        }
+        if (result.resolvedIdentity() != null) {
+            response.put("resolvedIdentity", callSiteMap(result.resolvedIdentity()));
+        }
+        return response;
+    }
+
+    private com.example.kairo.api.CallSiteSelector readCallSiteSelector(JsonNode payload) {
+        JsonNode node = payload.path("callSiteSelector");
+        if (node.isMissingNode() || node.isNull()) {
+            throw new IllegalArgumentException("callSiteSelector is required for a call-site location");
+        }
+        return com.example.kairo.api.CallSiteSelector.builder()
+                .owner(requiredText(node, "owner"))
+                .name(requiredText(node, "name"))
+                .descriptor(requiredText(node, "descriptor"))
+                .opcode(com.example.kairo.api.InvokeOpcode.valueOf(
+                        requiredText(node, "opcode").toUpperCase(Locale.ROOT)))
+                .occurrenceIndex(node.path("occurrenceIndex").asInt(0))
+                .fingerprint(text(node, "fingerprint", null))
+                .build();
+    }
+
+    private int countCallSiteOccurrences(Class<?> callerClass, com.example.kairo.api.MethodSelector caller,
+                                         com.example.kairo.api.CallSiteSelector selector) {
+        return runtime.listCallSites(callerClass, caller.methodName(), caller.methodDescriptor(),
+                selector.owner(), selector.name(), selector.descriptor(), selector.opcode()).size();
+    }
+
+    /** Map a resolution outcome to a coarse risk label the Web shows before saving. */
+    private String resolveRisk(com.example.kairo.api.TargetMatchResult result,
+                               com.example.kairo.api.EnhancementTarget target) {
+        return switch (result.status()) {
+            case MATCHED -> target.isCallSite() ? "MEDIUM" : "LOW";
+            case DRIFTED, NOT_FOUND, REJECTED -> "HIGH";
+        };
     }
 
     private Map<String, Object> startRecording(JsonNode payload) {

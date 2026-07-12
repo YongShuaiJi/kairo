@@ -10,6 +10,8 @@ public final class MockRule {
     private final String description;
     private final MethodSelector target;
     private final InvokePhase phase;
+    private final EnhancementLocation location;
+    private final CallSiteSelector callSiteSelector;
     private final String script;
     private final String scriptHash;
     private final int priority;
@@ -29,7 +31,22 @@ public final class MockRule {
         this.name = builder.name == null ? id : builder.name;
         this.description = builder.description;
         this.target = Objects.requireNonNull(builder.target, "target");
-        this.phase = Objects.requireNonNull(builder.phase, "phase");
+        this.location = builder.location;
+        this.callSiteSelector = builder.callSiteSelector;
+        InvokePhase resolvedPhase = builder.phase;
+        if (resolvedPhase == null) {
+            if (this.location == null) {
+                throw new IllegalArgumentException("phase or location must be set");
+            }
+            resolvedPhase = this.location.toLegacyPhase();
+        }
+        this.phase = resolvedPhase;
+        if (this.location != null && this.callSiteSelector == null && this.location.isCallSiteLocation()) {
+            throw new IllegalArgumentException("callSiteSelector is required for call-site location " + this.location);
+        }
+        if (this.callSiteSelector != null && (this.location == null || !this.location.isCallSiteLocation())) {
+            throw new IllegalArgumentException("callSiteSelector requires a call-site location");
+        }
         this.script = requireText(builder.script, "script");
         this.scriptHash = builder.scriptHash;
         this.priority = builder.priority;
@@ -76,6 +93,8 @@ public final class MockRule {
                 .description(description)
                 .target(target)
                 .phase(phase)
+                .location(location)
+                .callSiteSelector(callSiteSelector)
                 .script(script)
                 .scriptHash(scriptHash)
                 .priority(priority)
@@ -112,6 +131,40 @@ public final class MockRule {
 
     public InvokePhase phase() {
         return phase;
+    }
+
+    /**
+     * Explicit V1.3 enhancement location, or {@code null} when the rule was
+     * authored against the legacy {@link #phase()} only. Use
+     * {@link #effectiveLocation()} for the resolved authoritative location.
+     */
+    public EnhancementLocation location() {
+        return location;
+    }
+
+    public CallSiteSelector callSiteSelector() {
+        return callSiteSelector;
+    }
+
+    /**
+     * The authoritative enhancement location: the explicit {@link #location()}
+     * when set, otherwise the location projected from the legacy {@link #phase()}.
+     * V1.0/V1.2 rules without a location resolve to METHOD_ENTER / METHOD_RETURN /
+     * METHOD_THROW and behave exactly as before.
+     */
+    public EnhancementLocation effectiveLocation() {
+        return location != null ? location : EnhancementLocation.fromPhase(phase);
+    }
+
+    /**
+     * The authoritative V1.3 enhancement target, built from the rule's method
+     * selector, effective location and (for call-site rules) call-site selector.
+     */
+    public EnhancementTarget enhancementTarget() {
+        if (callSiteSelector != null) {
+            return EnhancementTarget.callSite(target, effectiveLocation(), callSiteSelector);
+        }
+        return EnhancementTarget.of(target, effectiveLocation());
     }
 
     public String script() {
@@ -169,6 +222,8 @@ public final class MockRule {
         private String description;
         private MethodSelector target;
         private InvokePhase phase;
+        private EnhancementLocation location;
+        private CallSiteSelector callSiteSelector;
         private String script;
         private String scriptHash;
         private int priority;
@@ -212,6 +267,16 @@ public final class MockRule {
 
         public Builder phase(InvokePhase phase) {
             this.phase = phase;
+            return this;
+        }
+
+        public Builder location(EnhancementLocation location) {
+            this.location = location;
+            return this;
+        }
+
+        public Builder callSiteSelector(CallSiteSelector callSiteSelector) {
+            this.callSiteSelector = callSiteSelector;
             return this;
         }
 

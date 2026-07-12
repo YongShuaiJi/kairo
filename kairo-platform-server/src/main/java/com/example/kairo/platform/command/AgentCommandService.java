@@ -10,6 +10,7 @@ import com.example.kairo.platform.service.RequestContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
@@ -30,6 +31,7 @@ public class AgentCommandService {
     private final Clock clock;
     private BytecodeDiagnosticExchange bytecodeExchange;
     private ScriptSessionExchange scriptSessionExchange;
+    private TargetResolutionExchange targetResolutionExchange;
 
     @Autowired
     void setBytecodeExchange(BytecodeDiagnosticExchange bytecodeExchange) {
@@ -39,6 +41,11 @@ public class AgentCommandService {
     @Autowired
     void setScriptSessionExchange(ScriptSessionExchange scriptSessionExchange) {
         this.scriptSessionExchange = scriptSessionExchange;
+    }
+
+    @Autowired
+    void setTargetResolutionExchange(TargetResolutionExchange targetResolutionExchange) {
+        this.targetResolutionExchange = targetResolutionExchange;
     }
 
     @Autowired
@@ -119,6 +126,27 @@ public class AgentCommandService {
             throw new IllegalStateException("Script session exchange unavailable");
         }
         scriptSessionExchange.register(String.valueOf(created.get("id")), scriptSource);
+        return created;
+    }
+
+    /**
+     * Enqueues a {@code RESOLVE_TARGET} command for save-time target resolution + drift validation
+     * (V1.3 §3.5) and registers it with the target-resolution exchange so the rule-save request can
+     * await the agent ack synchronously. Uses {@link Propagation#REQUIRES_NEW} so the command row
+     * commits independently of the caller's rule-save transaction: the agent cannot see a pending
+     * command inside an uncommitted transaction, so the resolution must be visible before the await.
+     * Single-flight ({@code maxAttempts = 1}) like script commands - a replayed resolution against a
+     * recompiled class would observe the wrong bytecode, so a timeout must surface as failure.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Map<String, Object> createTargetResolutionCommand(RequestContext context, String agentId,
+                                                             Map<String, Object> payload) {
+        Map<String, Object> created = enqueue(context, agentId, "RESOLVE_TARGET", payload,
+                "resolve:" + agentId + ":" + UUID.randomUUID(), 1, clock.instant());
+        if (targetResolutionExchange == null) {
+            throw new IllegalStateException("Target resolution exchange unavailable");
+        }
+        targetResolutionExchange.register(String.valueOf(created.get("id")));
         return created;
     }
 
@@ -216,6 +244,15 @@ public class AgentCommandService {
             } else {
                 scriptSessionExchange.fail(commandId,
                         errorMessage == null ? "script command failed" : errorMessage, result);
+            }
+        }
+        if ("RESOLVE_TARGET".equals(String.valueOf(current.get("command_type")))
+                && targetResolutionExchange != null) {
+            if ("ACKED".equals(resultStatus)) {
+                targetResolutionExchange.complete(commandId, result);
+            } else {
+                targetResolutionExchange.fail(commandId,
+                        errorMessage == null ? "target resolution failed" : errorMessage, result);
             }
         }
         eventWriter.recordEvent(context, "agent_command.ack", "agent_command", commandId,

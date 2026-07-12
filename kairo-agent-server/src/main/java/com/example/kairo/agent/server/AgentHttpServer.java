@@ -2,6 +2,9 @@ package com.example.kairo.agent.server;
 
 import com.example.kairo.agent.core.AgentRuntime;
 import com.example.kairo.agent.core.MethodInfo;
+import com.example.kairo.api.CallSiteSelector;
+import com.example.kairo.api.EnhancementLocation;
+import com.example.kairo.api.InvokeOpcode;
 import com.example.kairo.api.InvokePhase;
 import com.example.kairo.api.MethodSelector;
 import com.example.kairo.api.MockRule;
@@ -458,6 +461,8 @@ public final class AgentHttpServer implements AutoCloseable {
             String methodName,
             String methodDescriptor,
             InvokePhase phase,
+            EnhancementLocation location,
+            CallSiteSelector callSiteSelector,
             String script,
             int priority,
             int percentage,
@@ -479,6 +484,8 @@ public final class AgentHttpServer implements AutoCloseable {
                     required(body, "methodName"),
                     required(body, "methodDescriptor"),
                     InvokePhase.valueOf(textValue(body, "phase", "BEFORE")),
+                    readLocation(body),
+                    readCallSiteSelector(body),
                     required(body, "script"),
                     body.path("priority").asInt(0),
                     body.path("percentage").asInt(100),
@@ -490,7 +497,7 @@ public final class AgentHttpServer implements AutoCloseable {
         }
 
         MockRule toRule(List<MethodInfo> ignored) {
-            return MockRule.builder()
+            MockRule.Builder builder = MockRule.builder()
                     .id(id)
                     .version(version)
                     .name(name)
@@ -508,8 +515,47 @@ public final class AgentHttpServer implements AutoCloseable {
                     .maxHits(maxHits)
                     .expireAt(expireAt)
                     .failOpen(failOpen)
-                    .enabled(enabled)
-                    .build();
+                    .enabled(enabled);
+            // V1.3: an explicit location (and, for call-sites, a selector) is authoritative.
+            // A legacy rule without location leaves the builder null so MockRule derives
+            // the location from the legacy phase, preserving V1.0/V1.2 behaviour exactly.
+            if (location != null) {
+                builder.location(location);
+            }
+            if (callSiteSelector != null) {
+                builder.callSiteSelector(callSiteSelector);
+            }
+            return builder.build();
+        }
+
+        /** A constructor rule targets {@code <init>}; the platform publish path must use it. */
+        boolean isConstructorRule() {
+            return "<init>".equals(methodName);
+        }
+
+        private static EnhancementLocation readLocation(JsonNode body) {
+            String value = textValue(body, "location", null);
+            return value == null || value.isBlank()
+                    ? null
+                    : EnhancementLocation.valueOf(value.toUpperCase(java.util.Locale.ROOT));
+        }
+
+        private static CallSiteSelector readCallSiteSelector(JsonNode body) {
+            JsonNode node = body.path("callSiteSelector");
+            if (node.isMissingNode() || node.isNull()) {
+                return null;
+            }
+            CallSiteSelector.Builder builder = CallSiteSelector.builder()
+                    .owner(required(node, "owner"))
+                    .name(required(node, "name"))
+                    .descriptor(required(node, "descriptor"))
+                    .opcode(InvokeOpcode.valueOf(required(node, "opcode").toUpperCase(java.util.Locale.ROOT)))
+                    .occurrenceIndex(node.path("occurrenceIndex").asInt(0));
+            String fingerprint = textValue(node, "fingerprint", null);
+            if (fingerprint != null) {
+                builder.fingerprint(fingerprint);
+            }
+            return builder.build();
         }
 
         private static String required(JsonNode body, String field) {

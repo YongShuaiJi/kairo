@@ -1,5 +1,6 @@
 package com.example.kairo.platform.service;
 
+import com.example.kairo.api.EnhancementLocation;
 import com.example.kairo.platform.domain.OperationPlanStatus;
 import com.example.kairo.platform.fencing.FencingTokenService;
 import com.example.kairo.platform.persistence.mapper.AttachRegistrationMapper;
@@ -12,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,6 +42,13 @@ public class PlatformCoreService {
     private final RuleVersionLifecycleMapper ruleVersionLifecycleMapper;
     private final BusinessIdService businessIdService;
     private final Clock clock;
+    private EnhancementTargetResolutionService enhancementTargetResolutionService;
+
+    @Autowired
+    void setEnhancementTargetResolutionService(
+            @Lazy EnhancementTargetResolutionService enhancementTargetResolutionService) {
+        this.enhancementTargetResolutionService = enhancementTargetResolutionService;
+    }
     private final ObjectMapper mapper = JsonMapper.builder()
             .enable(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY)
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
@@ -645,7 +654,7 @@ public class PlatformCoreService {
                 ruleLifecycleStatus(request, "status", "ENABLED"),
                 context.actor(),
                 timestamp(now));
-        insertRuleVersion(context, id, 1L, request, now);
+        insertRuleVersion(context, id, 1L, request, now, scope.applicationId(), scope.environmentId());
         recordAudit(context, "rule.create", "rule", id, 1,
                 "", hash(request), "SUCCESS", optionalString(request, "reason", "create rule"),
                 Map.of("version", 1L));
@@ -658,7 +667,8 @@ public class PlatformCoreService {
         Map<String, Object> rule = getById("rule", ruleId);
         long version = nextScopedVersion("rule_version", "rule_id", ruleId);
         Instant now = clock.instant();
-        insertRuleVersion(context, ruleId, version, request, now);
+        insertRuleVersion(context, ruleId, version, request, now,
+                String.valueOf(rule.get("application_id")), String.valueOf(rule.get("environment_id")));
         platformCoreMapper.updateRuleAfterVersion(ruleId, version, context.actor(), timestamp(now));
         recordAudit(context, "rule_version.create", "rule", ruleId, version,
                 hash(rule), hash(request), "SUCCESS", optionalString(request, "reason", "create rule version"),
@@ -952,8 +962,16 @@ public class PlatformCoreService {
     }
 
     private void insertRuleVersion(RequestContext context, String ruleId, long version,
-                                   Map<String, Object> request, Instant now) {
+                                   Map<String, Object> request, Instant now,
+                                   String applicationId, String environmentId) {
         String versionId = ruleId + ":" + version;
+        List<Map<String, Object>> targets = collectRuleTargets(request);
+        // V1.3 §3.5: resolve constructor/call-site targets against live bytecode before any row is
+        // written so a drifted or unenhanceable target aborts the save atomically. Method-location
+        // rules (the three legacy phases + FINALLY) skip resolution and keep the V1.2 save path.
+        for (Map<String, Object> target : targets) {
+            resolveTargetIfNeeded(context, applicationId, environmentId, target);
+        }
         Object script = request.getOrDefault("script", Map.of());
         platformCoreMapper.insertRuleVersion(versionId, ruleId, version,
                 ruleLifecycleStatus(request, "versionStatus", "ENABLED"),
@@ -964,23 +982,117 @@ public class PlatformCoreService {
                 jsonValue(request, "governance", Map.of()),
                 context.actor(),
                 timestamp(now));
-        List<?> targets = optionalList(request, "targets");
-        if (targets.isEmpty() && request.containsKey("target")) {
-            targets = List.of(request.get("target"));
-        }
-        for (Object item : targets) {
-            Map<String, Object> target = asMap(item, "targets");
-            platformCoreMapper.insertRuleTarget("rule-target-" + UUID.randomUUID(), versionId,
-                    requiredString(target, "protocol", "JAVA_METHOD"),
-                    requiredString(target, "className", null),
-                    requiredString(target, "methodName", null),
-                    jsonValue(target, "matcher", Map.of()),
-                    timestamp(now));
+        for (Map<String, Object> target : targets) {
+            insertOneRuleTarget(versionId, target, now);
         }
         for (Object capability : optionalList(request, "capabilities")) {
             platformCoreMapper.insertRuleCapability("rule-capability-" + UUID.randomUUID(),
                     versionId, String.valueOf(capability), timestamp(now));
         }
+    }
+
+    private List<Map<String, Object>> collectRuleTargets(Map<String, Object> request) {
+        List<?> targets = optionalList(request, "targets");
+        if (targets.isEmpty() && request.containsKey("target")) {
+            targets = List.of(request.get("target"));
+        }
+        List<Map<String, Object>> collected = new ArrayList<>();
+        for (Object item : targets) {
+            collected.add(asMap(item, "targets"));
+        }
+        return collected;
+    }
+
+    /**
+     * Resolve a constructor or call-site target before persisting it, stamping the fresh call-site
+     * fingerprint back onto the selector so a later re-save can detect drift against this baseline.
+     * Throws on DRIFTED / NOT_FOUND / REJECTED (and no-agent / timeout), aborting the rule save.
+     */
+    private void resolveTargetIfNeeded(RequestContext context, String applicationId, String environmentId,
+                                       Map<String, Object> target) {
+        EnhancementLocation location = readRuleTargetLocation(target);
+        if (location == null || (!location.isConstructorLocation() && !location.isCallSiteLocation())) {
+            return;
+        }
+        if (enhancementTargetResolutionService == null) {
+            throw new IllegalStateException("EnhancementTargetResolutionService is not wired");
+        }
+        Map<String, Object> resolved = enhancementTargetResolutionService.resolveAndValidate(
+                context, applicationId, environmentId, target);
+        stampResolvedCallSiteFingerprint(target, resolved);
+    }
+
+    private EnhancementLocation readRuleTargetLocation(Map<String, Object> target) {
+        Object value = target.get("location");
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        if (text.isBlank()) {
+            return null;
+        }
+        try {
+            return EnhancementLocation.valueOf(text.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw PlatformException.badRequest("INVALID_FIELD", "Invalid enhancement location: " + text);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void stampResolvedCallSiteFingerprint(Map<String, Object> target, Map<String, Object> resolved) {
+        Object identity = resolved.get("resolvedIdentity");
+        if (!(identity instanceof Map<?, ?> raw)) {
+            return;
+        }
+        Object fingerprint = raw.get("fingerprint");
+        if (fingerprint == null || String.valueOf(fingerprint).isBlank()) {
+            return;
+        }
+        Object selector = target.get("callSiteSelector");
+        if (!(selector instanceof Map<?, ?> map)) {
+            return;
+        }
+        Map<String, Object> mutable = new LinkedHashMap<>();
+        map.forEach((key, value) -> mutable.put(String.valueOf(key), value));
+        mutable.put("fingerprint", fingerprint);
+        target.put("callSiteSelector", mutable);
+    }
+
+    private void insertOneRuleTarget(String versionId, Map<String, Object> target, Instant now) {
+        EnhancementLocation location = readRuleTargetLocation(target);
+        Object callSiteSelector = target.get("callSiteSelector");
+        if (callSiteSelector != null && location != null && !location.isCallSiteLocation()) {
+            throw PlatformException.badRequest("INVALID_FIELD",
+                    "callSiteSelector 只能用于调用点位置（CALL_*），当前位置：" + location);
+        }
+        Map<String, Object> matcher = mutableMatcher(target);
+        if (location != null) {
+            matcher.put("location", location.name());
+            if (callSiteSelector != null) {
+                matcher.put("callSiteSelector", callSiteSelector);
+            }
+        }
+        platformCoreMapper.insertRuleTarget("rule-target-" + UUID.randomUUID(), versionId,
+                requiredString(target, "protocol", "JAVA_METHOD"),
+                requiredString(target, "className", null),
+                requiredString(target, "methodName", null),
+                json(matcher),
+                location == null ? null : location.name(),
+                callSiteSelector == null ? null : json(callSiteSelector),
+                timestamp(now));
+    }
+
+    private Map<String, Object> mutableMatcher(Map<String, Object> target) {
+        Object value = target.get("matcher");
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> copy = new LinkedHashMap<>();
+            map.forEach((key, entry) -> copy.put(String.valueOf(key), entry));
+            return copy;
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            return new LinkedHashMap<>(PlatformJson.readMap(text));
+        }
+        return new LinkedHashMap<>();
     }
 
     private void validateRolloutResource(String applicationId, String environmentId,

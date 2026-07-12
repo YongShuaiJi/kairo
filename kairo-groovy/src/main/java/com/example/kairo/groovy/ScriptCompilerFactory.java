@@ -2,6 +2,7 @@ package com.example.kairo.groovy;
 
 import com.example.kairo.api.MockRule;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 
 /**
@@ -22,4 +23,15 @@ public interface ScriptCompilerFactory {
      * and policy revision select the security policy and revision recorded in the metadata.
      */
     CompiledMockScript compile(Method targetMethod, MockRule rule);
+
+    /**
+     * Compile the script declared by {@code rule} for the constructor
+     * {@code targetConstructor}. V1.3 constructor-enhancement rules have no reflective
+     * {@code Method}, so they take a separate compile path that resolves the target
+     * ClassLoader from the constructor's declaring class. The default implementation
+     * is provided for source compatibility with implementations that predate V1.3.
+     */
+    default CompiledMockScript compile(Constructor<?> targetConstructor, MockRule rule) {
+        throw new UnsupportedOperationException("Constructor script compilation is not supported by this factory");
+    }
 }

@@ -1,6 +1,6 @@
 package com.example.kairo.core;
 
-import com.example.kairo.api.InvokePhase;
+import com.example.kairo.api.EnhancementLocation;
 import com.example.kairo.api.MethodMetadata;
 import com.example.kairo.api.MockDecision;
 import com.example.kairo.api.ScriptLog;
@@ -21,6 +21,21 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+/**
+ * Location-aware rule dispatcher.
+ *
+ * <p>V1.3 runs rules by authoritative {@link EnhancementLocation} while preserving
+ * the V1.2 method-path behaviour exactly: a method invocation still runs
+ * BEFORE-on-enter, RETURN/THROWS-on-exit and fail-open on validation error. New
+ * locations add FINALLY (observe-only, runs on every method exit), constructor
+ * locations (enter after super / return / throw) and call-site locations
+ * (before / return / throw around a single invoke instruction).
+ *
+ * <p>The V1 {@code onEnter}/{@code onExit} entry points handle method locations;
+ * the V2 {@code onEnter}/{@code onExit} overloads handle constructor and
+ * call-site locations via an {@link InvocationState} prepared by the bridge
+ * dispatcher from a {@link com.example.kairo.bridge.InvocationEnvelope}.
+ */
 public final class RuleDispatcher implements AutoCloseable {
 
     private final RuleRegistry ruleRegistry;
@@ -78,6 +93,8 @@ public final class RuleDispatcher implements AutoCloseable {
                 new ThreadPoolExecutor.AbortPolicy());
     }
 
+    // -------------------------------------------------------- V1 method path (BEFORE/RETURN/THROWS + FINALLY)
+
     public EnterResult onEnter(MethodKey methodKey, MethodMetadata method, Object target, Object[] arguments) {
         if (!enabled) {
             return EnterResult.proceedWithoutContext();
@@ -86,91 +103,207 @@ public final class RuleDispatcher implements AutoCloseable {
         if (ruleSet.isEmpty()) {
             return EnterResult.proceedWithoutContext();
         }
-
-        InvocationState state = new InvocationState(methodKey, method, target, arguments == null ? new Object[0] : arguments);
-        if (!ruleSet.hasPhase(InvokePhase.BEFORE)) {
-            return EnterResult.proceed(state, null);
-        }
-
-        MockDecision decision = runPhase(ruleSet.rules(InvokePhase.BEFORE), InvokePhase.BEFORE, state, null, null);
-        try {
-            state.arguments(validator.validateArguments(method, state.arguments()));
-            if (decision.type() == MockDecision.Type.RETURN) {
-                Object returnValue = validator.validateReturnValue(method, decision.returnValue());
-                MockDecision terminal = MockDecision.returnValue(returnValue);
-                state.beforeTerminalDecision(terminal);
-                return EnterResult.returnValue(state, state.arguments(), returnValue);
-            }
-            if (decision.type() == MockDecision.Type.THROW) {
-                Throwable throwable = validator.validateThrowable(method, decision.throwable());
-                MockDecision terminal = MockDecision.throwException(throwable);
-                state.beforeTerminalDecision(terminal);
-                return EnterResult.throwException(state, state.arguments(), throwable);
-            }
+        InvocationState state = new InvocationState(methodKey, method, target,
+                arguments == null ? new Object[0] : arguments);
+        if (!ruleSet.hasLocation(EnhancementLocation.METHOD_ENTER)) {
             return EnterResult.proceed(state, state.arguments());
-        } catch (Throwable e) {
-            log.error("BEFORE validation failed; fail-open", e);
-            return EnterResult.proceed(state, arguments);
         }
+        return enter(state, EnhancementLocation.METHOD_ENTER);
     }
 
     public ExitResult onExit(InvocationState state, Object returnValue, Throwable throwable) {
         if (!enabled || state == null) {
             return ExitResult.proceed();
         }
+        Object effectiveReturn = returnValue;
+        Throwable effectiveThrow = throwable;
+        boolean terminal = false;
+        MockDecision terminalDecision = null;
+
         if (state.hasBeforeTerminalDecision()) {
-            return toExitResult(state.beforeTerminalDecision());
+            terminalDecision = state.beforeTerminalDecision();
+            terminal = true;
+        } else {
+            RuleSet ruleSet = ruleRegistry.rules(state.methodKey());
+            if (!ruleSet.isEmpty()) {
+                EnhancementLocation primary = primaryExitLocation(state, throwable);
+                MockDecision decision = runRules(ruleSet.rules(primary), primary, state, returnValue, throwable);
+                // Constructors cannot substitute the constructed object, so a RETURN
+                // decision at a constructor location is ignored (observe-only).
+                if (decision.type() != MockDecision.Type.PROCEED
+                        && !(isConstructorState(state) && decision.type() == MockDecision.Type.RETURN)) {
+                    terminalDecision = decision;
+                    terminal = true;
+                }
+            }
         }
 
-        RuleSet ruleSet = ruleRegistry.rules(state.methodKey());
-        if (ruleSet.isEmpty()) {
+        if (terminal && terminalDecision.type() == MockDecision.Type.RETURN) {
+            effectiveReturn = validateExitReturn(state, terminalDecision.returnValue(), throwable == null);
+            effectiveThrow = null;
+        } else if (terminal && terminalDecision.type() == MockDecision.Type.THROW) {
+            effectiveThrow = validator.validateThrowable(state.method(), terminalDecision.throwable());
+            effectiveReturn = null;
+        }
+
+        runFinally(state, effectiveReturn, effectiveThrow);
+
+        if (!terminal) {
             return ExitResult.proceed();
         }
+        if (terminalDecision.type() == MockDecision.Type.RETURN) {
+            return ExitResult.returnValue(effectiveReturn);
+        }
+        return ExitResult.throwException(effectiveThrow);
+    }
 
-        InvokePhase phase = throwable == null ? InvokePhase.RETURN : InvokePhase.THROWS;
-        MockDecision decision = runPhase(ruleSet.rules(phase), phase, state, returnValue, throwable);
+    // -------------------------------------------------------- V2 constructor / call-site path
+
+    /**
+     * Generic enter for a prepared state at an enter-side location
+     * (METHOD_ENTER, CONSTRUCTOR_AFTER_SUPER, CALL_BEFORE). Used by both the V1
+     * method path and the V2 bridge dispatcher.
+     */
+    public EnterResult enter(InvocationState state, EnhancementLocation location) {
+        if (!enabled || state == null) {
+            return EnterResult.proceedWithoutContext();
+        }
+        RuleSet ruleSet = ruleRegistry.rules(state.methodKey());
+        if (ruleSet.isEmpty() || !ruleSet.hasLocation(location)) {
+            return EnterResult.proceed(state, currentArgs(state));
+        }
+        MockDecision decision = runRules(ruleSet.rules(location), location, state, null, null);
+        // CONSTRUCTOR_AFTER_SUPER is observe-only: the super call has already run
+        // and the constructor body cannot be skipped or its result substituted, so
+        // the script runs for side-effects only and the construct always proceeds.
+        if (!mayShortCircuit(location)) {
+            return EnterResult.proceed(state, currentArgs(state));
+        }
         try {
-            if (decision.type() == MockDecision.Type.RETURN) {
-                return ExitResult.returnValue(validator.validateReturnValue(state.method(), decision.returnValue()));
+            validateCurrentArgs(state);
+            if (decision.type() == MockDecision.Type.RETURN && mayReturnAt(location)) {
+                Object returnValue = validateEnterReturn(state, location, decision.returnValue());
+                state.beforeTerminalDecision(MockDecision.returnValue(returnValue));
+                return EnterResult.returnValue(state, currentArgs(state), returnValue);
             }
             if (decision.type() == MockDecision.Type.THROW) {
-                return ExitResult.throwException(validator.validateThrowable(state.method(), decision.throwable()));
+                Throwable throwable = validator.validateThrowable(state.method(), decision.throwable());
+                state.beforeTerminalDecision(MockDecision.throwException(throwable));
+                return EnterResult.throwException(state, currentArgs(state), throwable);
             }
-            return ExitResult.proceed();
+            return EnterResult.proceed(state, currentArgs(state));
         } catch (Throwable e) {
-            log.error(phase + " validation failed; fail-open", e);
-            return ExitResult.proceed();
+            log.error(location + " validation failed; fail-open", e);
+            return EnterResult.proceed(state, state.originalArguments());
         }
+    }
+
+    /**
+     * Generic exit for a prepared state at a return/throw location, with FINALLY
+     * for method locations. Used by the V2 bridge dispatcher.
+     */
+    public ExitResult exit(InvocationState state, Object returnValue, Throwable throwable, EnhancementLocation location) {
+        // location here is the enter-side location the state was created with; the
+        // primary exit location is derived from the outcome.
+        return onExit(state, returnValue, throwable);
     }
 
     public void enabled(boolean enabled) {
         this.enabled = enabled;
     }
 
-    private MockDecision runPhase(List<CompiledRule> rules, InvokePhase phase, InvocationState state,
+    // -------------------------------------------------------- internals
+
+    private EnhancementLocation primaryExitLocation(InvocationState state, Throwable throwable) {
+        if (state.isCallSite()) {
+            return throwable == null ? EnhancementLocation.CALL_RETURN : EnhancementLocation.CALL_THROW;
+        }
+        if (state.method() != null && state.method().isConstructor()) {
+            return throwable == null ? EnhancementLocation.CONSTRUCTOR_RETURN : EnhancementLocation.CONSTRUCTOR_THROW;
+        }
+        return throwable == null ? EnhancementLocation.METHOD_RETURN : EnhancementLocation.METHOD_THROW;
+    }
+
+    private void runFinally(InvocationState state, Object returnValue, Throwable throwable) {
+        if (state.isCallSite() || (state.method() != null && state.method().isConstructor())) {
+            return;
+        }
+        RuleSet ruleSet = ruleRegistry.rules(state.methodKey());
+        if (ruleSet.isEmpty() || !ruleSet.hasLocation(EnhancementLocation.METHOD_FINALLY)) {
+            return;
+        }
+        // FINALLY observes the final outcome; its decisions are ignored.
+        runRules(ruleSet.rules(EnhancementLocation.METHOD_FINALLY),
+                EnhancementLocation.METHOD_FINALLY, state, returnValue, throwable);
+    }
+
+    private Object[] currentArgs(InvocationState state) {
+        return state.isCallSite() ? state.callArguments() : state.arguments();
+    }
+
+    private void validateCurrentArgs(InvocationState state) {
+        if (state.isCallSite()) {
+            if (state.callArguments() != null) {
+                state.callArguments(validator.validateCallArguments(
+                        state.callSiteSelector(), state.callArguments(), loaderOf(state)));
+            }
+        } else {
+            state.arguments(validator.validateArguments(state.method(), state.arguments()));
+        }
+    }
+
+    private Object validateEnterReturn(InvocationState state, EnhancementLocation location, Object returnValue) {
+        if (location == EnhancementLocation.CALL_BEFORE) {
+            return validator.validateCallResult(state.callSiteSelector(), returnValue, loaderOf(state));
+        }
+        return validator.validateReturnValue(state.method(), returnValue);
+    }
+
+    private Object validateExitReturn(InvocationState state, Object returnValue, boolean wasNormalReturn) {
+        if (state.isCallSite()) {
+            return validator.validateCallResult(state.callSiteSelector(), returnValue, loaderOf(state));
+        }
+        return validator.validateReturnValue(state.method(), returnValue);
+    }
+
+    private boolean mayReturnAt(EnhancementLocation location) {
+        // Constructors never substitute a return value: the object is already under
+        // construction and substituting it is unsafe. Enter-side method/call-site
+        // locations may short-circuit with a return value.
+        return !location.isConstructorLocation();
+    }
+
+    /** Enter locations that may short-circuit (skip the body/call) with a return or throw. */
+    private boolean mayShortCircuit(EnhancementLocation location) {
+        return location == EnhancementLocation.METHOD_ENTER || location == EnhancementLocation.CALL_BEFORE;
+    }
+
+    private boolean isConstructorState(InvocationState state) {
+        return state.method() != null && state.method().isConstructor();
+    }
+
+    private ClassLoader loaderOf(InvocationState state) {
+        MethodMetadata method = state.method();
+        return method == null ? null : method.targetClassLoader();
+    }
+
+    private MockDecision runRules(List<CompiledRule> rules, EnhancementLocation location, InvocationState state,
                                   Object returnValue, Throwable throwable) {
         MockDecision lastProceed = MockDecision.proceed();
         long now = clock.millis();
+        boolean enterSide = location.isEnterLocation();
+        boolean finallyLocation = location.isFinallyLocation();
         for (CompiledRule compiledRule : rules) {
             if (!compiledRule.isActive(now)
                     || !samplingPolicy.shouldRun(compiledRule.rule().percentage())
                     || !compiledRule.tryClaimHit()) {
                 continue;
             }
-            try (ReentryGuard.Scope scope = reentryGuard.enter(state.methodKey(), compiledRule.rule().id())) {
+            try (ReentryGuard.Scope scope = reentryGuard.enter(state.methodKey(), location, compiledRule.rule().id())) {
                 if (!scope.entered()) {
                     continue;
                 }
-                DefaultInvocationContext context = new DefaultInvocationContext(
-                        phase,
-                        state.arguments(),
-                        state.target(),
-                        returnValue,
-                        throwable,
-                        state.method(),
-                        objectFactory,
-                        log
-                );
+                DefaultInvocationContext context = buildContext(location, state, returnValue, throwable);
                 long started = System.nanoTime();
                 long timeoutMillis = compiledRule.hasExecuted()
                         ? config.scriptTimeoutMillis()
@@ -209,10 +342,20 @@ public final class RuleDispatcher implements AutoCloseable {
                 if (decision == null) {
                     decision = MockDecision.proceed();
                 }
-                if (phase == InvokePhase.BEFORE && decision.type() == MockDecision.Type.PROCEED) {
-                    Object[] nextArguments = decision.hasArguments() ? decision.arguments() : context.arguments();
-                    state.arguments(validator.validateArguments(state.method(), nextArguments));
-                    lastProceed = MockDecision.proceed(state.arguments());
+                if (finallyLocation) {
+                    // observe-only; never mutates the outcome
+                    continue;
+                }
+                if (enterSide && decision.type() == MockDecision.Type.PROCEED) {
+                    Object[] nextArguments = decision.hasArguments() ? decision.arguments() : contextArguments(context, state);
+                    if (state.isCallSite()) {
+                        state.callArguments(validator.validateCallArguments(
+                                state.callSiteSelector(), nextArguments, loaderOf(state)));
+                        lastProceed = MockDecision.proceed();
+                    } else {
+                        state.arguments(validator.validateArguments(state.method(), nextArguments));
+                        lastProceed = MockDecision.proceed(state.arguments());
+                    }
                     continue;
                 }
                 if (decision.type() == MockDecision.Type.PROCEED) {
@@ -227,22 +370,29 @@ public final class RuleDispatcher implements AutoCloseable {
         return lastProceed;
     }
 
-    private ExitResult toExitResult(MockDecision decision) {
-        if (decision.type() == MockDecision.Type.RETURN) {
-            return ExitResult.returnValue(decision.returnValue());
-        }
-        if (decision.type() == MockDecision.Type.THROW) {
-            return ExitResult.throwException(decision.throwable());
-        }
-        return ExitResult.proceed();
+    private Object[] contextArguments(DefaultInvocationContext context, InvocationState state) {
+        return state.isCallSite() ? context.callArguments() : context.arguments();
     }
 
-    /**
-     * Fail-open log message for a rule whose script threw. If the error tripped the circuit
-     * breaker, the reason is included so the transition is distinguishable from a one-off script
-     * error in the runtime event stream &mdash; a steady-state error and the error that finally
-     * opens the circuit would otherwise log identically.
-     */
+    private DefaultInvocationContext buildContext(EnhancementLocation location, InvocationState state,
+                                                  Object returnValue, Throwable throwable) {
+        if (state.isCallSite()) {
+            Object callResult = location.isReturnLocation() ? returnValue : null;
+            Throwable callThrowable = location.isThrowLocation() ? throwable : null;
+            return new DefaultInvocationContext(location, state.callArguments(), state.target(),
+                    callResult, callThrowable, state.method(), objectFactory, log,
+                    state.method(), state.callSiteSelector(), state.callArguments(), callResult, callThrowable);
+        }
+        Object result = location.isReturnLocation() ? returnValue : null;
+        Throwable thr = location.isThrowLocation() ? throwable : null;
+        if (location == EnhancementLocation.METHOD_FINALLY) {
+            result = returnValue;
+            thr = throwable;
+        }
+        return new DefaultInvocationContext(location, state.arguments(), state.target(),
+                result, thr, state.method(), objectFactory, log);
+    }
+
     private static String failOpenMessage(CompiledRule compiledRule) {
         String id = compiledRule.rule().id();
         CircuitBreakReason reason = compiledRule.circuitBreakReason();

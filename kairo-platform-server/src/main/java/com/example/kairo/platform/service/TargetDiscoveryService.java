@@ -56,6 +56,82 @@ public final class TargetDiscoveryService {
         return aggregate.values().stream().limit(200).toList();
     }
 
+    /**
+     * V1.3 §3.5: read-only enumeration of call-site candidates inside a caller method, for the
+     * guided call-site selector. Dispatches {@code LIST_CALL_SITES} to one live agent in scope and
+     * returns every matching {@code invoke*} instruction in visit order with its occurrence index
+     * and freshly captured fingerprint, so the platform can present choices and persist a stable
+     * identity. Returns an empty candidate list when no agent is online.
+     */
+    public Map<String, Object> listCallSites(RequestContext context, String applicationId,
+                                             String environmentId, Map<String, Object> request) {
+        String application = required(applicationId, "applicationId");
+        String environment = required(environmentId, "environmentId");
+        String classId = requiredText(request, "classId");
+        String callerMethodName = requiredText(request, "callerMethodName");
+        String callerMethodDescriptor = requiredText(request, "callerMethodDescriptor");
+        List<Map<String, Object>> agents = normalize(targetDiscoveryMapper.activeAgents(application, environment));
+        if (agents.isEmpty()) {
+            return Map.of("candidates", List.of(), "count", 0, "agentAvailable", false);
+        }
+        String agentId = String.valueOf(agents.get(0).get("agent_id"));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("commandType", "LIST_CALL_SITES");
+        payload.put("classId", classId);
+        payload.put("callerMethodName", callerMethodName);
+        payload.put("callerMethodDescriptor", callerMethodDescriptor);
+        copyIfPresent(request, payload, "calleeOwner");
+        copyIfPresent(request, payload, "calleeName");
+        copyIfPresent(request, payload, "calleeDescriptor");
+        copyIfPresent(request, payload, "opcode");
+        long bucket = Instant.now().getEpochSecond() / 5;
+        Map<String, Object> command = commandService.enqueue(
+                context,
+                agentId,
+                "LIST_CALL_SITES",
+                payload,
+                "call-sites:" + agentId + ":" + classId + ":" + callerMethodName
+                        + callerMethodDescriptor + ":" + PlatformJson.sha256(payload) + ":" + bucket,
+                2,
+                Instant.now());
+        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(8).toNanos();
+        while (System.nanoTime() < deadline) {
+            Map<String, Object> current = commandService.command(String.valueOf(command.get("id")));
+            String status = String.valueOf(current.get("status"));
+            if ("FAILED".equals(status)) {
+                throw PlatformException.conflict("CALL_SITE_SCAN_FAILED",
+                        "调用点扫描失败",
+                        Map.of("agentId", agentId, "commandId", command.get("id")));
+            }
+            if ("ACKED".equals(status)) {
+                Map<String, Object> result = PlatformJson.readMap(String.valueOf(current.get("result_json")));
+                Map<String, Object> enriched = new LinkedHashMap<>(result);
+                enriched.put("agentId", agentId);
+                enriched.put("agentAvailable", true);
+                return enriched;
+            }
+            sleep();
+        }
+        throw PlatformException.conflict("CALL_SITE_SCAN_TIMEOUT",
+                "调用点扫描超时，Agent 未在限定时间内响应",
+                Map.of("agentId", agentId, "commandId", command.get("id")));
+    }
+
+    private void copyIfPresent(Map<String, Object> source, Map<String, Object> target, String key) {
+        Object value = source.get(key);
+        if (value != null && !String.valueOf(value).isBlank()) {
+            target.put(key, value);
+        }
+    }
+
+    private String requiredText(Map<String, Object> request, String key) {
+        Object value = request.get(key);
+        if (value == null || String.valueOf(value).isBlank()) {
+            throw PlatformException.badRequest("FIELD_REQUIRED", "缺少必填字段：" + key);
+        }
+        return String.valueOf(value);
+    }
+
     private boolean collectIfCompleted(Map<String, Object> command,
                                        List<Map<String, Object>> agents,
                                        Map<String, Map<String, Object>> aggregate) {

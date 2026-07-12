@@ -11,8 +11,14 @@ import com.example.kairo.agent.core.script.ScriptSessionHost;
 import com.example.kairo.agent.core.script.ScriptSessionLimits;
 import com.example.kairo.agent.core.script.ScriptSessionManager;
 import com.example.kairo.agent.core.script.ScriptSessionTarget;
+import com.example.kairo.api.CallSiteIdentity;
+import com.example.kairo.api.CallSiteSelector;
+import com.example.kairo.api.EnhancementLocation;
+import com.example.kairo.api.EnhancementTarget;
+import com.example.kairo.api.InvokeOpcode;
 import com.example.kairo.api.MethodSelector;
 import com.example.kairo.api.MockRule;
+import com.example.kairo.api.TargetMatchResult;
 import com.example.kairo.bridge.KairoBridge;
 import com.example.kairo.core.AgentBridgeDispatcher;
 import com.example.kairo.core.ClassLoaderIdentity;
@@ -29,7 +35,9 @@ import com.example.kairo.object.DefaultRuntimeObjectFactory;
 
 import java.lang.instrument.Instrumentation;
 import java.lang.management.ManagementFactory;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.net.InetAddress;
 import java.time.Clock;
 import java.util.Comparator;
@@ -63,6 +71,8 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     private final DecompilerService decompilerService;
     private final ScriptSessionManager scriptSessionManager;
     private final ConcurrentHashMap<String, PublishedRule> publishedRules = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, EnhancementTarget> targetByRuleId = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, EnhancementTarget> targetByRecordingId = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, RecordingRegistration> activeRecordings = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> degradedClasses = new ConcurrentHashMap<>();
     private final AtomicReference<AgentState> state = new AtomicReference<>(AgentState.STARTING);
@@ -74,6 +84,7 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     private final long startTimeMillis = System.currentTimeMillis();
     private volatile boolean globallyEnabled = true;
     private volatile String loadMode = "unknown";
+    private final CallSiteScanner callSiteScanner = new CallSiteScanner();
 
     public AgentRuntime(Instrumentation instrumentation) {
         this(instrumentation, RuleDispatcherConfig.defaults());
@@ -142,20 +153,26 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
         if (method.isSynthetic() || method.isBridge()) {
             throw new IllegalArgumentException("Synthetic and bridge methods cannot be mocked: " + method);
         }
-        MethodSignature signature = signatureOf(method);
+        rejectUnenhanceableMethod(method);
+        MockRule effectiveRule = rule.callSiteSelector() != null
+                ? resolveCallSiteRule(method, rule)
+                : rule;
+        EnhancementTarget newTarget = enhancementTargetOf(method, effectiveRule);
         MethodKey methodKey = MethodKey.of(method);
-        RuleSet oldRuleSet = ruleRegistry.rules(methodKey);
         PublishedRule previous = publishedRules.get(rule.id());
-        boolean oldActive = shouldInstrument(methodKey, oldRuleSet);
+        EnhancementTarget previousTarget = targetByRuleId.get(rule.id());
         boolean publishApplied = false;
+        boolean targetTransitioned = false;
         try {
-            CompiledRule compiledRule = rulePublisher.publish(method, rule);
+            CompiledRule compiledRule = rulePublisher.publish(method, effectiveRule);
             publishApplied = true;
-            publishedRules.put(rule.id(), new PublishedRule(method, methodKey, compiledRule.rule(), compiledRule));
-            applyInstrumentationTransition(method, signature, oldActive,
-                    shouldInstrument(methodKey, ruleRegistry.rules(methodKey)));
+            publishedRules.put(rule.id(), new PublishedRule(method, null, methodKey,
+                    compiledRule.rule(), compiledRule));
+            targetTransitioned = applyTargetUpdate(method.getDeclaringClass(), previousTarget, newTarget);
+            targetByRuleId.put(rule.id(), newTarget);
             eventBuffer.record(previous == null ? "rule.create" : "rule.update", actor, rule.id(),
-                    methodKey.toString(), "Published rule version " + compiledRule.rule().version());
+                    methodKey.toString(), "Published rule version " + compiledRule.rule().version()
+                            + " at " + effectiveRule.effectiveLocation());
             return compiledRule;
         } catch (RuntimeException e) {
             if (publishApplied) {
@@ -167,10 +184,66 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                     publishedRules.put(rule.id(), previous);
                 }
                 try {
-                    restoreInstrumentationState(method, signature, oldActive);
+                    if (targetTransitioned) {
+                        applyTargetUpdate(method.getDeclaringClass(), newTarget, previousTarget);
+                        targetByRuleId.put(rule.id(), previousTarget);
+                    }
                 } catch (RuntimeException restoreFailure) {
                     degradedClasses.put(method.getDeclaringClass().getName(), restoreFailure.getMessage());
                     enterDegraded("Cannot restore instrumentation for " + method.getDeclaringClass().getName());
+                    e.addSuppressed(restoreFailure);
+                }
+            }
+            eventBuffer.record("rule.publish.failed", actor, rule.id(), methodKey.toString(), e.getMessage());
+            throw e;
+        }
+    }
+
+    /**
+     * Publish a constructor-enhancement rule. Constructors do not have a
+     * reflective {@code Method}, so they take a separate path that builds a
+     * {@code <init>} target and weaves {@link ConstructorAdvice}.
+     */
+    public CompiledRule publishConstructor(Constructor<?> constructor, MockRule rule, String actor) {
+        requireOperationalForPublish();
+        if (Modifier.isNative(constructor.getModifiers())) {
+            throw new IllegalArgumentException("Native constructors cannot be enhanced: " + constructor);
+        }
+        rejectUnmodifiable(constructor.getDeclaringClass());
+        EnhancementTarget newTarget = constructorTargetOf(constructor, rule);
+        MethodKey methodKey = new MethodKey(constructor.getDeclaringClass(), "<init>",
+                MethodDescriptor.of(constructor));
+        PublishedRule previous = publishedRules.get(rule.id());
+        EnhancementTarget previousTarget = targetByRuleId.get(rule.id());
+        boolean publishApplied = false;
+        boolean targetTransitioned = false;
+        try {
+            CompiledRule compiledRule = rulePublisher.publishConstructor(constructor, rule);
+            publishApplied = true;
+            publishedRules.put(rule.id(), new PublishedRule(null, constructor, methodKey,
+                    compiledRule.rule(), compiledRule));
+            targetTransitioned = applyTargetUpdate(constructor.getDeclaringClass(), previousTarget, newTarget);
+            targetByRuleId.put(rule.id(), newTarget);
+            eventBuffer.record(previous == null ? "rule.create" : "rule.update", actor, rule.id(),
+                    methodKey.toString(), "Published constructor rule at " + rule.effectiveLocation());
+            return compiledRule;
+        } catch (RuntimeException e) {
+            if (publishApplied) {
+                ruleRegistry.restoreRule(methodKey, rule.id(),
+                        previous == null ? null : previous.compiledRule());
+                if (previous == null) {
+                    publishedRules.remove(rule.id());
+                } else {
+                    publishedRules.put(rule.id(), previous);
+                }
+                try {
+                    if (targetTransitioned) {
+                        applyTargetUpdate(constructor.getDeclaringClass(), newTarget, previousTarget);
+                        targetByRuleId.put(rule.id(), previousTarget);
+                    }
+                } catch (RuntimeException restoreFailure) {
+                    degradedClasses.put(constructor.getDeclaringClass().getName(), restoreFailure.getMessage());
+                    enterDegraded("Cannot restore instrumentation for " + constructor.getDeclaringClass().getName());
                     e.addSuppressed(restoreFailure);
                 }
             }
@@ -205,7 +278,9 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                 .enabled(enabled)
                 .version(publishedRule.rule().version() + 1)
                 .build();
-        CompiledRule compiledRule = publish(publishedRule.method(), next, actor);
+        CompiledRule compiledRule = publishedRule.constructor() != null
+                ? publishConstructor(publishedRule.constructor(), next, actor)
+                : publish(publishedRule.method(), next, actor);
         eventBuffer.record(enabled ? "rule.enable" : "rule.disable", actor, ruleId,
                 publishedRule.methodKey().toString(), "Rule enabled=" + enabled);
         return compiledRule;
@@ -213,20 +288,29 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
 
     private void remove(MethodKey methodKey, String ruleId, String actor) {
         PublishedRule publishedRule = requireRule(ruleId);
-        Method method = publishedRule.method();
-        MethodSignature signature = signatureOf(method);
-        RuleSet oldRuleSet = ruleRegistry.rules(methodKey);
-        boolean oldActive = shouldInstrument(methodKey, oldRuleSet);
+        EnhancementTarget target = targetByRuleId.get(ruleId);
+        Class<?> declaringClass = publishedRule.declaringClass();
+        boolean targetRemoved = false;
         try {
-            rulePublisher.remove(method, ruleId);
+            if (publishedRule.constructor() != null) {
+                rulePublisher.remove(methodKey, ruleId);
+            } else {
+                rulePublisher.remove(publishedRule.method(), ruleId);
+            }
             publishedRules.remove(ruleId);
-            applyInstrumentationTransition(method, signature, oldActive,
-                    shouldInstrument(methodKey, ruleRegistry.rules(methodKey)));
+            targetByRuleId.remove(ruleId);
+            if (target != null) {
+                applyTargetUpdate(declaringClass, target, null);
+                targetRemoved = true;
+            }
             eventBuffer.record("rule.delete", actor, ruleId, methodKey.toString(), "Deleted rule");
         } catch (RuntimeException e) {
             ruleRegistry.restoreRule(methodKey, ruleId, publishedRule.compiledRule());
             publishedRules.put(ruleId, publishedRule);
-            restoreInstrumentationState(method, signature, oldActive);
+            targetByRuleId.put(ruleId, target);
+            if (targetRemoved) {
+                applyTargetUpdate(declaringClass, null, target);
+            }
             eventBuffer.record("rule.delete.failed", actor, ruleId, methodKey.toString(), e.getMessage());
             throw e;
         }
@@ -326,8 +410,7 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
             throw new IllegalArgumentException("Synthetic and bridge methods cannot be recorded: " + method);
         }
         MethodKey methodKey = MethodKey.of(method);
-        MethodSignature signature = signatureOf(method);
-        boolean oldActive = shouldInstrument(methodKey, ruleRegistry.rules(methodKey));
+        EnhancementTarget target = recordingTargetOf(method);
         RecordingRegistration registration = new RecordingRegistration(
                 sessionId,
                 loadedClassRepository.classId(method.getDeclaringClass()),
@@ -335,17 +418,21 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                 method.getName(),
                 MethodDescriptor.of(method)
         );
+        boolean registered = false;
         try {
             recordingObserver.start(methodKey, registration);
             activeRecordings.put(sessionId, registration);
-            applyInstrumentationTransition(method, signature, oldActive, true);
+            applyTargetUpdate(method.getDeclaringClass(), null, target);
+            registered = true;
             eventBuffer.record("recording.start", actor, null, methodKey.toString(),
                     "Recording session " + sessionId + " started");
             return registration;
         } catch (RuntimeException e) {
             activeRecordings.remove(sessionId);
             recordingObserver.stop(methodKey, sessionId);
-            restoreInstrumentationState(method, signature, oldActive);
+            if (registered) {
+                applyTargetUpdate(method.getDeclaringClass(), target, null);
+            }
             eventBuffer.record("recording.start.failed", actor, null, methodKey.toString(), e.getMessage());
             throw e;
         }
@@ -359,19 +446,21 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
         Method method = loadedClassRepository.resolveMethod(
                 registration.classId(), registration.methodName(), registration.methodDescriptor());
         MethodKey methodKey = MethodKey.of(method);
-        MethodSignature signature = signatureOf(method);
-        boolean oldActive = shouldInstrument(methodKey, ruleRegistry.rules(methodKey));
+        EnhancementTarget target = recordingTargetOf(method);
         recordingObserver.stop(methodKey, sessionId);
-        boolean newActive = shouldInstrument(methodKey, ruleRegistry.rules(methodKey));
+        boolean removed = false;
         try {
-            applyInstrumentationTransition(method, signature, oldActive, newActive);
+            applyTargetUpdate(method.getDeclaringClass(), target, null);
+            removed = true;
             eventBuffer.record("recording.stop", actor, null, methodKey.toString(),
                     "Recording session " + sessionId + " stopped");
             return registration;
         } catch (RuntimeException e) {
             recordingObserver.start(methodKey, registration);
             activeRecordings.put(sessionId, registration);
-            restoreInstrumentationState(method, signature, oldActive);
+            if (removed) {
+                applyTargetUpdate(method.getDeclaringClass(), null, target);
+            }
             eventBuffer.record("recording.stop.failed", actor, null, methodKey.toString(), e.getMessage());
             throw e;
         }
@@ -395,6 +484,10 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
 
     public List<MethodInfo> methods(String classId) {
         return loadedClassRepository.methods(classId);
+    }
+
+    public List<MethodInfo> constructors(String classId) {
+        return loadedClassRepository.constructors(classId);
     }
 
     public LoadedClassRepository loadedClassRepository() {
@@ -545,41 +638,245 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                 method.getDeclaringClass().getName());
     }
 
-    private MethodSignature signatureOf(Method method) {
-        return new MethodSignature(
+    /**
+     * Build the authoritative V1.3 target for a method rule from the live method
+     * (so the selector carries the real class loader id the registry matches on)
+     * and the rule's effective location / call-site selector.
+     */
+    private EnhancementTarget enhancementTargetOf(Method method, MockRule rule) {
+        MethodSelector selector = new MethodSelector(
                 method.getDeclaringClass().getName(),
                 ClassLoaderIdentity.idOf(method.getDeclaringClass().getClassLoader()),
                 method.getName(),
-                MethodDescriptor.of(method)
-        );
+                MethodDescriptor.of(method));
+        EnhancementLocation location = rule.effectiveLocation();
+        if (rule.callSiteSelector() != null) {
+            return EnhancementTarget.callSite(selector, location, rule.callSiteSelector());
+        }
+        return EnhancementTarget.of(selector, location);
     }
 
-    private void applyInstrumentationTransition(Method method, MethodSignature signature,
-                                                boolean oldActive, boolean newActive) {
-        if (!oldActive && newActive) {
-            instrumentationRegistry.register(signature);
-            transformerManager.retransform(method.getDeclaringClass());
-        } else if (oldActive && !newActive) {
-            instrumentationRegistry.unregister(signature);
-            transformerManager.retransform(method.getDeclaringClass());
+    /**
+     * Build the authoritative target for a constructor rule. Constructor rules must
+     * carry an explicit constructor location; a legacy phase projected onto a method
+     * location is rejected so a constructor is never woven with method Advice.
+     */
+    private EnhancementTarget constructorTargetOf(Constructor<?> constructor, MockRule rule) {
+        MethodSelector selector = new MethodSelector(
+                constructor.getDeclaringClass().getName(),
+                ClassLoaderIdentity.idOf(constructor.getDeclaringClass().getClassLoader()),
+                "<init>",
+                MethodDescriptor.of(constructor));
+        EnhancementLocation location = rule.effectiveLocation();
+        if (!location.isConstructorLocation()) {
+            throw new IllegalArgumentException(
+                    "Constructor rule must use a constructor location, got " + location);
+        }
+        return EnhancementTarget.of(selector, location);
+    }
+
+    /** A method recording weaves the same enter/exit method Advice as a METHOD_ENTER rule. */
+    private EnhancementTarget recordingTargetOf(Method method) {
+        MethodSelector selector = new MethodSelector(
+                method.getDeclaringClass().getName(),
+                ClassLoaderIdentity.idOf(method.getDeclaringClass().getClassLoader()),
+                method.getName(),
+                MethodDescriptor.of(method));
+        return EnhancementTarget.of(selector, EnhancementLocation.METHOD_ENTER);
+    }
+
+    /**
+     * Reject methods and classes that V1.3 cannot enhance with a clear diagnostic rather
+     * than silently failing to weave: native/abstract methods and JVM-unmodifiable classes.
+     */
+    private void rejectUnenhanceableMethod(Method method) {
+        int mods = method.getModifiers();
+        if (Modifier.isNative(mods)) {
+            throw new IllegalArgumentException("Native methods cannot be mocked: " + method);
+        }
+        if (Modifier.isAbstract(mods)) {
+            throw new IllegalArgumentException("Abstract methods cannot be mocked: " + method);
+        }
+        rejectUnmodifiable(method.getDeclaringClass());
+    }
+
+    private void rejectUnmodifiable(Class<?> declaringClass) {
+        if (!instrumentation.isModifiableClass(declaringClass)) {
+            throw new IllegalArgumentException(
+                    "Class is not modifiable by the JVM and cannot be enhanced: " + declaringClass.getName());
         }
     }
 
-    private void restoreInstrumentationState(Method method, MethodSignature signature, boolean shouldBeActive) {
-        if (shouldBeActive) {
-            instrumentationRegistry.register(signature);
+    /**
+     * Resolve a call-site rule against live bytecode before publishing: reject unsupported
+     * opcodes (invokedynamic), reject when the occurrence is absent, reject when the
+     * surrounding-instruction fingerprint has drifted, and otherwise return the rule with
+     * the freshly captured fingerprint baked into its selector so a later recompilation
+     * can be detected.
+     */
+    private MockRule resolveCallSiteRule(Method callerMethod, MockRule rule) {
+        CallSiteSelector selector = rule.callSiteSelector();
+        if (!selector.opcode().isSupported()) {
+            throw new IllegalArgumentException(
+                    "Unsupported invoke opcode for call-site enhancement: " + selector.opcode());
+        }
+        MethodSelector caller = new MethodSelector(
+                callerMethod.getDeclaringClass().getName(),
+                ClassLoaderIdentity.idOf(callerMethod.getDeclaringClass().getClassLoader()),
+                callerMethod.getName(),
+                MethodDescriptor.of(callerMethod));
+        TargetMatchResult result = callSiteScanner.resolveCallSite(
+                callerMethod.getDeclaringClass(), caller, selector);
+        if (result.status() == TargetMatchResult.Status.NOT_FOUND) {
+            throw new IllegalArgumentException("Call site not found: " + selector
+                    + " (" + result.reason() + ")");
+        }
+        if (result.status() == TargetMatchResult.Status.DRIFTED) {
+            throw new IllegalArgumentException("Call site drifted and will not be enhanced: " + selector
+                    + " (" + result.reason() + ")");
+        }
+        if (result.status() == TargetMatchResult.Status.REJECTED) {
+            throw new IllegalArgumentException("Call site rejected: " + selector
+                    + " (" + result.reason() + ")");
+        }
+        CallSiteSelector withFingerprint = CallSiteSelector.builder()
+                .owner(selector.owner())
+                .name(selector.name())
+                .descriptor(selector.descriptor())
+                .opcode(selector.opcode())
+                .occurrenceIndex(selector.occurrenceIndex())
+                .fingerprint(result.resolvedIdentity().selector().fingerprint())
+                .build();
+        return rule.toBuilder().callSiteSelector(withFingerprint).build();
+    }
+
+    /**
+     * Resolve an enhancement target against live bytecode / reflection. Used by the
+     * platform before saving a rule so a drifted or unenhanceable target is refused
+     * rather than silently woven. Method and constructor targets are checked by
+     * reflection; call-site targets by the {@link CallSiteScanner}.
+     */
+    public TargetMatchResult resolveTarget(Class<?> declaringClass, EnhancementTarget target) {
+        EnhancementLocation location = target.location();
+        if (location.isCallSiteLocation()) {
+            if (target.callSiteSelector() == null) {
+                return TargetMatchResult.rejected("call-site target has no selector");
+            }
+            if (!target.callSiteSelector().opcode().isSupported()) {
+                return TargetMatchResult.rejected("unsupported opcode: " + target.callSiteSelector().opcode());
+            }
+            return callSiteScanner.resolveCallSite(declaringClass, target.method(), target.callSiteSelector());
+        }
+        if (location.isConstructorLocation()) {
+            return resolveConstructorTarget(declaringClass, target);
+        }
+        return resolveMethodTarget(declaringClass, target);
+    }
+
+    private TargetMatchResult resolveMethodTarget(Class<?> declaringClass, EnhancementTarget target) {
+        Method method;
+        try {
+            Class<?>[] params = com.example.kairo.core.MethodDescriptorTypes.parameterTypes(
+                    target.method().methodDescriptor(), declaringClass.getClassLoader());
+            method = declaringClass.getDeclaredMethod(target.method().methodName(), params);
+        } catch (NoSuchMethodException e) {
+            return TargetMatchResult.notFound("method not found: " + target.method().methodName()
+                    + target.method().methodDescriptor());
+        } catch (RuntimeException e) {
+            return TargetMatchResult.rejected(e.getMessage());
+        }
+        int mods = method.getModifiers();
+        if (Modifier.isNative(mods) || Modifier.isAbstract(mods)) {
+            return TargetMatchResult.rejected("native or abstract method: " + method);
+        }
+        if (method.isSynthetic() || method.isBridge()) {
+            return TargetMatchResult.rejected("synthetic or bridge method: " + method);
+        }
+        return TargetMatchResult.matched(1);
+    }
+
+    private TargetMatchResult resolveConstructorTarget(Class<?> declaringClass, EnhancementTarget target) {
+        Constructor<?> constructor;
+        try {
+            Class<?>[] params = com.example.kairo.core.MethodDescriptorTypes.parameterTypes(
+                    target.method().methodDescriptor(), declaringClass.getClassLoader());
+            constructor = declaringClass.getDeclaredConstructor(params);
+        } catch (NoSuchMethodException e) {
+            return TargetMatchResult.notFound("constructor not found: " + target.method().methodDescriptor());
+        } catch (RuntimeException e) {
+            return TargetMatchResult.rejected(e.getMessage());
+        }
+        if (Modifier.isNative(constructor.getModifiers())) {
+            return TargetMatchResult.rejected("native constructor: " + constructor);
+        }
+        return TargetMatchResult.matched(1);
+    }
+
+    /**
+     * Read-only enumeration of call-site candidates inside a caller method, for the
+     * target-discovery API. Each candidate carries its occurrence index and a freshly
+     * captured fingerprint so the platform can present choices and persist a stable
+     * identity.
+     */
+    public List<CallSiteIdentity> listCallSites(Class<?> callerClass, String callerMethodName,
+                                                String callerDescriptor, String calleeOwner, String calleeName,
+                                                String calleeDescriptor, InvokeOpcode opcode) {
+        MethodSelector caller = new MethodSelector(
+                callerClass.getName(),
+                ClassLoaderIdentity.idOf(callerClass.getClassLoader()),
+                callerMethodName,
+                callerDescriptor);
+        return callSiteScanner.scan(callerClass, caller, calleeOwner, calleeName, calleeDescriptor, opcode);
+    }
+
+    /** The call-site scanner, exposed for tests and the platform command layer. */
+    public CallSiteScanner callSiteScanner() {
+        return callSiteScanner;
+    }
+
+    /**
+     * Swap the registered target for one rule id from {@code previous} to {@code next},
+     * retransforming only when the weave footprint of the affected member changes. When
+     * the two targets are equal the registry is left untouched, so republishing a rule
+     * with the same target does not leak a refcount. Returns whether the registry was
+     * mutated (so callers can roll back).
+     */
+    private boolean applyTargetUpdate(Class<?> declaringClass, EnhancementTarget previous, EnhancementTarget next) {
+        if (Objects.equals(previous, next)) {
+            return false;
+        }
+        if (previous != null) {
+            applyTargetTransition(declaringClass, previous, false);
+        }
+        if (next != null) {
+            applyTargetTransition(declaringClass, next, true);
+        }
+        return true;
+    }
+
+    /**
+     * Register or unregister a single target and retransform its declaring class when
+     * the footprint (method Advice / constructor Advice / call-site keys) for that
+     * member changes. This preserves V1.2 behaviour: a second rule on an already
+     * instrumented method does not re-weave, while the first or last one does.
+     */
+    private void applyTargetTransition(Class<?> declaringClass, EnhancementTarget target, boolean add) {
+        String className = declaringClass.getName();
+        String classLoaderId = ClassLoaderIdentity.idOf(declaringClass.getClassLoader());
+        String memberName = target.method().methodName();
+        String descriptor = target.method().methodDescriptor();
+        DefaultInstrumentationRegistry.WeaveFootprint before =
+                instrumentationRegistry.footprintOf(className, classLoaderId, memberName, descriptor);
+        if (add) {
+            instrumentationRegistry.register(target);
         } else {
-            instrumentationRegistry.unregister(signature);
+            instrumentationRegistry.unregister(target);
         }
-        transformerManager.retransform(method.getDeclaringClass());
-    }
-
-    private boolean hasActiveRules(RuleSet ruleSet) {
-        return ruleSet.all().stream().anyMatch(rule -> isActive(rule.rule()));
-    }
-
-    private boolean shouldInstrument(MethodKey methodKey, RuleSet ruleSet) {
-        return hasActiveRules(ruleSet) || recordingObserver.isRecording(methodKey);
+        DefaultInstrumentationRegistry.WeaveFootprint after =
+                instrumentationRegistry.footprintOf(className, classLoaderId, memberName, descriptor);
+        if (!before.equals(after)) {
+            transformerManager.retransform(declaringClass);
+        }
     }
 
     private boolean isActive(MockRule rule) {
