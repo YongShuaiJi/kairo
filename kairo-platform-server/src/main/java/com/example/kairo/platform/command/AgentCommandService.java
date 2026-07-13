@@ -270,7 +270,21 @@ public class AgentCommandService {
             commandMapper.updateAgentStatus(updated.get("agent_id"),
                     "ACKED".equals(resultStatus) ? "DISABLED" : "ACTIVE", timestamp(now));
         }
-        advanceRolloutFromCommand(context, commandId, "ACKED".equals(resultStatus), errorMessage, result);
+        // V1.5 §4.4/§5: an ACKED command whose inner ApplyChainStatus is a chain failure
+        // (e.g. TARGET_DRIFTED after a hot update) must surface as a rollout failure, not a
+        // silent success. The command-level ACKED only means the agent processed the command;
+        // the chain status says whether the rule actually applied.
+        boolean rolloutSuccess = "ACKED".equals(resultStatus);
+        String commandType = String.valueOf(current.get("command_type"));
+        String rolloutError = errorMessage;
+        if (rolloutSuccess && ("APPLY_RULE".equals(commandType) || "APPLY_CHAIN".equals(commandType))
+                && isChainFailureStatus(result)) {
+            rolloutSuccess = false;
+            if (rolloutError == null) {
+                rolloutError = "agent reported chain status " + result.get("status");
+            }
+        }
+        advanceRolloutFromCommand(context, commandId, rolloutSuccess, rolloutError, result);
         advanceRollbackFromCommand(context, updated);
         return updated;
     }
@@ -311,6 +325,26 @@ public class AgentCommandService {
                 rollback, updatedOperation, operationStatus,
                 succeeded ? "规则字节码卸载完成" : "规则字节码卸载失败",
                 Map.of("rollbackExecutionId", rollbackId, "commandCount", commands.size()));
+    }
+
+    /**
+     * V1.5 &sect;4.4/§5: ApplyChainStatus values that represent a real failure to apply the
+     * rule chain, so an ACKED command carrying one of them surfaces as a rollout failure
+     * rather than a silent success. {@code APPLIED}, {@code NO_OP}, {@code IDEMPOTENT_REPLAY}
+     * and {@code STALE_COMMAND} are not failures; {@code DEGRADED} is left as a partial
+     * success (the rule applied, in degraded mode) so the rollout still advances.
+     */
+    private static final java.util.Set<String> CHAIN_FAILURE_STATUSES = java.util.Set.of(
+            "TARGET_DRIFTED", "COMPILE_FAILED", "TRANSFORM_FAILED", "VERIFICATION_FAILED",
+            "COEXISTENCE_UNSAFE", "TARGET_NOT_FOUND", "REJECTED");
+
+    /** V1.5 §4.4/§5: whether an ACKED command's inner ApplyChainStatus represents a real apply failure. */
+    static boolean isChainFailureStatus(Map<String, Object> result) {
+        if (result == null) {
+            return false;
+        }
+        Object status = result.get("status");
+        return status != null && CHAIN_FAILURE_STATUSES.contains(String.valueOf(status));
     }
 
     private void advanceRolloutFromCommand(RequestContext context, String commandId, boolean success,

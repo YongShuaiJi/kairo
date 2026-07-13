@@ -80,6 +80,18 @@ public final class PlatformQueryController {
     }
 
     /**
+     * V1.5 §4.1/§5: the ClassLoader tree for the Web class selector, so an operator can pick a
+     * {@code classLoaderId} and disambiguate same-name classes across loaders.
+     */
+    @GetMapping("/targets/loaders")
+    public Map<String, Object> loaderTree(HttpServletRequest request,
+                                          @RequestParam(defaultValue = "") String applicationId,
+                                          @RequestParam(defaultValue = "") String environmentId) {
+        return targetDiscoveryService.listLoaders(requestContextFactory.from(request),
+                applicationId, environmentId);
+    }
+
+    /**
      * V1.3 §3.5: enumerate call-site candidates inside a caller method on a live agent in scope,
      * for the guided call-site selector. The body carries the application/environment scope plus
      * the caller identity and an optional callee filter.

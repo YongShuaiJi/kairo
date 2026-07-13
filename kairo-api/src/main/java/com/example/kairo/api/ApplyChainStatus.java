@@ -39,6 +39,13 @@ public enum ApplyChainStatus {
     /** The target class/method could not be resolved on this Agent. */
     TARGET_NOT_FOUND,
 
+    /**
+     * V1.5 &sect;4.4: the target's bytecode hash changed (redefine/retransform/hot
+     * update) and the call-site fingerprint no longer matches. The Agent keeps the
+     * current snapshot and fails open rather than enhancing a drifted target.
+     */
+    TARGET_DRIFTED,
+
     /** The conflict report blocked the chain, or the desired hash did not match the spec. */
     REJECTED,
 

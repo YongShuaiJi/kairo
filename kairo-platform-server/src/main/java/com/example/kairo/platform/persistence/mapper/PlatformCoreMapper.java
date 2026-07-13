@@ -184,7 +184,17 @@ public interface PlatformCoreMapper {
                          @Param("methodName") String methodName, @Param("matcherJson") String matcherJson,
                          @Param("location") String location,
                          @Param("callSiteSelectorJson") String callSiteSelectorJson,
-                         @Param("createdAt") Timestamp createdAt);
+                         @Param("createdAt") Timestamp createdAt,
+                         @Param("loaderClass") String loaderClass,
+                         @Param("classLoaderId") String classLoaderId,
+                         @Param("moduleName") String moduleName,
+                         @Param("namedModule") Boolean namedModule,
+                         @Param("codeSource") String codeSource,
+                         @Param("proxyType") String proxyType,
+                         @Param("supportLevel") String supportLevel,
+                         @Param("frameworkLoader") String frameworkLoader,
+                         @Param("lastObservedAt") Timestamp lastObservedAt,
+                         @Param("driftStatus") String driftStatus);
     int insertRuleCapability(@Param("id") String id, @Param("ruleVersionId") String ruleVersionId,
                              @Param("capability") String capability, @Param("createdAt") Timestamp createdAt);
 

@@ -13,6 +13,7 @@ import type { PlatformRecord, SessionUser } from "@/lib/api/types";
 import { resourceConfigs, type ResourceColumn, type ResourceField, type ResourceForm } from "@/lib/resource-config";
 import { actionLabel, fieldLabel, formatBytes, formatDate, humanize, shortId } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
+import { LoaderTreeSelector } from "@/components/rules/loader-tree-selector";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -838,6 +839,9 @@ function TargetSelectField({
   onValueChange: (value: string) => void;
 }) {
   const [query, setQuery] = useState("");
+  // V1.5 §4.1: ClassLoader id chosen in the loader tree, used to filter the target search
+  // client-side so same-name classes across loaders can be disambiguated.
+  const [loaderFilter, setLoaderFilter] = useState("");
   const applicationId = form.applicationId ?? "";
   const environmentId = form.environmentId ?? "";
   const dependenciesReady = Boolean(applicationId && environmentId);
@@ -848,6 +852,10 @@ function TargetSelectField({
       return platformFetch<PlatformRecord[]>(`targets/search?${search.toString()}`);
     },
     enabled: dependenciesReady,
+  });
+  const visibleTargets = (targetsQuery.data ?? []).filter((record) => {
+    if (!loaderFilter) return true;
+    return String(valueOf(record, "classLoaderId") ?? "") === loaderFilter;
   });
   const selectedTarget = (() => {
     try {
@@ -872,6 +880,14 @@ function TargetSelectField({
           className="pl-9"
         />
       </div>
+      {dependenciesReady ? (
+        <LoaderTreeSelector
+          applicationId={applicationId}
+          environmentId={environmentId}
+          value={loaderFilter}
+          onValueChange={setLoaderFilter}
+        />
+      ) : null}
       <Select
         value={form[field.key] ?? ""}
         onValueChange={onValueChange}
@@ -889,7 +905,7 @@ function TargetSelectField({
           </SelectValue>
         </SelectTrigger>
         <SelectContent>
-          {(targetsQuery.data ?? []).map((record, index) => {
+          {visibleTargets.map((record, index) => {
             const descriptor = String(valueOf(record, "descriptor") ?? valueOf(record, "methodDescriptor") ?? "");
             const target = {
               protocol: String(valueOf(record, "protocol") ?? "JAVA_METHOD"),
@@ -907,9 +923,11 @@ function TargetSelectField({
               </SelectItem>
             ) : null;
           })}
-          {!targetsQuery.isLoading && dependenciesReady && !(targetsQuery.data ?? []).length ? (
+          {!targetsQuery.isLoading && dependenciesReady && !visibleTargets.length ? (
             <div className="px-3 py-5 text-center text-xs leading-5 text-slate-400">
-              没有发现已加载的方法。请确认目标应用 Agent 在线且实例已分配环境。
+              {loaderFilter
+                ? "当前加载器筛选下没有匹配方法，可清除加载器筛选后重试。"
+                : "没有发现已加载的方法。请确认目标应用 Agent 在线且实例已分配环境。"}
             </div>
           ) : null}
         </SelectContent>

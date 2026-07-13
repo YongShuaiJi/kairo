@@ -711,6 +711,185 @@ class KairoAgentIntegrationTest {
                 .hasMessageContaining("Synthetic and bridge methods cannot be mocked");
     }
 
+    // V1.5 §4.4: a pending rule pre-registered against a fuzzy selector materializes against the
+    // actual loaded class on the next poll, recording the real ClassIdentity and taking effect.
+    @Test
+    void pendingRuleMaterializesOnFirstLoadAgainstActualClass() throws Exception {
+        Method method = OrderService.class.getMethod("calculateScore", int.class);
+        MockRule pending = rule("pending-score", method, InvokePhase.RETURN,
+                "return mock.returnValue(999)");
+        com.example.kairo.api.ClassSelector selector = com.example.kairo.api.ClassSelector.builder()
+                .className(OrderService.class.getName())
+                .build();
+        runtime.registerPendingRule(selector, pending, "alice");
+        assertThat(runtime.pendingRegistry().pendingCount()).isEqualTo(1);
+
+        int materialized = runtime.pollPendingMatches();
+        assertThat(materialized).isEqualTo(1);
+        // The pending entry is consumed and the resolved identity is audited.
+        assertThat(runtime.pendingRegistry().pendingCount()).isZero();
+        assertThat(runtime.pendingRegistry().resolved()).hasSize(1);
+        assertThat(runtime.pendingRegistry().resolved().get(0).actualIdentity().binaryClassName())
+                .isEqualTo(OrderService.class.getName());
+        // The materialized rule takes effect on the real class.
+        assertThat(new OrderService().calculateScore(10)).isEqualTo(999);
+    }
+
+    // V1.5 §4.4: after a rule is applied, a changed bytecode hash reconciles to DRIFTED and maps
+    // to TARGET_DRIFTED so the apply chain fails open instead of re-enhancing a drifted target.
+    @Test
+    void hotUpdateDriftIsDetectedAfterApply() throws Exception {
+        Method method = OrderService.class.getMethod("calculateScore", int.class);
+        runtime.publish(method, rule("drift-score", method, InvokePhase.RETURN,
+                "return mock.returnValue(1)"));
+        // A simulated external redefine produces a different current input hash.
+        com.example.kairo.agent.core.HotUpdateReconciler.Result drifted =
+                runtime.checkHotUpdateDrift(method.getDeclaringClass(), "a-different-bytecode-hash");
+        assertThat(drifted.isDrifted()).isTrue();
+        assertThat(drifted.previousHash()).isNotEqualTo("a-different-bytecode-hash");
+        assertThat(runtime.hotUpdateReconciler().toStatus(drifted))
+                .isEqualTo(com.example.kairo.api.ApplyChainStatus.TARGET_DRIFTED);
+        // An unchanged hash stays compatible (re-apply at a new revision).
+        com.example.kairo.agent.core.HotUpdateReconciler.Result same =
+                runtime.checkHotUpdateDrift(method.getDeclaringClass(), drifted.previousHash());
+        assertThat(same.isDrifted()).isFalse();
+    }
+
+    // V1.5 §4.4: a pending rule registered for a not-yet-loaded class materializes via the
+    // first-load AgentBuilder discovery hook (the InputCaptureTransformer observer), not only the
+    // 2s poll. Loading a fresh class after registration must apply the rule within a window far
+    // shorter than the poll interval.
+    @Test
+    void firstLoadObserverMaterializesPendingRuleImmediately() throws Exception {
+        String simple = "ObserverTarget" + System.nanoTime();
+        String name = "com.example.observer." + simple;
+        com.example.kairo.api.MockRule pending = com.example.kairo.api.MockRule.builder()
+                .id("observer-rule").name("observer-rule")
+                .target(com.example.kairo.api.MethodSelector.builder()
+                        .className(name).methodName("score").methodDescriptor("(I)I").build())
+                .phase(InvokePhase.BEFORE).script("return mock.returnValue(999)")
+                .priority(100).percentage(100).failOpen(true).enabled(true)
+                .build();
+        com.example.kairo.api.ClassSelector selector =
+                com.example.kairo.api.ClassSelector.builder().className(name).build();
+        runtime.registerPendingRule(selector, pending, "tester");
+        assertThat(runtime.pendingRegistry().pendingCount()).isEqualTo(1);
+
+        // Load the class AFTER registering pending -> the first-load observer fires (class-load
+        // thread) and hands materialization to the cleanup executor (no class-load-thread reentry).
+        Class<?> type = compileAndLoad(name, """
+                package com.example.observer;
+                public class %s {
+                    public int score(int x) { return x * 2; }
+                }
+                """.formatted(simple));
+        Object instance = type.getDeclaredConstructor().newInstance();
+        java.lang.reflect.Method score = type.getMethod("score", int.class);
+
+        // The observer materializes well within the 2s poll interval; allow a generous window
+        // for the retransform to apply under suite load.
+        long deadline = System.currentTimeMillis() + 4000;
+        int result = -1;
+        while (System.currentTimeMillis() < deadline) {
+            result = (Integer) score.invoke(instance, 5);
+            if (result == 999) {
+                break;
+            }
+            Thread.sleep(20);
+        }
+        assertThat(result).isEqualTo(999);
+        assertThat(runtime.pendingRegistry().pendingCount()).isZero();
+        assertThat(runtime.pendingRegistry().resolved()).hasSize(1);
+        assertThat(runtime.pendingRegistry().resolved().get(0).actualIdentity().binaryClassName())
+                .isEqualTo(name);
+    }
+
+    // V1.5 §4.4: an external redefine of a class Kairo has applied to is detected automatically by
+    // the redefine listener (input-capture -> reconciler -> driftedClasses), without an explicit
+    // checkHotUpdateDrift call. A genuine JVM redefine with different method-body bytes.
+    @Test
+    void realRedefineFlagsDriftAutomatically() throws Exception {
+        String simple = "RedefineTarget" + System.nanoTime();
+        String name = "com.example.redefine." + simple;
+        Class<?> type = compileAndLoad(name, """
+                package com.example.redefine;
+                public class %s {
+                    public int score(int x) { return x * 2; }
+                }
+                """.formatted(simple));
+        java.lang.reflect.Method method = type.getMethod("score", int.class);
+        runtime.publish(method, rule("redefine-rule", method, InvokePhase.BEFORE,
+                "return mock.returnValue(999)"));
+        assertThat((Integer) method.invoke(type.getDeclaredConstructor().newInstance(), 5)).isEqualTo(999);
+
+        // Externally redefine the class with a different method body.
+        byte[] redefined = compileToBytes(name, """
+                package com.example.redefine;
+                public class %s {
+                    public int score(int x) { return x * 3; }
+                }
+                """.formatted(simple));
+        runtime.instrumentation()
+                .redefineClasses(new java.lang.instrument.ClassDefinition(type, redefined));
+
+        // The redefine listener flags drift asynchronously.
+        long deadline = System.currentTimeMillis() + 3000;
+        while (System.currentTimeMillis() < deadline && !runtime.isClassDrifted(name)) {
+            Thread.sleep(50);
+        }
+        assertThat(runtime.isClassDrifted(name))
+                .as("external redefine must flag drift automatically").isTrue();
+        // A drifted class resolves to DRIFTED so the platform surfaces TARGET_DRIFTED.
+        com.example.kairo.api.MethodSelector ms = new com.example.kairo.api.MethodSelector(
+                name, com.example.kairo.core.ClassLoaderIdentity.idOf(type.getClassLoader()),
+                "score", "(I)I");
+        com.example.kairo.api.TargetMatchResult result = runtime.resolveTarget(type,
+                com.example.kairo.api.EnhancementTarget.of(ms, com.example.kairo.api.EnhancementLocation.METHOD_ENTER));
+        assertThat(result.status()).isEqualTo(com.example.kairo.api.TargetMatchResult.Status.DRIFTED);
+    }
+
+    // V1.5 §4.1: the ClassLoader tree the Web selector renders. A class loaded by a custom
+    // URLClassLoader appears in liveLoaders and the parent->children tree.
+    @Test
+    void loaderTreeExposesCustomClassLoader() throws Exception {
+        String simple = "LoaderTreeTarget" + System.nanoTime();
+        String name = "com.example.loader." + simple;
+        Class<?> type = compileAndLoad(name, """
+                package com.example.loader;
+                public class %s {
+                    public String echo(String s) { return s; }
+                }
+                """.formatted(simple));
+        runtime.loadedClassRepository().toClassInfo(type);
+        java.util.List<com.example.kairo.agent.core.LoaderInfo> loaders =
+                runtime.classLoaderRepository().liveLoaders();
+        assertThat(loaders).anyMatch(l -> "java.net.URLClassLoader".equals(l.className()));
+        assertThat(runtime.classLoaderRepository().loaderTree()).isNotEmpty();
+    }
+
+    private Class<?> compileAndLoad(String binaryName, String source) throws Exception {
+        Path dir = Files.createTempDirectory("kairo-it-" + binaryName.replace('.', '-'));
+        Path src = dir.resolve(binaryName.replace('.', '/') + ".java");
+        Files.createDirectories(src.getParent());
+        Files.writeString(src, source);
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        assertThat(compiler).isNotNull();
+        assertThat(compiler.run(null, null, null, "-d", dir.toString(), src.toString())).isZero();
+        URLClassLoader loader = new URLClassLoader(new URL[]{dir.toUri().toURL()},
+                getClass().getClassLoader());
+        return Class.forName(binaryName, true, loader);
+    }
+
+    private byte[] compileToBytes(String binaryName, String source) throws Exception {
+        Path dir = Files.createTempDirectory("kairo-it-bytes-" + binaryName.replace('.', '-'));
+        Path src = dir.resolve(binaryName.replace('.', '/') + ".java");
+        Files.createDirectories(src.getParent());
+        Files.writeString(src, source);
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        assertThat(compiler.run(null, null, null, "-d", dir.toString(), src.toString())).isZero();
+        return Files.readAllBytes(dir.resolve(binaryName.replace('.', '/') + ".class"));
+    }
+
     private Class<?> compileAndLoadDuplicateService(String prefix) throws Exception {
         Path dir = Files.createTempDirectory("duplicate-service-" + prefix);
         Path sourceDir = dir.resolve("com/example/duplicate");

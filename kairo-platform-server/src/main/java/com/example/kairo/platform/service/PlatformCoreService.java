@@ -1020,6 +1020,31 @@ public class PlatformCoreService {
         Map<String, Object> resolved = enhancementTargetResolutionService.resolveAndValidate(
                 context, applicationId, environmentId, target);
         stampResolvedCallSiteFingerprint(target, resolved);
+        // V1.5 §5: persist the loader / module / code source / proxy type / support level the
+        // agent observed, plus the last-observed time and a FRESH drift status. Non-MATCHED
+        // outcomes throw above, so reaching here means the target is fresh.
+        stampResolvedTargetMetadata(target, resolved);
+    }
+
+    /** V1.5 §5: copy the agent-observed modern-JVM metadata onto the rule-target map for persistence. */
+    private static void stampResolvedTargetMetadata(Map<String, Object> target, Map<String, Object> resolved) {
+        copyResolved(resolved, target, "classLoaderId", "classLoaderId");
+        copyResolved(resolved, target, "loaderClassName", "loaderClass");
+        copyResolved(resolved, target, "moduleName", "moduleName");
+        copyResolved(resolved, target, "namedModule", "namedModule");
+        copyResolved(resolved, target, "codeSource", "codeSource");
+        copyResolved(resolved, target, "proxyType", "proxyType");
+        copyResolved(resolved, target, "supportLevel", "supportLevel");
+        copyResolved(resolved, target, "frameworkLoader", "frameworkLoader");
+        target.put("lastObservedAt", System.currentTimeMillis());
+        target.put("driftStatus", "FRESH");
+    }
+
+    private static void copyResolved(Map<String, Object> src, Map<String, Object> dst, String srcKey, String dstKey) {
+        Object value = src.get(srcKey);
+        if (value != null) {
+            dst.put(dstKey, value);
+        }
     }
 
     private EnhancementLocation readRuleTargetLocation(Map<String, Object> target) {
@@ -1079,7 +1104,30 @@ public class PlatformCoreService {
                 json(matcher),
                 location == null ? null : location.name(),
                 callSiteSelector == null ? null : json(callSiteSelector),
-                timestamp(now));
+                timestamp(now),
+                optionalString(target, "loaderClass", null),
+                optionalString(target, "classLoaderId", null),
+                optionalString(target, "moduleName", null),
+                optionalBoolean(target, "namedModule"),
+                optionalString(target, "codeSource", null),
+                optionalString(target, "proxyType", null),
+                optionalString(target, "supportLevel", null),
+                optionalString(target, "frameworkLoader", null),
+                target.containsKey("lastObservedAt") ? timestamp(now) : null,
+                optionalString(target, "driftStatus", null));
+    }
+
+    /** V1.5 §5: read an optional boolean field from a loosely-typed target map. */
+    private static Boolean optionalBoolean(Map<String, Object> target, String key) {
+        Object value = target.get(key);
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Boolean b) {
+            return b;
+        }
+        String text = String.valueOf(value);
+        return text.isBlank() ? null : Boolean.parseBoolean(text);
     }
 
     private Map<String, Object> mutableMatcher(Map<String, Object> target) {

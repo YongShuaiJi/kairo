@@ -124,6 +124,55 @@ public final class TargetDiscoveryService {
         }
     }
 
+    /**
+     * V1.5 §4.1/§5: the ClassLoader tree for the Web class selector. Dispatches
+     * {@code LIST_LOADERS} to one live agent in scope and returns every tracked loader
+     * (bootstrap first) plus a parent&rarr;children tree keyed by loader id, so an operator
+     * can pick a {@code classLoaderId} and disambiguate same-name classes across loaders.
+     * Returns an empty tree when no agent is online.
+     */
+    public Map<String, Object> listLoaders(RequestContext context, String applicationId,
+                                           String environmentId) {
+        String application = required(applicationId, "applicationId");
+        String environment = required(environmentId, "environmentId");
+        List<Map<String, Object>> agents = normalize(targetDiscoveryMapper.activeAgents(application, environment));
+        if (agents.isEmpty()) {
+            return Map.of("loaders", List.of(), "tree", Map.of(), "count", 0,
+                    "agentAvailable", false, "bootstrapLoaderId", "bootstrap");
+        }
+        String agentId = String.valueOf(agents.get(0).get("agent_id"));
+        long bucket = Instant.now().getEpochSecond() / 5;
+        Map<String, Object> command = commandService.enqueue(
+                context,
+                agentId,
+                "LIST_LOADERS",
+                Map.of("commandType", "LIST_LOADERS"),
+                "loaders:" + agentId + ":" + application + ":" + environment + ":" + bucket,
+                2,
+                Instant.now());
+        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(8).toNanos();
+        while (System.nanoTime() < deadline) {
+            Map<String, Object> current = commandService.command(String.valueOf(command.get("id")));
+            String status = String.valueOf(current.get("status"));
+            if ("FAILED".equals(status)) {
+                throw PlatformException.conflict("LIST_LOADERS_FAILED",
+                        "ClassLoader 树查询失败",
+                        Map.of("agentId", agentId, "commandId", command.get("id")));
+            }
+            if ("ACKED".equals(status)) {
+                Map<String, Object> result = PlatformJson.readMap(String.valueOf(current.get("result_json")));
+                Map<String, Object> enriched = new LinkedHashMap<>(result);
+                enriched.put("agentId", agentId);
+                enriched.put("agentAvailable", true);
+                return enriched;
+            }
+            sleep();
+        }
+        throw PlatformException.conflict("LIST_LOADERS_TIMEOUT",
+                "ClassLoader 树查询超时，Agent 未在限定时间内响应",
+                Map.of("agentId", agentId, "commandId", command.get("id")));
+    }
+
     private String requiredText(Map<String, Object> request, String key) {
         Object value = request.get(key);
         if (value == null || String.valueOf(value).isBlank()) {
@@ -159,7 +208,12 @@ public final class TargetDiscoveryService {
                 continue;
             }
             Map<String, Object> target = PlatformJson.stringKeyMap(raw);
-            String key = target.get("className") + "#" + target.get("methodName") + target.get("descriptor");
+            // V1.5 §4.1: key by classLoaderId as well as class+method+descriptor so the same
+            // binary name loaded by two different ClassLoaders is presented as two distinct
+            // targets (the loader tree lets the operator disambiguate), never collapsed into one.
+            String loaderId = String.valueOf(target.getOrDefault("classLoaderId", ""));
+            String key = target.get("className") + "#" + target.get("methodName")
+                    + target.get("descriptor") + "@" + loaderId;
             Map<String, Object> entry = aggregate.computeIfAbsent(key, ignored -> {
                 Map<String, Object> value = new LinkedHashMap<>(target);
                 value.put("protocol", "JAVA_METHOD");

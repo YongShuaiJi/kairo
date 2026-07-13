@@ -39,6 +39,8 @@ import { platformFetch } from "@/lib/api/client";
 import type { PlatformRecord, ScriptDiagnostic, ScriptTestResult, ScriptValidationResult } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { LoaderTreeSelector } from "@/components/rules/loader-tree-selector";
+import { TargetClassColumns, TargetMetadataBadges } from "@/components/rules/target-class-info";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -78,6 +80,18 @@ type TargetOption = {
   modifiable: boolean;
   instanceCount: number;
   protocol: string;
+  // V1.5 §5: modern-JVM metadata echoed by DISCOVER_TARGETS.
+  proxyType?: string;
+  supportLevel?: string;
+  driftStatus?: string;
+  frameworkLoader?: string;
+  loaderClass?: string;
+  declaredClassName?: string;
+  proxyClassName?: string;
+  actualEnhancedClassName?: string;
+  proxySuperclass?: string;
+  recommendedTargetClass?: string;
+  proxyImpact?: string;
 };
 
 function stringValue(record: PlatformRecord | undefined, ...keys: string[]) {
@@ -352,6 +366,12 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
   const [targetOptions, setTargetOptions] = useState<TargetOption[]>([]);
   const [targetsLoading, setTargetsLoading] = useState(false);
   const [manualTarget, setManualTarget] = useState(false);
+  // V1.5 §4.1: the ClassLoader id selected in the loader tree, used to filter the target search
+  // client-side so same-name classes across loaders can be disambiguated.
+  const [loaderFilter, setLoaderFilter] = useState("");
+  // V1.5 §5: the metadata of the target the operator picked, retained so the selected-target
+  // panel can render the declared/proxy/actual class distinction and the metadata badges.
+  const [selectedTargetMeta, setSelectedTargetMeta] = useState<TargetOption | null>(null);
   const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
@@ -537,6 +557,17 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
             modifiable: Boolean(item.modifiable),
             instanceCount: Number(item.instanceCount ?? item.instance_count ?? 0),
             protocol: stringValue(item, "protocol") || "JAVA_METHOD",
+            proxyType: stringValue(item, "proxyType", "proxy_type") || undefined,
+            supportLevel: stringValue(item, "supportLevel", "support_level") || undefined,
+            driftStatus: stringValue(item, "driftStatus", "drift_status") || undefined,
+            frameworkLoader: stringValue(item, "frameworkLoader", "framework_loader") || undefined,
+            loaderClass: stringValue(item, "loaderClass", "loader_class", "classLoaderClassName", "class_loader_class_name") || undefined,
+            declaredClassName: stringValue(item, "declaredClassName", "declared_class_name") || undefined,
+            proxyClassName: stringValue(item, "proxyClassName", "proxy_class_name") || undefined,
+            actualEnhancedClassName: stringValue(item, "actualEnhancedClassName", "actual_enhanced_class_name") || undefined,
+            proxySuperclass: stringValue(item, "proxySuperclass", "proxy_superclass") || undefined,
+            recommendedTargetClass: stringValue(item, "recommendedTargetClass", "recommended_target_class") || undefined,
+            proxyImpact: stringValue(item, "proxyImpact", "proxy_impact") || undefined,
           }))
             .filter((item) =>
               item.classId && item.className && item.classLoaderId && item.methodName && item.descriptor,
@@ -728,6 +759,7 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
     setMethodName(target.methodName);
     setMethodDescriptor(target.descriptor);
     setTargetQuery(`${target.className}#${target.methodName}${target.descriptor}`);
+    setSelectedTargetMeta(target);
     setTargetOptions([]);
     setTargetsLoading(false);
     setDirty(true);
@@ -1081,6 +1113,19 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
                         onChange={(event) => setTargetQuery(event.target.value)}
                       />
                     </div>
+                    {/* V1.5 §4.1/§5: ClassLoader tree selector to disambiguate same-name classes
+                        across loaders and surface the loader hierarchy with framework labels. */}
+                    {applicationId && resolvedEnvironmentId ? (
+                      <div className="mt-2">
+                        <LoaderTreeSelector
+                          applicationId={applicationId}
+                          environmentId={resolvedEnvironmentId}
+                          value={loaderFilter}
+                          onValueChange={setLoaderFilter}
+                          disabled={immutableRuleIdentity}
+                        />
+                      </div>
+                    ) : null}
                     {targetSelected ? (
                       <div className="mt-3 rounded-lg border border-[color:var(--border-strong)] bg-[var(--surface-muted)] p-3">
                         <div className="flex items-start gap-2">
@@ -1101,6 +1146,8 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
                               <p className="mt-1 truncate font-mono text-xs font-semibold text-[color:var(--primary-strong)]">#{methodName}{methodDescriptor}</p>
                               <p className="mt-1 truncate font-mono text-[10px] text-[color:var(--muted)]">加载器：{classLoaderId}</p>
                             </HoverFullContent>
+                            <TargetMetadataBadges target={(selectedTargetMeta ?? undefined) as PlatformRecord | undefined} />
+                            <TargetClassColumns target={(selectedTargetMeta ?? undefined) as PlatformRecord | undefined} />
                           </div>
                           {immutableRuleIdentity ? (
                             <Badge variant="neutral" className="ml-auto shrink-0">已锁定</Badge>
@@ -1112,6 +1159,7 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
                               setMethodName("");
                               setMethodDescriptor("");
                               setTargetQuery("");
+                              setSelectedTargetMeta(null);
                               setExecutionPhase("");
                               setDirty(true);
                               setDiagnostics([]);
@@ -1125,7 +1173,16 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
                       <div className="mt-2 max-h-56 space-y-1 overflow-y-auto pr-1">
                         {targetsLoading ? (
                           <div className="flex items-center justify-center py-5 text-xs text-slate-400"><Loader2 className="mr-2 size-3.5 animate-spin" />正在搜索目标方法…</div>
-                        ) : targetOptions.length ? targetOptions.map((target) => (
+                        ) : targetOptions.length ? (() => {
+                          const visible = targetOptions.filter((target) => !loaderFilter || target.classLoaderId === loaderFilter);
+                          if (visible.length === 0) {
+                            return (
+                              <p className="rounded-lg border border-dashed p-3 text-xs leading-5 text-slate-400">
+                                当前加载器筛选下没有匹配方法；可清除加载器筛选或切换到手动填写。
+                              </p>
+                            );
+                          }
+                          return visible.map((target) => (
                           <button
                             type="button"
                             key={`${target.classId}#${target.methodName}${target.descriptor}`}
@@ -1139,8 +1196,10 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
                                 {target.parameterTypes.join(", ") || "无参数"} → {target.returnType || "void"} · {target.instanceCount} 个在线实例
                               </p>
                             </HoverFullContent>
+                            <TargetMetadataBadges target={target as PlatformRecord} />
                           </button>
-                        )) : (
+                          ));
+                        })() : (
                           <p className="rounded-lg border border-dashed p-3 text-xs leading-5 text-slate-400">当前在线 JVM 中没有发现匹配方法；可切换到手动填写。</p>
                         )}
                       </div>

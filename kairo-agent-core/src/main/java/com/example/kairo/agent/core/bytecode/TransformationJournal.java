@@ -226,6 +226,38 @@ public final class TransformationJournal {
         }
     }
 
+    /**
+     * V1.5 &sect;3.2: remove every entry whose {@link ClassIdentity} carries the
+     * collected loader's id, and drop the per-class revision counter for those
+     * classes. Called by the {@code ClassLoaderRepository} cleaner after the
+     * loader is garbage-collected. Revisions for surviving classes stay monotonic.
+     *
+     * @return the number of per-class entries removed
+     */
+    public int clearForLoader(String classLoaderId) {
+        if (classLoaderId == null) {
+            return 0;
+        }
+        int removed = 0;
+        lock.lock();
+        try {
+            var perClassIt = perClass.entrySet().iterator();
+            while (perClassIt.hasNext()) {
+                var entry = perClassIt.next();
+                if (classLoaderId.equals(entry.getKey().classLoaderId())) {
+                    perClassIt.remove();
+                    revisions.remove(entry.getKey());
+                    removed++;
+                }
+            }
+            global.removeIf(result -> result.classIdentity() != null
+                    && classLoaderId.equals(result.classIdentity().classLoaderId()));
+        } finally {
+            lock.unlock();
+        }
+        return removed;
+    }
+
     private static void append(Deque<TransformationResult> deque, TransformationResult result, int limit) {
         deque.addLast(result);
         while (deque.size() > limit) {

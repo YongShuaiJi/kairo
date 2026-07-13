@@ -198,6 +198,44 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
         cache.clear();
     }
 
+    /**
+     * V1.5 &sect;3.2: drop every cached compiled script and generation whose
+     * target ClassLoader id matches the collected loader. The cache weakly
+     * references the compiled script and the generation's loader, so the loader
+     * can be reclaimed even without this call; this proactively frees the
+     * residual key entries so a long-lived compiler does not accumulate stale
+     * keys for every loader it ever compiled against.
+     *
+     * @return the number of cache entries removed
+     */
+    public synchronized int clearForLoader(String classLoaderId) {
+        if (classLoaderId == null) {
+            return 0;
+        }
+        evictStaleCacheEntries();
+        evictStaleGenerations();
+        int removed = 0;
+        var cacheIt = cache.entrySet().iterator();
+        while (cacheIt.hasNext()) {
+            if (classLoaderId.equals(cacheIt.next().getKey().targetClassLoaderId())) {
+                cacheIt.remove();
+                removed++;
+            }
+        }
+        var genIt = generations.entrySet().iterator();
+        while (genIt.hasNext()) {
+            var entry = genIt.next();
+            if (classLoaderId.equals(entry.getKey().targetClassLoaderId())) {
+                GenerationHolder holder = entry.getValue().get();
+                if (holder != null) {
+                    holder.close();
+                }
+                genIt.remove();
+            }
+        }
+        return removed;
+    }
+
     private record ScriptCacheKey(String ruleId, long version, String scriptHash,
                                   CapabilityProfile profile, String targetClassLoaderId,
                                   ScriptPolicyRevision policyRevision, String groovyVersion) {

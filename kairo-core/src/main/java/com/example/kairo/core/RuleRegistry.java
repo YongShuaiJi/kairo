@@ -112,6 +112,33 @@ public final class RuleRegistry {
         methods.clear();
     }
 
+    /**
+     * V1.5 &sect;3.2: remove every chain whose {@link MethodKey} belongs to the
+     * collected loader. Called by the {@code ClassLoaderRepository} cleaner after
+     * the loader is garbage-collected, so a loader that is reclaimed after its
+     * rules were unloaded does not leave orphan chain state behind. Rules that
+     * are still active hold a strong {@code Class} reference via {@link MethodKey}
+     * and therefore prevent the loader from being collected in the first place,
+     * so this path only ever clears already-unloaded residual state.
+     *
+     * @return the number of method keys removed
+     */
+    public int clearForLoader(String classLoaderId) {
+        if (classLoaderId == null) {
+            return 0;
+        }
+        int removed = 0;
+        var it = methods.entrySet().iterator();
+        while (it.hasNext()) {
+            var entry = it.next();
+            if (classLoaderId.equals(entry.getKey().classLoaderId())) {
+                it.remove();
+                removed++;
+            }
+        }
+        return removed;
+    }
+
     // -------------------------------------------------------- legacy compat adapter
 
     /** Flattened V1.2 {@link RuleSet} view of a method's chains. */

@@ -154,6 +154,20 @@ class EnhancementLocationPlatformIntegrationTest {
         assertThat(jdbc.queryForObject("select count(*) from rule where name = 'Drift rule'", Integer.class)).isZero();
     }
 
+    // V1.5 §4.1/§5: a name that resolves to more than one ClassLoader must surface as
+    // AMBIGUOUS_TARGET (409) with the candidate loader ids, never a silent first-match weave.
+    @Test
+    void callSiteRuleRejectsAmbiguousTarget() {
+        Map<String, Object> selector = callSiteSelector(0);
+        Map<String, Object> request = baseMethodRule("Ambiguous rule", "invoke", "()V", "CALL_RETURN", selector);
+        assertThatThrownBy(() -> runWithAck(() -> coreService.createRule(admin, request),
+                Map.of("status", "AMBIGUOUS", "reason", "matched 2 loaders", "matchedCount", 2,
+                        "candidateLoaderIds", java.util.List.of("loader-A", "loader-B"))))
+                .isInstanceOfSatisfying(PlatformException.class,
+                        e -> { assertThat(e.status()).isEqualTo(409); assertThat(e.code()).isEqualTo("AMBIGUOUS_TARGET"); });
+        assertThat(jdbc.queryForObject("select count(*) from rule where name = 'Ambiguous rule'", Integer.class)).isZero();
+    }
+
     @Test
     void constructorRuleRejectsNativeTarget() {
         Map<String, Object> request = baseMethodRule("Native ctor rule", "<init>", "()V",
@@ -311,6 +325,79 @@ class EnhancementLocationPlatformIntegrationTest {
 
     private Map<String, Object> readJson(String json) {
         return com.example.kairo.platform.service.PlatformJson.readMap(json);
+    }
+
+    // V1.5 §4.1/§5: the loader-tree endpoint dispatches LIST_LOADERS to a live agent and returns
+    // the parent->children tree so the Web class selector can disambiguate same-name classes.
+    @Test
+    void loaderTreeEndpointReturnsAgentLoaders() {
+        Map<String, Object> bootstrap = Map.of("loaderId", "bootstrap", "loaderClassName", "bootstrap", "parentLoaderId", "");
+        Map<String, Object> appLoader = Map.of("loaderId", "app-loader-id", "loaderClassName",
+                "jdk.internal.loader.ClassLoaders$AppClassLoader", "parentLoaderId", "bootstrap");
+        Map<String, Object> springLoader = Map.of("loaderId", "spring-loader-id", "loaderClassName",
+                "org.springframework.boot.loader.launch.LaunchedURLClassLoader",
+                "parentLoaderId", "app-loader-id", "frameworkLoader", "Spring Boot (LaunchedURLClassLoader)");
+        Map<String, Object> ackResult = new LinkedHashMap<>();
+        ackResult.put("loaders", List.of(bootstrap, appLoader, springLoader));
+        ackResult.put("tree", Map.of(
+                "bootstrap", List.of(appLoader),
+                "app-loader-id", List.of(springLoader)));
+        ackResult.put("count", 3);
+        ackResult.put("bootstrapLoaderId", "bootstrap");
+
+        Map<String, Object> result = runWithAck(
+                () -> targetDiscoveryService.listLoaders(admin, "app-default", "env-dev"),
+                ackResult);
+
+        assertThat(result.get("agentAvailable")).isEqualTo(true);
+        assertThat(String.valueOf(result.get("bootstrapLoaderId"))).isEqualTo("bootstrap");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> loaders = (List<Map<String, Object>>) result.get("loaders");
+        assertThat(loaders).hasSize(3);
+        assertThat(loaders).anyMatch(l -> "Spring Boot (LaunchedURLClassLoader)".equals(String.valueOf(l.get("frameworkLoader"))));
+    }
+
+    // V1.5 §5: DISCOVER_TARGETS metadata (proxyType / supportLevel / driftStatus / loaderClass /
+    // frameworkLoader) flows through the search aggregate, and same-name classes across two
+    // loaders are presented as two distinct targets (keyed by classLoaderId), never collapsed.
+    @Test
+    void searchEchoesTargetMetadataAndDisambiguatesByLoader() {
+        Map<String, Object> targetA = new LinkedHashMap<>();
+        targetA.put("className", "com.example.OrderService");
+        targetA.put("methodName", "createOrder");
+        targetA.put("descriptor", "(Lcom/example/Order;)V");
+        targetA.put("classLoaderId", "loader-A");
+        targetA.put("classLoaderClassName", "java.net.URLClassLoader");
+        targetA.put("loaderClass", "java.net.URLClassLoader");
+        targetA.put("proxyType", "PLAIN");
+        targetA.put("supportLevel", "SUPPORTED");
+        targetA.put("driftStatus", "FRESH");
+        Map<String, Object> targetB = new LinkedHashMap<>();
+        targetB.put("className", "com.example.OrderService");
+        targetB.put("methodName", "createOrder");
+        targetB.put("descriptor", "(Lcom/example/Order;)V");
+        targetB.put("classLoaderId", "loader-B");
+        targetB.put("classLoaderClassName", "org.springframework.boot.loader.launch.LaunchedURLClassLoader");
+        targetB.put("loaderClass", "org.springframework.boot.loader.launch.LaunchedURLClassLoader");
+        targetB.put("frameworkLoader", "Spring Boot (LaunchedURLClassLoader)");
+        targetB.put("proxyType", "CGLIB");
+        targetB.put("supportLevel", "LIMITED");
+        targetB.put("driftStatus", "DRIFTED");
+        Map<String, Object> ackResult = Map.of("targets", List.of(targetA, targetB), "truncated", false);
+
+        List<Map<String, Object>> result = runWithAck(
+                () -> targetDiscoveryService.search(admin, "OrderService", "app-default", "env-dev"),
+                ackResult);
+
+        // Two same-name classes in two loaders -> two distinct entries.
+        assertThat(result).hasSize(2);
+        assertThat(result).allSatisfy(row -> {
+            assertThat(row.get("proxyType")).isIn("PLAIN", "CGLIB");
+            assertThat(row.get("supportLevel")).isIn("SUPPORTED", "LIMITED");
+            assertThat(row.get("driftStatus")).isIn("FRESH", "DRIFTED");
+        });
+        assertThat(result).anyMatch(r -> "DRIFTED".equals(String.valueOf(r.get("driftStatus"))));
+        assertThat(result).anyMatch(r -> "loader-B".equals(String.valueOf(r.get("classLoaderId"))));
     }
 
     private <T> T runWithAck(Supplier<T> call, Map<String, Object> ackResult) {

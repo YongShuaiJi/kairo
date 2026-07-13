@@ -1,5 +1,6 @@
 package com.example.kairo.agent.core.script;
 
+import com.example.kairo.agent.core.SyntheticBridgePolicy;
 import com.example.kairo.api.InvokePhase;
 import com.example.kairo.api.MockRule;
 import com.example.kairo.api.ScriptDiagnostic;
@@ -48,6 +49,7 @@ public final class ScriptSessionManager implements AutoCloseable {
     private final ScriptSessionTargetResolver targetResolver;
     private final Clock clock;
     private final ScriptSessionLimits limits;
+    private final SyntheticBridgePolicy syntheticBridgePolicy;
     private final ConcurrentHashMap<String, ScriptSession> sessions = new ConcurrentHashMap<>();
     private volatile boolean closed;
 
@@ -56,11 +58,27 @@ public final class ScriptSessionManager implements AutoCloseable {
                                 ScriptSessionTargetResolver targetResolver,
                                 Clock clock,
                                 ScriptSessionLimits limits) {
+        this(host, compilerFactory, targetResolver, clock, limits, new SyntheticBridgePolicy());
+    }
+
+    /**
+     * V1.5 &sect;4.3: construct with a shared {@link SyntheticBridgePolicy} so script
+     * sessions honor the same synthetic/bridge/lambda control as the publish and record
+     * paths. The host ({@link com.example.kairo.agent.core.AgentRuntime}) passes its own
+     * policy so arming {@code allowBridge} applies uniformly.
+     */
+    public ScriptSessionManager(ScriptSessionHost host,
+                                AgentScriptCompilerFactory compilerFactory,
+                                ScriptSessionTargetResolver targetResolver,
+                                Clock clock,
+                                ScriptSessionLimits limits,
+                                SyntheticBridgePolicy syntheticBridgePolicy) {
         this.host = Objects.requireNonNull(host, "host");
         this.compilerFactory = Objects.requireNonNull(compilerFactory, "compilerFactory");
         this.targetResolver = Objects.requireNonNull(targetResolver, "targetResolver");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.limits = Objects.requireNonNull(limits, "limits");
+        this.syntheticBridgePolicy = Objects.requireNonNull(syntheticBridgePolicy, "syntheticBridgePolicy");
     }
 
     // ------------------------------------------------------------------ creation
@@ -396,9 +414,11 @@ public final class ScriptSessionManager implements AutoCloseable {
     }
 
     private void ensureMockable(java.lang.reflect.Method method) {
-        if (method.isSynthetic() || method.isBridge()) {
+        SyntheticBridgePolicy.Verdict verdict = syntheticBridgePolicy.evaluate(method);
+        if (!verdict.isAllowed()) {
             throw new IllegalArgumentException(
-                    "Synthetic and bridge methods cannot be targeted by a script session: " + method);
+                    "Synthetic and bridge methods cannot be targeted by a script session: " + method
+                            + "; " + verdict.reason());
         }
     }
 

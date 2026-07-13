@@ -45,6 +45,48 @@ function targetLabel(target: PlatformRecord | undefined) {
   return `${String(valueOf(target, "className") ?? "—")}#${String(valueOf(target, "methodName") ?? "—")}`;
 }
 
+// V1.5 §5: render the modern-JVM target metadata the platform now persists on rule_target
+// (proxy type, support level, drift status, loader/framework). All fields are optional: legacy
+// targets and offline demo data render no badges, so existing flows are unchanged.
+// Lambda/synthetic/bridge/JDK risk surfaces via the support-level badge.
+function supportVariant(level: string) {
+  const value = level.toUpperCase();
+  if (value === "SUPPORTED") return "success" as const;
+  if (value === "LIMITED") return "warning" as const;
+  if (value === "UNSUPPORTED") return "danger" as const;
+  return "neutral" as const; // EXPERIMENTAL
+}
+
+function targetMetadataBadges(target: PlatformRecord | undefined) {
+  if (!target) return null;
+  const proxyType = String(valueOf(target, "proxyType") ?? "");
+  const supportLevel = String(valueOf(target, "supportLevel") ?? "");
+  const driftStatus = String(valueOf(target, "driftStatus") ?? "");
+  const loaderClass = String(valueOf(target, "loaderClass") ?? "");
+  const frameworkLoader = String(valueOf(target, "frameworkLoader") ?? "");
+  return (
+    <div className="mt-1 flex flex-wrap justify-center gap-1">
+      {proxyType && proxyType !== "PLAIN" && (
+        <Badge variant="info" className="text-[10px]">代理 {proxyType}</Badge>
+      )}
+      {supportLevel && (
+        <Badge variant={supportVariant(supportLevel)} className="text-[10px]">{supportLevel}</Badge>
+      )}
+      {driftStatus && driftStatus !== "FRESH" && (
+        <Badge variant={driftStatus === "DRIFTED" ? "danger" : "warning"} className="text-[10px]">
+          {driftStatus}
+        </Badge>
+      )}
+      {frameworkLoader && (
+        <Badge variant="neutral" className="text-[10px]">{frameworkLoader}</Badge>
+      )}
+      {!frameworkLoader && loaderClass && loaderClass !== "bootstrap" && (
+        <Badge variant="neutral" className="text-[10px]">{loaderClass}</Badge>
+      )}
+    </div>
+  );
+}
+
 function phaseLabel(phase: InvokePhase) {
   return phase === "BEFORE" ? "调用前" : phase === "RETURN" ? "正常返回后" : "抛出异常时";
 }
@@ -164,7 +206,12 @@ export function RuleLedgerPage({ ruleId }: { ruleId: string }) {
                     <TableCell className="px-6 py-4 font-semibold text-[color:var(--foreground)]">{humanize(valueOf(rule, "name"))}</TableCell>
                     <TableCell className="px-6 py-4">{humanize(valueOf(rule, "applicationName") ?? valueOf(rule, "applicationId"))}</TableCell>
                     <TableCell className="px-6 py-4">{displayRaw(valueOf(rule, "environmentName") ?? valueOf(rule, "environmentId"))}</TableCell>
-                    <TableCell className="px-6 py-4 font-mono text-xs">{targetLabel(firstTarget(detailQuery.data, versions[0]))}</TableCell>
+                    <TableCell className="px-6 py-4 font-mono text-xs">
+                      <div className="flex flex-col items-center gap-1">
+                        <span>{targetLabel(firstTarget(detailQuery.data, versions[0]))}</span>
+                        {targetMetadataBadges(firstTarget(detailQuery.data, versions[0]))}
+                      </div>
+                    </TableCell>
                     <TableCell className="px-6 py-4">
                       <span>{versionCountLabel(valueOf(rule, "versionCount") ?? versions.length)}</span>
                       <span className="ml-2 whitespace-nowrap text-xs text-[color:var(--muted)]">

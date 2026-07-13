@@ -231,6 +231,37 @@ public final class BytecodeSnapshotRepository implements AutoCloseable {
         }
     }
 
+    /**
+     * V1.5 &sect;3.2: remove every snapshot whose {@link ClassIdentity} carries the
+     * collected loader's id. Called by the {@code ClassLoaderRepository} cleaner
+     * after the ReferenceQueue observes the loader has been garbage-collected, so
+     * residual snapshots do not outlive the loader that produced them.
+     *
+     * @return the number of entries removed
+     */
+    public int clearForLoader(String classLoaderId) {
+        if (classLoaderId == null) {
+            return 0;
+        }
+        int removed = 0;
+        maintenance.lock();
+        try {
+            var it = entries.entrySet().iterator();
+            while (it.hasNext()) {
+                var entry = it.next();
+                if (classLoaderId.equals(entry.getKey().classIdentity().classLoaderId())) {
+                    Entry removedEntry = entry.getValue();
+                    it.remove();
+                    totalBytes.addAndGet(-removedEntry.bytes.length);
+                    removed++;
+                }
+            }
+        } finally {
+            maintenance.unlock();
+        }
+        return removed;
+    }
+
     @Override
     public void close() {
         clear();

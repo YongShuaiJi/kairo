@@ -20,9 +20,20 @@ import java.util.Optional;
 public final class LoadedClassRepository {
 
     private final Instrumentation instrumentation;
+    private volatile ClassLoaderRepository classLoaderRepository;
 
     public LoadedClassRepository(Instrumentation instrumentation) {
         this.instrumentation = Objects.requireNonNull(instrumentation, "instrumentation");
+    }
+
+    /**
+     * V1.5 §3.2: bind a {@link ClassLoaderRepository} so every loader the
+     * repository observes (during search, resolve and class-info derivation) is
+     * registered for weak tracking and ReferenceQueue cleanup. Optional: when
+     * unbound, the repository behaves as before and no cleanup is wired.
+     */
+    public void bind(ClassLoaderRepository classLoaderRepository) {
+        this.classLoaderRepository = classLoaderRepository;
     }
 
     public List<ClassInfo> search(String keyword, int limit) {
@@ -54,6 +65,7 @@ public final class LoadedClassRepository {
         for (Class<?> type : instrumentation.getAllLoadedClasses()) {
             if (type.getName().equals(className)
                     && ClassLoaderIdentity.idOf(type.getClassLoader()).equals(classLoaderId)) {
+                registerLoader(type.getClassLoader());
                 return Optional.of(type);
             }
         }
@@ -138,26 +150,59 @@ public final class LoadedClassRepository {
      * when a V1.3 constructor rule arrives over the command channel.
      */
     public Constructor<?> resolveConstructorTarget(String classIdOrName, String constructorDescriptor) {
+        return resolveConstructorTarget(classIdOrName, constructorDescriptor, false);
+    }
+
+    /** V1.5 &sect;4.1: constructor counterpart of {@link #resolveMethodTarget(String, String, String, boolean)}. */
+    public Constructor<?> resolveConstructorTarget(String classIdOrName, String constructorDescriptor,
+                                                   boolean allMatch) {
         if (classIdOrName == null || classIdOrName.isBlank()) {
             throw new IllegalArgumentException("classId or className is required");
         }
         try {
             return resolveConstructor(classIdOrName, constructorDescriptor);
         } catch (IllegalArgumentException invalidClassId) {
-            return Arrays.stream(instrumentation.getAllLoadedClasses())
-                    .filter(type -> type.getName().equals(classIdOrName))
-                    .map(type -> {
-                        try {
-                            return resolveConstructor(type, constructorDescriptor);
-                        } catch (IllegalArgumentException ignored) {
-                            return null;
-                        }
-                    })
-                    .filter(Objects::nonNull)
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalArgumentException("Constructor not found: "
-                            + classIdOrName + "#" + "<init>" + constructorDescriptor));
+            List<Constructor<?>> candidates = new java.util.ArrayList<>();
+            List<String> candidateLoaders = new java.util.ArrayList<>();
+            for (Class<?> type : instrumentation.getAllLoadedClasses()) {
+                if (!type.getName().equals(classIdOrName)) {
+                    continue;
+                }
+                try {
+                    candidates.add(resolveConstructor(type, constructorDescriptor));
+                    candidateLoaders.add(ClassLoaderIdentity.idOf(type.getClassLoader()));
+                } catch (IllegalArgumentException ignored) {
+                    // this loader's class does not declare the constructor
+                }
+            }
+            if (candidates.size() > 1 && !allMatch) {
+                throw new AmbiguousTargetException(classIdOrName, candidateLoaders);
+            }
+            if (candidates.isEmpty()) {
+                throw new IllegalArgumentException("Constructor not found: "
+                        + classIdOrName + "#" + "<init>" + constructorDescriptor);
+            }
+            return candidates.get(0);
         }
+    }
+
+    /**
+     * V1.5 &sect;4.1: every loaded class with the given binary name, across all
+     * ClassLoaders. The search returns <em>all</em> candidates rather than
+     * picking the first, so the platform can present the loader tree and the
+     * caller can disambiguate with an explicit classLoaderId.
+     */
+    public List<Class<?>> findAllByName(String className) {
+        if (className == null || className.isBlank()) {
+            return List.of();
+        }
+        java.util.List<Class<?>> out = new java.util.ArrayList<>();
+        for (Class<?> type : instrumentation.getAllLoadedClasses()) {
+            if (type.getName().equals(className)) {
+                out.add(type);
+            }
+        }
+        return out;
     }
 
     private Constructor<?> resolveConstructor(Class<?> type, String constructorDescriptor) {
@@ -174,25 +219,46 @@ public final class LoadedClassRepository {
     }
 
     public Method resolveMethodTarget(String classIdOrName, String methodName, String methodDescriptor) {
+        return resolveMethodTarget(classIdOrName, methodName, methodDescriptor, false);
+    }
+
+    /**
+     * V1.5 &sect;4.1: resolve a method by class id or binary name. When the
+     * identifier is a binary name that matches classes in more than one
+     * ClassLoader, the resolution is <em>ambiguous</em> and the agent refuses
+     * unless {@code allMatch} is true (in which case the first candidate is
+     * returned and every candidate is recorded for audit). The agent never
+     * silently picks the first candidate of an ambiguous match.
+     */
+    public Method resolveMethodTarget(String classIdOrName, String methodName,
+                                      String methodDescriptor, boolean allMatch) {
         if (classIdOrName == null || classIdOrName.isBlank()) {
             throw new IllegalArgumentException("classId or className is required");
         }
         try {
             return resolveMethod(classIdOrName, methodName, methodDescriptor);
         } catch (IllegalArgumentException invalidClassId) {
-            return Arrays.stream(instrumentation.getAllLoadedClasses())
-                    .filter(type -> type.getName().equals(classIdOrName))
-                    .map(type -> {
-                        try {
-                            return resolveMethod(type, methodName, methodDescriptor);
-                        } catch (IllegalArgumentException ignored) {
-                            return null;
-                        }
-                    })
-                    .filter(Objects::nonNull)
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalArgumentException("Method not found: "
-                            + classIdOrName + "#" + methodName + methodDescriptor));
+            List<Method> candidates = new java.util.ArrayList<>();
+            List<String> candidateLoaders = new java.util.ArrayList<>();
+            for (Class<?> type : instrumentation.getAllLoadedClasses()) {
+                if (!type.getName().equals(classIdOrName)) {
+                    continue;
+                }
+                try {
+                    candidates.add(resolveMethod(type, methodName, methodDescriptor));
+                    candidateLoaders.add(ClassLoaderIdentity.idOf(type.getClassLoader()));
+                } catch (IllegalArgumentException ignored) {
+                    // this loader's class does not declare the method
+                }
+            }
+            if (candidates.size() > 1 && !allMatch) {
+                throw new AmbiguousTargetException(classIdOrName, candidateLoaders);
+            }
+            if (candidates.isEmpty()) {
+                throw new IllegalArgumentException("Method not found: "
+                        + classIdOrName + "#" + methodName + methodDescriptor);
+            }
+            return candidates.get(0);
         }
     }
 
@@ -207,7 +273,7 @@ public final class LoadedClassRepository {
 
     public ClassInfo toClassInfo(Class<?> type) {
         ClassLoader loader = type.getClassLoader();
-        String loaderId = ClassLoaderIdentity.idOf(loader);
+        String loaderId = registerLoader(loader);
         return new ClassInfo(
                 classId(type),
                 type.getName(),
@@ -215,6 +281,12 @@ public final class LoadedClassRepository {
                 loader == null ? "bootstrap" : loader.getClass().getName(),
                 instrumentation.isModifiableClass(type)
         );
+    }
+
+    /** V1.5 §3.2: register a loader with the bound repository (if any) and return its id. */
+    private String registerLoader(ClassLoader loader) {
+        ClassLoaderRepository repo = classLoaderRepository;
+        return repo == null ? ClassLoaderIdentity.idOf(loader) : repo.register(loader);
     }
 
     public String classId(Class<?> type) {

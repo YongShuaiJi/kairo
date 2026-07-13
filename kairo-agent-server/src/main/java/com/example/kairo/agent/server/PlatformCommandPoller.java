@@ -122,6 +122,7 @@ final class PlatformCommandPoller implements AutoCloseable {
             case "START_RECORDING" -> startRecording(payload);
             case "STOP_RECORDING" -> stopRecording(payload);
             case "DISCOVER_TARGETS" -> discoverTargets(payload);
+            case "LIST_LOADERS" -> listLoaders(payload);
             case "LIST_CALL_SITES" -> listCallSites(payload);
             case "RESOLVE_TARGET" -> resolveTarget(payload);
             case "REFRESH_RUNTIME_STATE" -> Map.of("refreshed", true);
@@ -548,6 +549,11 @@ final class PlatformCommandPoller implements AutoCloseable {
         int limit = Math.min(200, Math.max(1, payload.path("limit").asInt(100)));
         List<Map<String, Object>> targets = new ArrayList<>();
         for (var classInfo : runtime.searchClasses(query, limit)) {
+            // V1.5 §5: resolve the live Class once per discovered class so every member carries
+            // the modern-JVM metadata (loader / module / code source / proxy type / support level
+            // / drift) the Web class selector renders. Resolution is best-effort: a class that
+            // unloaded between search and resolve simply renders no enrichment.
+            ClassEnrichment enrichment = enrichmentOf(classInfo);
             for (var member : membersOf(classInfo.classId())) {
                 String targetSignature = (classInfo.className() + "#" + member.name() + member.descriptor())
                         .toLowerCase(Locale.ROOT);
@@ -557,13 +563,67 @@ final class PlatformCommandPoller implements AutoCloseable {
                         && !targetSignature.contains(normalizedQuery)) {
                     continue;
                 }
-                targets.add(memberTargetMap(classInfo, member));
+                targets.add(memberTargetMap(classInfo, member, enrichment));
                 if (targets.size() >= limit) {
                     return Map.of("targets", targets, "truncated", true);
                 }
             }
         }
         return Map.of("targets", targets, "truncated", false);
+    }
+
+    /** V1.5 §5: per-class modern-JVM metadata resolved once and reused for every member. */
+    private record ClassEnrichment(Class<?> type, com.example.kairo.api.bytecode.ClassMetadata metadata,
+                                   com.example.kairo.api.ProxyAnalysis analysis) {
+    }
+
+    private ClassEnrichment enrichmentOf(com.example.kairo.agent.core.ClassInfo classInfo) {
+        try {
+            return runtime.loadedClassRepository().findClass(classInfo.classId())
+                    .map(type -> {
+                        com.example.kairo.api.ProxyAnalysis analysis = runtime.proxyAnalyzer().analyze(type);
+                        com.example.kairo.api.bytecode.ClassMetadata md =
+                                com.example.kairo.agent.core.bytecode.ClassIdentities.metadataOf(
+                                        type, supportLevelFor(type, analysis));
+                        return new ClassEnrichment(type, md, analysis);
+                    })
+                    .orElse(null);
+        } catch (RuntimeException ignored) {
+            return null; // metadata is best-effort; the core discovery fields still reach the platform
+        }
+    }
+
+    /**
+     * V1.5 §4.1: the loader tree the Web class selector renders so an operator can pick a
+     * {@code classLoaderId} and disambiguate same-name classes across loaders. Returns every
+     * tracked loader (bootstrap first) plus a parent&rarr;children tree keyed by loader id.
+     */
+    private Map<String, Object> listLoaders(JsonNode payload) {
+        com.example.kairo.agent.core.ClassLoaderRepository repo = runtime.classLoaderRepository();
+        List<Map<String, Object>> loaders = repo.liveLoaders().stream().map(this::loaderMap).toList();
+        Map<String, Object> tree = new LinkedHashMap<>();
+        repo.loaderTree().forEach((parent, children) ->
+                tree.put(parent, children.stream().map(this::loaderMap).toList()));
+        return Map.of(
+                "loaders", loaders,
+                "tree", tree,
+                "count", loaders.size(),
+                "bootstrapLoaderId", com.example.kairo.core.ClassLoaderIdentity.BOOTSTRAP);
+    }
+
+    private Map<String, Object> loaderMap(com.example.kairo.agent.core.LoaderInfo info) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("loaderId", info.id());
+        map.put("loaderClassName", info.className());
+        map.put("parentLoaderId", info.parentId());
+        if (info.codeSource() != null) {
+            map.put("codeSource", info.codeSource());
+        }
+        String framework = com.example.kairo.agent.core.FrameworkLoaderRecognizer.recognize(info.className());
+        if (framework != null) {
+            map.put("frameworkLoader", framework);
+        }
+        return map;
     }
 
     /**
@@ -580,7 +640,8 @@ final class PlatformCommandPoller implements AutoCloseable {
 
     private Map<String, Object> memberTargetMap(
             com.example.kairo.agent.core.ClassInfo classInfo,
-            com.example.kairo.agent.core.MethodInfo member) {
+            com.example.kairo.agent.core.MethodInfo member,
+            ClassEnrichment enrichment) {
         Map<String, Object> target = new LinkedHashMap<>();
         target.put("classId", classInfo.classId());
         target.put("className", classInfo.className());
@@ -603,7 +664,61 @@ final class PlatformCommandPoller implements AutoCloseable {
         target.put("synthetic", member.synthetic());
         target.put("bridge", member.bridge());
         target.put("modifiers", member.modifiers());
+        // V1.5 §5: modern-JVM enrichment so the Web selector can render the loader tree, proxy
+        // type, support level, module / code source and drift status, and so the platform can
+        // persist them on rule_target without a second round-trip.
+        enrichWithClassMetadata(target, classInfo.className(), enrichment);
         return target;
+    }
+
+    /**
+     * V1.5 §5: stamp loader / module / code source / proxy / support / drift metadata plus the
+     * declared-class / proxy-class / actual-enhanced-class distinction onto a discovery or
+     * resolution response. All fields are optional: a class that could not be analyzed renders
+     * no enrichment, so legacy flows are unchanged.
+     */
+    private void enrichWithClassMetadata(Map<String, Object> target, String declaredClassName,
+                                         ClassEnrichment enrichment) {
+        if (enrichment == null || enrichment.metadata() == null) {
+            return;
+        }
+        com.example.kairo.api.bytecode.ClassMetadata md = enrichment.metadata();
+        com.example.kairo.api.ProxyAnalysis analysis = enrichment.analysis();
+        target.put("loaderClass", md.loaderClassName());
+        target.put("parentLoaderId", md.parentLoaderId());
+        target.put("moduleName", md.moduleName());
+        target.put("namedModule", md.namedModule());
+        target.put("codeSource", md.codeSource());
+        target.put("proxyType", analysis.proxyType().name());
+        target.put("supportLevel", md.supportLevel().name());
+        String framework = com.example.kairo.agent.core.FrameworkLoaderRecognizer.recognize(md.loaderClassName());
+        if (framework != null) {
+            target.put("frameworkLoader", framework);
+        }
+        target.put("driftStatus", runtime.isClassDrifted(md.identity().binaryClassName()) ? "DRIFTED" : "FRESH");
+        // V1.5 §5: declared class (what the operator named / is browsing), proxy class (the
+        // generated proxy if the resolved class is one) and actual enhanced class (the class
+        // Kairo weaves) so the Web can render the three columns distinctly and surface the
+        // analyzer's recommendation without auto-jumping to the target.
+        target.put("declaredClassName", declaredClassName);
+        target.put("actualEnhancedClassName", md.identity().binaryClassName());
+        if (analysis.isProxy()) {
+            target.put("proxyClassName", md.identity().binaryClassName());
+            if (analysis.superclass() != null) {
+                target.put("proxySuperclass", analysis.superclass());
+            }
+            if (!analysis.proxyInterfaces().isEmpty()) {
+                target.put("proxyInterfaces", analysis.proxyInterfaces());
+            }
+        }
+        if (analysis.recommendedTarget() != null) {
+            target.put("recommendedTargetClass", analysis.recommendedTarget().className());
+            target.put("recommendedTargetMethod", analysis.recommendedTarget().methodName());
+            target.put("recommendedTargetDescriptor", analysis.recommendedTarget().methodDescriptor());
+        }
+        if (analysis.impactExplanation() != null) {
+            target.put("proxyImpact", analysis.impactExplanation());
+        }
     }
 
     /**
@@ -655,14 +770,40 @@ final class PlatformCommandPoller implements AutoCloseable {
      * total occurrence count is included so the platform can show "occurrence N of M".
      */
     private Map<String, Object> resolveTarget(JsonNode payload) {
-        String classId = requiredText(payload, "classId");
-        Class<?> declaringClass = runtime.loadedClassRepository().findClass(classId)
-                .orElseThrow(() -> new IllegalArgumentException("class is not loaded: " + classId));
+        String classId = text(payload, "classId", null);
+        String className = text(payload, "className", null);
+        boolean allMatch = payload.path("allMatch").asBoolean(false);
+        String methodName = requiredText(payload, "methodName");
+        String methodDescriptor = requiredText(payload, "methodDescriptor");
+        Class<?> declaringClass;
+        if (classId != null && !classId.isBlank()) {
+            declaringClass = runtime.loadedClassRepository().findClass(classId)
+                    .orElseThrow(() -> new IllegalArgumentException("class is not loaded: " + classId));
+        } else if (className != null && !className.isBlank()) {
+            // V1.5 §4.1/§5: name-based resolution. A name that matches classes in more than
+            // one ClassLoader is ambiguous; refuse with AMBIGUOUS unless the caller asked for
+            // all-match, so the platform surfaces AMBIGUOUS_TARGET instead of weaving the wrong one.
+            try {
+                java.lang.reflect.Method resolved = runtime.loadedClassRepository()
+                        .resolveMethodTarget(className, methodName, methodDescriptor, allMatch);
+                declaringClass = resolved.getDeclaringClass();
+            } catch (com.example.kairo.agent.core.AmbiguousTargetException e) {
+                Map<String, Object> ambiguous = new LinkedHashMap<>();
+                ambiguous.put("status", "AMBIGUOUS");
+                ambiguous.put("matchedCount", e.candidateLoaderIds().size());
+                ambiguous.put("reason", "class name '" + className + "' matched "
+                        + e.candidateLoaderIds().size() + " ClassLoaders; "
+                        + "provide classLoaderId or request all-match");
+                ambiguous.put("candidateLoaderIds", e.candidateLoaderIds());
+                return ambiguous;
+            }
+        } else {
+            throw new IllegalArgumentException("classId or className is required");
+        }
         com.example.kairo.api.MethodSelector method = new com.example.kairo.api.MethodSelector(
                 declaringClass.getName(),
                 com.example.kairo.core.ClassLoaderIdentity.idOf(declaringClass.getClassLoader()),
-                requiredText(payload, "methodName"),
-                requiredText(payload, "methodDescriptor"));
+                methodName, methodDescriptor);
         com.example.kairo.api.EnhancementLocation location = com.example.kairo.api.EnhancementLocation
                 .valueOf(requiredText(payload, "location").toUpperCase(Locale.ROOT));
         com.example.kairo.api.EnhancementTarget target = location.isCallSiteLocation()
@@ -682,7 +823,73 @@ final class PlatformCommandPoller implements AutoCloseable {
         if (result.resolvedIdentity() != null) {
             response.put("resolvedIdentity", callSiteMap(result.resolvedIdentity()));
         }
+        // V1.5 §5: the declared class is what the operator named (className, or the classId's
+        // class); the actual enhanced class is what Kairo weaves (declaringClass). They differ
+        // when a name resolved to a different loader's class or when a proxy is involved.
+        String declaredClassName = (className != null && !className.isBlank())
+                ? className : declaringClass.getName();
+        enrichWithTargetMetadata(response, declaringClass, declaredClassName);
         return response;
+    }
+
+    /**
+     * V1.5 &sect;5: echo the loader / module / code source / proxy type / support level / drift
+     * status the agent observed so the platform can persist them on the rule target and render
+     * them in the class selector, plus the declared-class / proxy-class / actual-enhanced-class
+     * distinction (&sect;5: "明确区分声明类、代理类、实际增强类"). Enrichment never breaks
+     * resolution; a failure to read metadata is swallowed so the core status still reaches the
+     * platform.
+     */
+    private void enrichWithTargetMetadata(Map<String, Object> response, Class<?> type, String declaredClassName) {
+        try {
+            com.example.kairo.api.ProxyAnalysis analysis = runtime.proxyAnalyzer().analyze(type);
+            com.example.kairo.api.SupportLevel support = supportLevelFor(type, analysis);
+            com.example.kairo.api.bytecode.ClassMetadata md =
+                    com.example.kairo.agent.core.bytecode.ClassIdentities.metadataOf(type, support);
+            response.put("classLoaderId", md.identity().classLoaderId());
+            response.put("loaderClassName", md.loaderClassName());
+            response.put("loaderClass", md.loaderClassName());
+            response.put("parentLoaderId", md.parentLoaderId());
+            response.put("moduleName", md.moduleName());
+            response.put("namedModule", md.namedModule());
+            response.put("codeSource", md.codeSource());
+            response.put("proxyType", analysis.proxyType().name());
+            response.put("supportLevel", support.name());
+            response.put("driftStatus", runtime.isClassDrifted(md.identity().binaryClassName()) ? "DRIFTED" : "FRESH");
+            String framework = com.example.kairo.agent.core.FrameworkLoaderRecognizer.recognize(md.loaderClassName());
+            if (framework != null) {
+                response.put("frameworkLoader", framework);
+            }
+            response.put("declaredClassName", declaredClassName);
+            response.put("actualEnhancedClassName", md.identity().binaryClassName());
+            if (analysis.isProxy()) {
+                response.put("proxyClassName", md.identity().binaryClassName());
+                if (analysis.superclass() != null) {
+                    response.put("proxySuperclass", analysis.superclass());
+                }
+                if (!analysis.proxyInterfaces().isEmpty()) {
+                    response.put("proxyInterfaces", analysis.proxyInterfaces());
+                }
+            }
+            if (analysis.recommendedTarget() != null) {
+                response.put("recommendedTargetClass", analysis.recommendedTarget().className());
+                response.put("recommendedTargetMethod", analysis.recommendedTarget().methodName());
+                response.put("recommendedTargetDescriptor", analysis.recommendedTarget().methodDescriptor());
+            }
+            if (analysis.impactExplanation() != null) {
+                response.put("proxyImpact", analysis.impactExplanation());
+            }
+        } catch (RuntimeException ignored) {
+            // metadata is best-effort; the core resolution status is already in the response
+        }
+    }
+
+    private com.example.kairo.api.SupportLevel supportLevelFor(Class<?> type, com.example.kairo.api.ProxyAnalysis analysis) {
+        com.example.kairo.agent.core.IgnorePolicy policy = runtime.transformerManager().ignorePolicy();
+        if (policy.isJdkOrPlatformClass(type.getName())) {
+            return policy.jdkCapability().supportLevelFor(type.getName());
+        }
+        return analysis.supportLevel();
     }
 
     private com.example.kairo.api.CallSiteSelector readCallSiteSelector(JsonNode payload) {

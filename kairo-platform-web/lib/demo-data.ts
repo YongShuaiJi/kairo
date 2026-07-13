@@ -129,6 +129,30 @@ export function demoTargets(query = "", applicationId = "", environmentId = "") 
     }));
 }
 
+/**
+ * V1.5 §4.1/§5: demo ClassLoader tree for the Web class selector when no live agent is online.
+ * Mirrors the shape of the agent's LIST_LOADERS response: a bootstrap loader, the system/loader
+ * chain and a Spring Boot embedded-Tomcat loader, with a parent→children tree.
+ */
+export function demoLoaders() {
+  const bootstrap = { loaderId: "bootstrap", loaderClassName: "bootstrap", parentLoaderId: null };
+  const system = { loaderId: "system-loader-id", loaderClassName: "jdk.internal.loader.ClassLoaders$AppClassLoader", parentLoaderId: "bootstrap" };
+  const springBoot = { loaderId: "spring-boot-loader-id", loaderClassName: "org.springframework.boot.loader.launch.LaunchedURLClassLoader", parentLoaderId: "system-loader-id", frameworkLoader: "Spring Boot (LaunchedURLClassLoader)" };
+  const tomcat = { loaderId: "tomcat-loader-id", loaderClassName: "org.springframework.boot.web.embedded.tomcat.TomcatEmbeddedWebappClassLoader", parentLoaderId: "spring-boot-loader-id", frameworkLoader: "Spring Boot embedded Tomcat" };
+  const loaders = [bootstrap, system, springBoot, tomcat];
+  return {
+    loaders,
+    tree: {
+      bootstrap: [system],
+      "system-loader-id": [springBoot],
+      "spring-boot-loader-id": [tomcat],
+    },
+    count: loaders.length,
+    bootstrapLoaderId: "bootstrap",
+    agentAvailable: false,
+  };
+}
+
 export function demoPage(path: string, page = 0, size = 25, query = "") {
   const rows = demoList(path) ?? [];
   const needle = query.trim().toLowerCase();

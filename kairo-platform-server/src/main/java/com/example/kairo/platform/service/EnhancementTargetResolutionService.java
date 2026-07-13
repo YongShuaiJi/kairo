@@ -90,6 +90,9 @@ public class EnhancementTargetResolutionService {
         String status = String.valueOf(result.get("status"));
         return switch (status) {
             case "MATCHED" -> result;
+            case "AMBIGUOUS" -> throw PlatformException.conflict("AMBIGUOUS_TARGET",
+                    "增强目标同名候选多于一个，请指定具体 classLoaderId 或显式 all-match",
+                    resolutionDetails(result));
             case "DRIFTED" -> throw PlatformException.conflict("TARGET_DRIFTED",
                     "调用点位置已漂移，指纹与当前字节码不一致，请重新选择调用点",
                     resolutionDetails(result));

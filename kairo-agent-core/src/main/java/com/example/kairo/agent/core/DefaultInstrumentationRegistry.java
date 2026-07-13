@@ -79,6 +79,38 @@ public final class DefaultInstrumentationRegistry implements InstrumentationRegi
                 .collect(Collectors.toUnmodifiableSet());
     }
 
+    /**
+     * V1.5 &sect;3.2: remove every target whose method selector carries the
+     * collected loader's id. Targets whose selector has a {@code null} loader id
+     * (legacy selectors) are left untouched. Called by the
+     * {@code ClassLoaderRepository} cleaner after the loader is garbage-collected.
+     *
+     * @return the number of targets removed
+     */
+    public int clearForLoader(String classLoaderId) {
+        if (classLoaderId == null) {
+            return 0;
+        }
+        int[] removed = new int[1];
+        for (String className : List.copyOf(targetsByClassName.keySet())) {
+            targetsByClassName.computeIfPresent(className, (name, existing) -> {
+                ConcurrentHashMap<EnhancementTarget, AtomicInteger> next = new ConcurrentHashMap<>();
+                next.putAll(existing);
+                var it = next.entrySet().iterator();
+                while (it.hasNext()) {
+                    var entry = it.next();
+                    String targetLoaderId = entry.getKey().method().classLoaderId();
+                    if (classLoaderId.equals(targetLoaderId)) {
+                        it.remove();
+                        removed[0]++;
+                    }
+                }
+                return next.isEmpty() ? null : next;
+            });
+        }
+        return removed[0];
+    }
+
     public int typeCount() {
         return targetsByClassName.size();
     }

@@ -1,7 +1,9 @@
 package com.example.kairo.agent.core;
 
 import com.example.kairo.agent.core.bytecode.BytecodeCaptureService;
+import com.example.kairo.agent.core.bytecode.BytecodeHash;
 import com.example.kairo.agent.core.bytecode.BytecodeSnapshotRepository;
+import com.example.kairo.agent.core.bytecode.ClassIdentities;
 import com.example.kairo.agent.core.bytecode.DecompilerService;
 import com.example.kairo.agent.core.bytecode.TransformationJournal;
 import com.example.kairo.agent.core.bytecode.TransformationPreviewService;
@@ -13,12 +15,16 @@ import com.example.kairo.agent.core.script.ScriptSessionManager;
 import com.example.kairo.agent.core.script.ScriptSessionTarget;
 import com.example.kairo.api.CallSiteIdentity;
 import com.example.kairo.api.CallSiteSelector;
+import com.example.kairo.api.ClassSelector;
 import com.example.kairo.api.EnhancementLocation;
 import com.example.kairo.api.EnhancementTarget;
 import com.example.kairo.api.InvokeOpcode;
 import com.example.kairo.api.MethodSelector;
 import com.example.kairo.api.MockRule;
+import com.example.kairo.api.SupportLevel;
 import com.example.kairo.api.TargetMatchResult;
+import com.example.kairo.api.bytecode.ClassIdentity;
+import com.example.kairo.api.bytecode.ClassMetadata;
 import com.example.kairo.bridge.KairoBridge;
 import com.example.kairo.core.AgentBridgeDispatcher;
 import com.example.kairo.core.ClassLoaderIdentity;
@@ -71,11 +77,22 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     private final DecompilerService decompilerService;
     private final ScriptSessionManager scriptSessionManager;
     private final RuleChainApplier chainApplier;
+    private final ClassLoaderRepository classLoaderRepository;
+    private final ProxyTargetAnalyzer proxyAnalyzer = new DefaultProxyTargetAnalyzer();
+    private final ModuleDiagnostics moduleDiagnostics;
+    private final SyntheticBridgePolicy syntheticBridgePolicy = new SyntheticBridgePolicy();
+    private final PendingEnhancementRegistry pendingRegistry = new PendingEnhancementRegistry();
+    private final HotUpdateReconciler hotUpdateReconciler = new HotUpdateReconciler();
     private final ConcurrentHashMap<String, PublishedRule> publishedRules = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, EnhancementTarget> targetByRuleId = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, EnhancementTarget> targetByRecordingId = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, RecordingRegistration> activeRecordings = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> degradedClasses = new ConcurrentHashMap<>();
+    // V1.5 §4.4: classes whose bytecode hash changed since the last successful apply (external
+    // redefine/hot-swap), detected by the redefine listener and surfaced as TARGET_DRIFTED on
+    // resolveTarget and DISCOVER_TARGETS. Mirrors HotUpdateReconciler's drift verdict so the read
+    // side can report driftStatus without re-reading bytes on every query.
+    private final ConcurrentHashMap<String, String> driftedClasses = new ConcurrentHashMap<>();
     private final AtomicReference<AgentState> state = new AtomicReference<>(AgentState.STARTING);
     private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
         Thread thread = new Thread(runnable, "kairo-rule-cleanup");
@@ -122,10 +139,30 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                 com.example.kairo.agent.core.bytecode.BytecodeDecompilers.defaultDecompiler(),
                 2 * 1024 * 1024, 5000L);
         this.loadedClassRepository = new LoadedClassRepository(instrumentation);
+        this.classLoaderRepository = new ClassLoaderRepository();
+        this.moduleDiagnostics = new ModuleDiagnostics(instrumentation);
         this.scriptSessionManager = new ScriptSessionManager(this, scriptCompilerFactory,
-                this::resolveScriptSessionTarget, Clock.systemUTC(), ScriptSessionLimits.defaults());
+                this::resolveScriptSessionTarget, Clock.systemUTC(), ScriptSessionLimits.defaults(),
+                syntheticBridgePolicy);
         this.chainApplier = new RuleChainApplier(ruleRegistry, scriptCompilerFactory, loadedClassRepository,
                 instrumentationRegistry, transformerManager, eventBuffer);
+        // V1.5 §3.2: register every residual cache so the ReferenceQueue cleaner
+        // purges snapshots, journal, compile cache, method cache and targets the
+        // moment a tracked ClassLoader is garbage-collected.
+        classLoaderRepository.addListener(snapshotRepository::clearForLoader);
+        classLoaderRepository.addListener(transformationJournal::clearForLoader);
+        classLoaderRepository.addListener(scriptCompilerFactory::clearForLoader);
+        classLoaderRepository.addListener(ruleRegistry::clearForLoader);
+        classLoaderRepository.addListener(instrumentationRegistry::clearForLoader);
+        loadedClassRepository.bind(classLoaderRepository);
+        // V1.5 §4.4: observe first loads so a pending rule materializes the instant a matching
+        // class appears. The observer runs on the JVM class-loading thread and only hands work
+        // to the cleanup executor, so the transformer never re-enters rule publication.
+        transformerManager.addFirstLoadObserver(this::onClassFirstLoaded);
+        // V1.5 §4.4: observe external redefines so the hot-update reconciler flags drift the
+        // moment the redefined bytes are captured, and revalidates call-site fingerprints. The
+        // listener runs on the redefine thread and hands heavy reconciliation off.
+        transformerManager.addRedefinitionListener(this::onClassRedefinition);
     }
 
     public void start() {
@@ -135,6 +172,13 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
             cleanupExecutor.scheduleWithFixedDelay(this::cleanupExpiredRules, 1, 1, TimeUnit.SECONDS);
             cleanupExecutor.scheduleWithFixedDelay(scriptSessionManager::expireDue, 1, 1, TimeUnit.SECONDS);
             cleanupExecutor.scheduleWithFixedDelay(snapshotRepository::evictExpired, 5, 5, TimeUnit.SECONDS);
+            // V1.5 §3.2: drain the ClassLoader ReferenceQueue so a collected loader's
+            // residual caches are purged promptly rather than at the next capacity eviction.
+            cleanupExecutor.scheduleWithFixedDelay(classLoaderRepository::pollCollected, 2, 2, TimeUnit.SECONDS);
+            // V1.5 §4.4: materialize pending rules whose selector matches a class that has
+            // since been loaded. Runs on the agent executor (not the class-load thread) so
+            // the transformer stays free of re-entrancy.
+            cleanupExecutor.scheduleWithFixedDelay(this::pollPendingMatches, 2, 2, TimeUnit.SECONDS);
             state.set(AgentState.ACTIVE);
             eventBuffer.record("agent.start", "system", null, null, "Kairo agent started");
         } catch (RuntimeException e) {
@@ -153,8 +197,10 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
 
     public CompiledRule publish(Method method, MockRule rule, String actor) {
         requireOperationalForPublish();
-        if (method.isSynthetic() || method.isBridge()) {
-            throw new IllegalArgumentException("Synthetic and bridge methods cannot be mocked: " + method);
+        SyntheticBridgePolicy.Verdict verdict = syntheticBridgePolicy.evaluate(method);
+        if (!verdict.isAllowed()) {
+            throw new IllegalArgumentException("Synthetic and bridge methods cannot be mocked: " + method
+                    + "; " + verdict.reason());
         }
         rejectUnenhanceableMethod(method);
         MockRule effectiveRule = rule.callSiteSelector() != null
@@ -176,6 +222,7 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
             eventBuffer.record(previous == null ? "rule.create" : "rule.update", actor, rule.id(),
                     methodKey.toString(), "Published rule version " + compiledRule.rule().version()
                             + " at " + effectiveRule.effectiveLocation());
+            recordAppliedHash(method.getDeclaringClass());
             return compiledRule;
         } catch (RuntimeException e) {
             if (publishApplied) {
@@ -229,6 +276,7 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
             targetByRuleId.put(rule.id(), newTarget);
             eventBuffer.record(previous == null ? "rule.create" : "rule.update", actor, rule.id(),
                     methodKey.toString(), "Published constructor rule at " + rule.effectiveLocation());
+            recordAppliedHash(constructor.getDeclaringClass());
             return compiledRule;
         } catch (RuntimeException e) {
             if (publishApplied) {
@@ -465,8 +513,10 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
         }
         Method method = loadedClassRepository.resolveMethodTarget(
                 classIdOrName, methodName, methodDescriptor);
-        if (method.isSynthetic() || method.isBridge()) {
-            throw new IllegalArgumentException("Synthetic and bridge methods cannot be recorded: " + method);
+        SyntheticBridgePolicy.Verdict verdict = syntheticBridgePolicy.evaluate(method);
+        if (!verdict.isAllowed()) {
+            throw new IllegalArgumentException("Synthetic and bridge methods cannot be recorded: " + method
+                    + "; " + verdict.reason());
         }
         MethodKey methodKey = MethodKey.of(method);
         EnhancementTarget target = recordingTargetOf(method);
@@ -553,6 +603,308 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
         return loadedClassRepository;
     }
 
+    /** V1.5: the lifecycle-aware ClassLoader registry + ReferenceQueue cleaner. */
+    public ClassLoaderRepository classLoaderRepository() {
+        return classLoaderRepository;
+    }
+
+    /** V1.5 §4.2: the proxy-target analyzer SPI. */
+    public ProxyTargetAnalyzer proxyAnalyzer() {
+        return proxyAnalyzer;
+    }
+
+    /** V1.5 §4.5: module diagnostics + minimal-open redefineModule. */
+    public ModuleDiagnostics moduleDiagnostics() {
+        return moduleDiagnostics;
+    }
+
+    /**
+     * V1.5 &sect;4.3: the synthetic/bridge/lambda policy. Defaults refuse bridge and
+     * compiler-synthetic methods with a recommendation to enhance the user-declared
+     * method; arm {@code allowBridge}/{@code allowSynthetic} for an explicit opt-in.
+     */
+    public SyntheticBridgePolicy syntheticBridgePolicy() {
+        return syntheticBridgePolicy;
+    }
+
+    /** V1.5 &sect;4.4: the pending-enhancement registry for not-yet-loaded classes. */
+    public PendingEnhancementRegistry pendingRegistry() {
+        return pendingRegistry;
+    }
+
+    /** V1.5 &sect;4.4: hot-update reconciliation (bytecode-hash drift -> TARGET_DRIFTED). */
+    public HotUpdateReconciler hotUpdateReconciler() {
+        return hotUpdateReconciler;
+    }
+
+    /**
+     * V1.5 &sect;4.4: reconcile a class's current bytecode hash against the hash recorded
+     * at the last successful apply. Returns a {@link HotUpdateReconciler.Result} whose
+     * outcome is DRIFTED when the class was externally redefined; the caller maps that to
+     * {@link com.example.kairo.api.ApplyChainStatus#TARGET_DRIFTED} and fails open.
+     */
+    public HotUpdateReconciler.Result checkHotUpdateDrift(Class<?> type, String currentInputBytecodeHash) {
+        return hotUpdateReconciler.reconcile(ClassIdentities.of(type), currentInputBytecodeHash);
+    }
+
+    /** Record the input bytecode hash observed when a rule was applied to {@code type}. */
+    private void recordAppliedHash(Class<?> type) {
+        try {
+            ClassIdentity identity = ClassIdentities.of(type);
+            String hash = latestInputHash(identity);
+            if (hash != null) {
+                hotUpdateReconciler.recordApplied(identity, hash);
+            }
+            // V1.5 §4.4: a successful apply re-anchors Kairo to the current bytes, so any prior
+            // drift flag for this class is resolved. The redefine listener does not fire for
+            // Kairo's own retransform (gated on Mode.IDLE), so this clear is race-free.
+            driftedClasses.remove(type.getName());
+        } catch (RuntimeException ignored) {
+            // the reconciler must never break the publish path
+        }
+    }
+
+    private String latestInputHash(ClassIdentity identity) {
+        var snapshots = snapshotRepository.metadataFor(identity);
+        for (int i = snapshots.size() - 1; i >= 0; i--) {
+            if (snapshots.get(i).kind() == com.example.kairo.api.bytecode.BytecodeSnapshotKind.INPUT) {
+                return snapshots.get(i).hash();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * V1.5 &sect;4.4: pre-register a rule for a class that is not yet loaded. The rule
+     * is held against the fuzzy {@link ClassSelector}; when a matching class loads,
+     * {@link #pollPendingMatches()} materializes it (builds the V1.4 chain against the
+     * actual class) and records the resolved {@link ClassIdentity} for audit. Only
+     * method-location rules may be pre-registered (call-site rules need a loaded caller).
+     */
+    public void registerPendingRule(ClassSelector selector, MockRule rule, String actor) {
+        if (rule.callSiteSelector() != null) {
+            throw new IllegalArgumentException(
+                    "Call-site rules cannot be pre-registered; the caller class must be loaded first");
+        }
+        pendingRegistry.register(selector, rule, actor == null ? "system" : actor, System.currentTimeMillis());
+        // V1.5 §4.4: arm first-load observation so the next class load materializes this rule
+        // immediately instead of waiting up to 2s for the poll.
+        updateFirstLoadObservation();
+        eventBuffer.record("rule.pending.registered", actor == null ? "system" : actor, rule.id(),
+                selector.className(), "pending rule registered for first-load match");
+    }
+
+    /**
+     * V1.5 &sect;4.4: scan loaded classes for matches against pending selectors and
+     * materialize matching rules. A fuzzy selector that matches more than one loader is
+     * refused (audited as ambiguous) unless it declared all-match. Returns the number of
+     * rules materialized this pass. Safe to call concurrently; a no-op when nothing is
+     * pending.
+     */
+    public int pollPendingMatches() {
+        if (pendingRegistry.pendingCount() == 0) {
+            return 0;
+        }
+        int materialized = 0;
+        for (PendingEnhancementRegistry.PendingEntry entry : pendingRegistry.pending()) {
+            materialized += materializeEntry(entry);
+        }
+        updateFirstLoadObservation();
+        return materialized;
+    }
+
+    /**
+     * V1.5 &sect;4.4: materialize pending rules whose selector names exactly {@code binaryName}.
+     * Invoked by the first-load observer the instant a matching class loads, so a pending rule
+     * takes effect on the first frame rather than the next 2s poll. Runs on the agent cleanup
+     * executor (handed off from the class-loading thread), preserving no-reentry.
+     */
+    public int materializePendingForClass(String binaryName) {
+        if (binaryName == null || binaryName.isBlank() || pendingRegistry.pendingCount() == 0) {
+            return 0;
+        }
+        int materialized = 0;
+        for (PendingEnhancementRegistry.PendingEntry entry : pendingRegistry.pending()) {
+            if (!entry.selector().className().equals(binaryName)) {
+                continue;
+            }
+            materialized += materializeEntry(entry);
+        }
+        updateFirstLoadObservation();
+        return materialized;
+    }
+
+    /**
+     * Materialize one pending entry against every loaded class that satisfies its selector.
+     * Shared by the periodic poll and the first-load observer. Returns the number of rules
+     * materialized (0 when the class is not loaded yet, or the selector is ambiguous).
+     */
+    private int materializeEntry(PendingEnhancementRegistry.PendingEntry entry) {
+        ClassSelector selector = entry.selector();
+        java.util.List<Class<?>> candidates = loadedClassRepository.findAllByName(selector.className());
+        java.util.List<Class<?>> filtered = new java.util.ArrayList<>();
+        java.util.List<String> candidateLoaderIds = new java.util.ArrayList<>();
+        for (Class<?> type : candidates) {
+            ClassMetadata md = ClassIdentities.metadataOf(type, SupportLevel.SUPPORTED);
+            String loaderId = md.identity().classLoaderId();
+            if (pendingRegistry.matches(selector, type.getName(), loaderId,
+                    md.loaderClassName(), md.moduleName(), md.codeSource())) {
+                filtered.add(type);
+                candidateLoaderIds.add(loaderId);
+            }
+        }
+        if (filtered.isEmpty()) {
+            return 0; // not loaded yet
+        }
+        if (!selector.isExact() && !selector.allMatch() && filtered.size() > 1) {
+            pendingRegistry.markAmbiguous(entry.ruleId(), selector.className(),
+                    candidateLoaderIds, System.currentTimeMillis());
+            eventBuffer.record("rule.pending.ambiguous", entry.actor(), entry.ruleId(),
+                    selector.className(),
+                    "fuzzy selector matched " + filtered.size() + " loaders; refusing without allMatch");
+            return 0;
+        }
+        int materialized = 0;
+        for (Class<?> type : filtered) {
+            try {
+                Method method = resolveMethodOn(type, entry.rule().target());
+                publish(method, entry.rule(), entry.actor());
+                ClassIdentity identity = ClassIdentities.of(type);
+                pendingRegistry.markResolved(entry.ruleId(), identity, identity.classLoaderId(),
+                        java.util.List.of("materialized on first load"), System.currentTimeMillis());
+                eventBuffer.record("rule.pending.applied", entry.actor(), entry.ruleId(),
+                        type.getName(), "pending rule materialized on first load");
+                materialized++;
+            } catch (RuntimeException | NoSuchMethodException e) {
+                eventBuffer.record("rule.pending.failed", entry.actor(), entry.ruleId(),
+                        type.getName(), e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+        }
+        pendingRegistry.cancel(entry.ruleId());
+        return materialized;
+    }
+
+    /** Arm/disarm first-load observation based on whether any pending rule remains. */
+    private void updateFirstLoadObservation() {
+        transformerManager.setFirstLoadObservationEnabled(pendingRegistry.pendingCount() > 0);
+    }
+
+    /**
+     * V1.5 &sect;4.4: first-load observer callback. Runs on the JVM class-loading thread; must
+     * not publish here. Filters to pending selectors that name this class, then hands
+     * materialization to the cleanup executor so the class-loading thread never re-enters rule
+     * publication / transformation.
+     */
+    private void onClassFirstLoaded(String internalName, ClassLoader loader) {
+        if (pendingRegistry.pendingCount() == 0) {
+            return;
+        }
+        String binaryName = internalName.replace('/', '.');
+        if (!pendingRegistry.hasPendingForClass(binaryName)) {
+            return;
+        }
+        try {
+            cleanupExecutor.submit(() -> {
+                try {
+                    materializePendingForClass(binaryName);
+                } catch (RuntimeException e) {
+                    eventBuffer.record("rule.pending.failed", "system", null, binaryName,
+                            e.getClass().getSimpleName() + ": " + e.getMessage());
+                }
+            });
+        } catch (RuntimeException ignored) {
+            // executor rejected (agent shutting down) - the 2s poll is the fallback
+        }
+    }
+
+    /**
+     * V1.5 &sect;4.4: redefine listener callback. Runs on the JVM redefine thread for an
+     * external redefine of a class Kairo has an active target on (the transformer gates on
+     * Mode.IDLE and containsType). Hands the heavy hash+reconcile+revalidate work to the
+     * cleanup executor so the redefine thread is not blocked.
+     */
+    private void onClassRedefinition(ClassIdentity identity, byte[] inputBytes, ClassLoader loader) {
+        if (!hotUpdateReconciler.hasRecorded(identity)) {
+            return;
+        }
+        try {
+            cleanupExecutor.submit(() -> {
+                try {
+                    String hash = BytecodeHash.sha256Hex(inputBytes);
+                    HotUpdateReconciler.Result result = hotUpdateReconciler.reconcile(identity, hash);
+                    if (result.isDrifted()) {
+                        driftedClasses.put(identity.binaryClassName(), result.reason());
+                        eventBuffer.record("target.drifted", "system", null,
+                                identity.binaryClassName(),
+                                "bytecode hash changed after external redefine; " + result.reason());
+                        revalidateCallSiteRules(identity);
+                    } else if (driftedClasses.containsKey(identity.binaryClassName())) {
+                        // The class returned to bytes compatible with the anchored hash; clear drift.
+                        driftedClasses.remove(identity.binaryClassName());
+                    }
+                } catch (RuntimeException ignored) {
+                    // reconciliation must never break the agent
+                }
+            });
+        } catch (RuntimeException ignored) {
+            // executor rejected (agent shutting down)
+        }
+    }
+
+    /**
+     * V1.5 &sect;4.4: re-validate every call-site rule anchored on a drifted class. A drifted
+     * declaring class may have moved the call-site fingerprint; re-resolve each call-site rule
+     * and record an event when the fingerprint no longer matches, so the operator is told which
+     * rules are now stale. Best-effort: a failure to re-resolve one rule does not stop the others.
+     */
+    private void revalidateCallSiteRules(ClassIdentity identity) {
+        String className = identity.binaryClassName();
+        for (PublishedRule published : publishedRules.values()) {
+            MockRule mock = published.rule();
+            if (mock.callSiteSelector() == null) {
+                continue;
+            }
+            if (!className.equals(published.methodKey().className())) {
+                continue;
+            }
+            EnhancementTarget target = targetByRuleId.get(mock.id());
+            if (target == null) {
+                continue;
+            }
+            try {
+                Class<?> type = loadedClassRepository.findClass(
+                        loadedClassRepository.classId(className, identity.classLoaderId())).orElse(null);
+                if (type == null) {
+                    continue;
+                }
+                TargetMatchResult result = resolveTarget(type, target);
+                if (result.status() != TargetMatchResult.Status.MATCHED) {
+                    eventBuffer.record("rule.callsite.drifted", "system", mock.id(),
+                            published.methodKey().toString(),
+                            "call-site " + result.status() + " after redefine: " + result.reason());
+                }
+            } catch (RuntimeException ignored) {
+                // best-effort revalidation
+            }
+        }
+    }
+
+    /** V1.5 §4.4: whether a class is currently flagged as drifted (external redefine changed its hash). */
+    public boolean isClassDrifted(String binaryName) {
+        return binaryName != null && driftedClasses.containsKey(binaryName);
+    }
+
+    /** V1.5 §4.4: snapshot of currently-drifted classes (className -> reason) for diagnostics. */
+    public Map<String, String> driftedClasses() {
+        return Map.copyOf(driftedClasses);
+    }
+
+    private Method resolveMethodOn(Class<?> type, MethodSelector selector) throws NoSuchMethodException {
+        Class<?>[] params = com.example.kairo.core.MethodDescriptorTypes.parameterTypes(
+                selector.methodDescriptor(), type.getClassLoader());
+        return type.getDeclaredMethod(selector.methodName(), params);
+    }
+
     public List<RuleInfo> rules() {
         return publishedRules.values().stream()
                 .sorted(Comparator.comparing(rule -> rule.rule().id()))
@@ -606,6 +958,11 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
 
     public DefaultInstrumentationRegistry instrumentationRegistry() {
         return instrumentationRegistry;
+    }
+
+    /** The JVM instrumentation the agent was started with (exposed for tests / attach paths). */
+    public Instrumentation instrumentation() {
+        return instrumentation;
     }
 
     public ByteBuddyTransformerManager transformerManager() {
@@ -816,6 +1173,16 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
      * reflection; call-site targets by the {@link CallSiteScanner}.
      */
     public TargetMatchResult resolveTarget(Class<?> declaringClass, EnhancementTarget target) {
+        // V1.5 §4.4: if the declaring class was externally redefined since the last successful
+        // apply (hash drift detected by the redefine listener), refuse to resolve so the platform
+        // surfaces TARGET_DRIFTED instead of weaving a stale target. A fresh successful apply
+        // (recordAppliedHash) or a redefine back to compatible bytes clears the flag.
+        if (declaringClass != null && isClassDrifted(declaringClass.getName())) {
+            return TargetMatchResult.drifted(
+                    "class " + declaringClass.getName()
+                            + " drifted since last apply: " + driftedClasses.get(declaringClass.getName()),
+                    null);
+        }
         EnhancementLocation location = target.location();
         if (location.isCallSiteLocation()) {
             if (target.callSiteSelector() == null) {
@@ -848,8 +1215,10 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
         if (Modifier.isNative(mods) || Modifier.isAbstract(mods)) {
             return TargetMatchResult.rejected("native or abstract method: " + method);
         }
-        if (method.isSynthetic() || method.isBridge()) {
-            return TargetMatchResult.rejected("synthetic or bridge method: " + method);
+        SyntheticBridgePolicy.Verdict verdict = syntheticBridgePolicy.evaluate(method);
+        if (!verdict.isAllowed()) {
+            return TargetMatchResult.rejected("synthetic or bridge method: " + method
+                    + "; " + verdict.reason());
         }
         return TargetMatchResult.matched(1);
     }

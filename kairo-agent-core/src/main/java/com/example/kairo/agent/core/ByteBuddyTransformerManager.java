@@ -74,6 +74,18 @@ public final class ByteBuddyTransformerManager implements AutoCloseable {
     private final AtomicLong retransformCount = new AtomicLong();
     private final Set<ClassIdentity> affectedClasses = ConcurrentHashMap.newKeySet();
     private final List<ForeignTransformerProbe> foreignProbes = new CopyOnWriteArrayList<>();
+    // V1.5 §4.4: observers notified on a true first load (classBeingRedefined == null) so the
+    // pending-enhancement registry can materialize pre-registered rules the instant a matching
+    // class appears, rather than waiting for the next poll. Observation is opt-in: the agent
+    // enables it only while at least one pending rule is registered, so the steady-state class
+    // load hot path stays zero-overhead.
+    private final List<ClassLoadObserver> classLoadObservers = new CopyOnWriteArrayList<>();
+    // V1.5 §4.4: listeners notified when an already-loaded class is redefined/retransformed
+    // (classBeingRedefined != null) and Kairo has an active target on it, so the hot-update
+    // reconciler can compare the captured input hash to the last-applied one and flag drift.
+    private final List<RedefinitionListener> redefinitionListeners = new CopyOnWriteArrayList<>();
+    private volatile boolean firstLoadObservationEnabled;
+    private volatile IgnorePolicy ignorePolicy = new IgnorePolicy();
     // Thread-local: retransform/capture state is visible only to the calling thread,
     // and removed in every finally/close so pooled threads never retain it.
     private final ThreadLocal<Mode> currentMode = ThreadLocal.withInitial(() -> Mode.IDLE);
@@ -96,6 +108,77 @@ public final class ByteBuddyTransformerManager implements AutoCloseable {
         this.registry = Objects.requireNonNull(registry, "registry");
         this.snapshotRepository = snapshotRepository;
         this.journal = journal;
+    }
+
+    /** V1.5 §4.1/§5: replace the default ignore policy with a controlled one. */
+    public void setIgnorePolicy(IgnorePolicy ignorePolicy) {
+        this.ignorePolicy = Objects.requireNonNull(ignorePolicy, "ignorePolicy");
+    }
+
+    /** V1.5: the active ignore policy (for diagnostics / JDK-enhancement opt-in). */
+    public IgnorePolicy ignorePolicy() {
+        return ignorePolicy;
+    }
+
+    /**
+     * V1.5 &sect;4.4: register an observer notified on a true first load
+     * ({@code classBeingRedefined == null}). The agent enables first-load observation only while
+     * pending rules are registered, so this is cheap in steady state. The observer runs on the
+     * JVM class-loading thread and must hand any heavy work (rule materialization) off to another
+     * thread to keep the transformer free of re-entrancy.
+     */
+    public void addFirstLoadObserver(ClassLoadObserver observer) {
+        if (observer != null) {
+            classLoadObservers.add(observer);
+        }
+    }
+
+    public boolean removeFirstLoadObserver(ClassLoadObserver observer) {
+        return classLoadObservers.remove(observer);
+    }
+
+    /**
+     * V1.5 &sect;4.4: enable/disable first-load observation. The agent sets this true only while
+     * at least one pending rule is awaiting materialization, and false again once the registry
+     * drains, so the class-load hot path pays nothing when there is nothing pending.
+     */
+    public void setFirstLoadObservationEnabled(boolean enabled) {
+        this.firstLoadObservationEnabled = enabled;
+    }
+
+    /**
+     * V1.5 &sect;4.4: register a listener notified when an already-loaded class Kairo has an
+     * active target on is redefined/retransformed, carrying the captured input bytes. The
+     * listener runs on the JVM redefine thread; heavy reconciliation must be handed off.
+     */
+    public void addRedefinitionListener(RedefinitionListener listener) {
+        if (listener != null) {
+            redefinitionListeners.add(listener);
+        }
+    }
+
+    public boolean removeRedefinitionListener(RedefinitionListener listener) {
+        return redefinitionListeners.remove(listener);
+    }
+
+    /**
+     * Observer of true first loads ({@code classBeingRedefined == null}). The binary name uses
+     * the JVM internal form ({@code com/acme/Foo}); the loader is the defining loader (null for
+     * bootstrap). Implementations must not publish rules on this thread.
+     */
+    @FunctionalInterface
+    public interface ClassLoadObserver {
+        void onClassLoaded(String internalBinaryName, ClassLoader loader);
+    }
+
+    /**
+     * Listener of redefinitions ({@code classBeingRedefined != null}) for classes Kairo has an
+     * active target on. The {@code inputBytes} argument is a defensive copy the listener may
+     * retain and hash off-thread.
+     */
+    @FunctionalInterface
+    public interface RedefinitionListener {
+        void onRedefinition(ClassIdentity identity, byte[] inputBytes, ClassLoader loader);
     }
 
     public synchronized void install() {
@@ -347,23 +430,7 @@ public final class ByteBuddyTransformerManager implements AutoCloseable {
     private boolean ignore(TypeDescription typeDescription, ClassLoader classLoader,
                            JavaModule module, Class<?> classBeingRedefined,
                            ProtectionDomain protectionDomain) {
-        return isIgnored(typeDescription.getName());
-    }
-
-    private static boolean isIgnored(String binaryName) {
-        return binaryName.startsWith("java.")
-                || binaryName.startsWith("javax.")
-                || binaryName.startsWith("jdk.")
-                || binaryName.startsWith("sun.")
-                || binaryName.startsWith("com.sun.")
-                || binaryName.startsWith("com.oracle.")
-                || binaryName.startsWith("org.w3c.dom.")
-                || binaryName.startsWith("org.xml.sax.")
-                || binaryName.startsWith("org.ietf.jgss.")
-                || binaryName.startsWith("net.bytebuddy.")
-                || binaryName.startsWith("groovy.")
-                || binaryName.startsWith("org.codehaus.groovy.")
-                || binaryName.startsWith("com.example.kairo.");
+        return ignorePolicy.ignore(typeDescription.getName(), classLoader);
     }
 
     // ---- transform pipeline callbacks (run on the retransform thread) ----
@@ -373,7 +440,7 @@ public final class ByteBuddyTransformerManager implements AutoCloseable {
             return;
         }
         String binaryName = internalName.replace('/', '.');
-        if (isIgnored(binaryName) || !registry.containsType(binaryName, loader)) {
+        if (ignorePolicy.ignore(binaryName, loader) || !registry.containsType(binaryName, loader)) {
             return;
         }
         ClassIdentity identity = ClassIdentities.of(binaryName, loader);
@@ -480,7 +547,70 @@ public final class ByteBuddyTransformerManager implements AutoCloseable {
             } catch (RuntimeException ignored) {
                 // capture must never interfere with the real transformation
             }
+            notifyLoadObservers(name, loader, classBeingRedefined, classfileBuffer);
             return null;
+        }
+    }
+
+    /**
+     * V1.5 &sect;4.4: fan out first-load and redefinition notifications to registered observers.
+     * This is deliberately separate from snapshot/journal recording (which is gated on
+     * {@link Mode#RETRANSFORM}) so observation works on every load/redefine regardless of mode.
+     *
+     * <p>First-load observation is gated on {@link #firstLoadObservationEnabled} so the
+     * steady-state hot path (no pending rules) is a single volatile read. Redefinition
+     * notification is gated on {@link InstrumentationRegistry#containsType} so only classes
+     * Kairo actually has an active target on pay the cost of a byte clone. In both cases the
+     * observer/listener runs on the calling (class-load / redefine) thread and must hand heavy
+     * work off; the transformer never blocks on rule materialization or reconciliation here.
+     */
+    private void notifyLoadObservers(String internalName, ClassLoader loader,
+                                     Class<?> classBeingRedefined, byte[] classfileBuffer) {
+        if (internalName == null || classfileBuffer == null) {
+            return;
+        }
+        if (classBeingRedefined == null) {
+            if (firstLoadObservationEnabled && !classLoadObservers.isEmpty()) {
+                for (ClassLoadObserver observer : classLoadObservers) {
+                    try {
+                        observer.onClassLoaded(internalName, loader);
+                    } catch (RuntimeException ignored) {
+                        // an observer must never break transformation
+                    }
+                }
+            }
+            return;
+        }
+        // Redefine/retransform of an already-loaded class: only classes Kairo has an active
+        // target on can have a recorded applied hash, so filter here to avoid hashing every
+        // unrelated redefine in the JVM. Gate on Mode.IDLE so Kairo's own retransforms
+        // (RETRANSFORM) and captures (CAPTURE) do not trigger the reconciler - only external
+        // redefines (which arrive with the default IDLE mode on their thread) do. This makes
+        // drift detection race-free: a Kairo retransform never asserts drift, so the caller's
+        // recordAppliedHash after a successful apply cleanly re-anchors without a concurrent
+        // listener re-asserting drift.
+        if (currentMode.get() != Mode.IDLE || redefinitionListeners.isEmpty()) {
+            return;
+        }
+        if (ignorePolicy.ignore(internalName.replace('/', '.'), loader)) {
+            return;
+        }
+        if (!registry.containsType(internalName.replace('/', '.'), loader)) {
+            return;
+        }
+        ClassIdentity identity;
+        try {
+            identity = ClassIdentities.of(internalName.replace('/', '.'), loader);
+        } catch (RuntimeException ignored) {
+            return;
+        }
+        byte[] copy = classfileBuffer.clone();
+        for (RedefinitionListener listener : redefinitionListeners) {
+            try {
+                listener.onRedefinition(identity, copy, loader);
+            } catch (RuntimeException ignored) {
+                // a listener must never break transformation
+            }
         }
     }
 

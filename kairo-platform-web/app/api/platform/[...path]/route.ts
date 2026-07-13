@@ -12,6 +12,7 @@ import {
   demoDetail,
   demoHealth,
   demoList,
+  demoLoaders,
   demoMutation,
   demoPage,
   demoRuleDetail,
@@ -132,6 +133,9 @@ async function forward(request: Request, context: RouteContext) {
           incomingUrl.searchParams.get("applicationId") ?? "",
           incomingUrl.searchParams.get("environmentId") ?? "",
         ));
+      }
+      if (resourcePath === "targets/loaders") {
+        return NextResponse.json(demoLoaders());
       }
       if (resourcePath.startsWith("query/")) {
         const page = Number(incomingUrl.searchParams.get("page") ?? 0);

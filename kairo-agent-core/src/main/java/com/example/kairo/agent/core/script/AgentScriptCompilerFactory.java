@@ -124,6 +124,15 @@ public final class AgentScriptCompilerFactory implements ScriptCompilerFactory, 
         return compiler;
     }
 
+    /**
+     * V1.5 &sect;3.2: drop every cached compiled script and generation bound to
+     * the collected loader id. Delegates to the underlying weak-reference cache;
+     * see {@link GroovyScriptCompiler#clearForLoader(String)}.
+     */
+    public int clearForLoader(String classLoaderId) {
+        return compiler.clearForLoader(classLoaderId);
+    }
+
     @Override
     public void close() {
         compiler.close();
