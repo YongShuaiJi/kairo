@@ -19,3 +19,7 @@ kairo:
       expiry:
         initial-delay-ms: 999999
         fixed-delay-ms: 999999
+    automation:
+      expiry:
+        initial-delay-ms: 999999
+        fixed-delay-ms: 999999

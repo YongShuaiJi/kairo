@@ -80,6 +80,17 @@ final class PlatformCommandPoller implements AutoCloseable {
             Map<String, Object> result = execute(command);
             post("/api/v1/agent-commands/" + commandId + "/ack",
                     Map.of("status", "ACKED", "result", result, "reason", "agent command applied"));
+        } catch (com.example.kairo.agent.server.protocol.CapabilityNotSupportedException ce) {
+            // V1.6 §5.2: structured CAPABILITY_NOT_SUPPORTED ack so the platform can degrade.
+            post("/api/v1/agent-commands/" + commandId + "/ack",
+                    Map.of("status", "FAILED",
+                            "errorMessage", ce.getMessage(),
+                            "reason", "capability not supported",
+                            "result", Map.of(
+                                    "code", "CAPABILITY_NOT_SUPPORTED",
+                                    "category", "CAPABILITY",
+                                    "commandType", ce.commandType(),
+                                    "retryable", false)));
         } catch (Exception e) {
             post("/api/v1/agent-commands/" + commandId + "/ack",
                     Map.of("status", "FAILED",
@@ -137,7 +148,7 @@ final class PlatformCommandPoller implements AutoCloseable {
             case "SCRIPT_SESSION_PROMOTE" -> scriptSessionTransition(payload, "promote");
             case "SCRIPT_SESSION_REVERT" -> scriptSessionTransition(payload, "revert");
             case "SCRIPT_COMPILE" -> scriptCompile(payload);
-            default -> throw new IllegalArgumentException("Unsupported platform command: " + commandType);
+            default -> throw new com.example.kairo.agent.server.protocol.CapabilityNotSupportedException(commandType);
         };
     }
 

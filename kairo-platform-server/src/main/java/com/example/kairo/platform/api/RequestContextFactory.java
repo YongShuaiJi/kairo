@@ -4,6 +4,7 @@ import com.example.kairo.platform.auth.AccessTokenService;
 import com.example.kairo.platform.auth.AuthProperties;
 import com.example.kairo.platform.service.PlatformException;
 import com.example.kairo.platform.service.RequestContext;
+import com.example.kairo.platform.service.TokenScope;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Component;
 
@@ -40,12 +41,16 @@ public final class RequestContextFactory {
         }
         AccessTokenService.TokenPrincipal principal =
                 accessTokenService.authenticate(authorization.substring("Bearer ".length()).trim());
+        String source = principal.source() != null ? principal.source() : principal.identitySource();
+        TokenScope scope = new TokenScope(principal.tokenId(), source,
+                principal.scope(), principal.maxSessions());
         return new RequestContext(
                 principal.subjectId(),
                 headerOrDefault(request, "X-Correlation-Id", ""),
                 clientIp(request),
                 principal.identitySource(),
-                headerOrDefault(request, "User-Agent", "")
+                headerOrDefault(request, "User-Agent", ""),
+                scope
         );
     }
 

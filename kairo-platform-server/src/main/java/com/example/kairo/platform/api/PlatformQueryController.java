@@ -42,6 +42,15 @@ public final class PlatformQueryController {
         this.rbacService = rbacService;
     }
 
+    /**
+     * @deprecated V1.6 &sect;3: the generic {@code /query/{resource}} RPC endpoint is
+     * superseded by first-class resource endpoints ({@code /api/v1/applications},
+     * {@code /api/v1/instances}, {@code /api/v1/agents}, {@code /api/v1/rules},
+     * {@code /api/v1/audit-events}, ...). Retained for backward compatibility.
+     */
+    @Deprecated
+    @io.swagger.v3.oas.annotations.Operation(deprecated = true,
+            description = "Superseded by first-class resource endpoints; retained for compatibility.")
     @GetMapping("/query/{resource}")
     public Map<String, Object> page(@PathVariable String resource,
                                     HttpServletRequest request,
@@ -52,6 +61,13 @@ public final class PlatformQueryController {
         return service.page(resource, page, size, q);
     }
 
+    /**
+     * @deprecated V1.6 &sect;3: superseded by resource-specific detail endpoints
+     * (e.g. {@code GET /api/v1/rules/{id}}). Retained for backward compatibility.
+     */
+    @Deprecated
+    @io.swagger.v3.oas.annotations.Operation(deprecated = true,
+            description = "Superseded by resource-specific detail endpoints; retained for compatibility.")
     @GetMapping("/details/{resource}/{id}")
     public Map<String, Object> detail(@PathVariable String resource,
                                       @PathVariable String id,

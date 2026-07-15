@@ -383,6 +383,68 @@ export function demoTest(body: PlatformRecord): ScriptTestResult {
   };
 }
 
+/**
+ * V1.6 §5.3 demo-mode canonical rule preview. Mirrors the server
+ * {@code POST /api/v1/rules/preview} so the workbench is fully exercisable offline:
+ * the platform (here the demo) owns the business defaults and returns the canonical
+ * payload + preview token/revision + impact/risk/revert + script validation.
+ */
+export function demoRulePreview(body: PlatformRecord) {
+  const phase = String(body.executionPhase ?? "BEFORE");
+  const script = String(body.script ?? "");
+  const source = script.toLowerCase();
+  const riskLevel = source.includes("system.exit") || source.includes("runtime.exec")
+    ? "HIGH"
+    : phase === "THROWS" || source.includes("throwexception") ? "MEDIUM" : "LOW";
+  const className = String(body.className ?? "com.example.Service");
+  const methodName = String(body.methodName ?? "query");
+  const payload = {
+    name: String(body.name ?? "demo-rule"),
+    applicationId: String(body.applicationId ?? "app-default"),
+    environmentId: String(body.environmentId ?? "env-dev"),
+    status: "ENABLED",
+    versionStatus: "ENABLED",
+    riskLevel,
+    script: { phase, script },
+    matcher: { phase },
+    targets: [{
+      protocol: "JAVA_METHOD",
+      className,
+      methodName,
+      matcher: {
+        classId: String(body.classId ?? ""),
+        classLoaderId: String(body.classLoaderId ?? "bootstrap"),
+        descriptor: String(body.methodDescriptor ?? "()V"),
+      },
+    }],
+    capabilities: ["RETURN_VALUE", "THROW_EXCEPTION"],
+    reason: body.reason ?? undefined,
+  };
+  return {
+    payload,
+    previewToken: `rule-prev-demo-${crypto.randomUUID().slice(0, 12)}`,
+    revision: Date.now(),
+    riskLevel,
+    impact: {
+      affectedResources: [{ resourceType: "rule-target", resourceId: String(body.classId ?? `${className}#${methodName}`) }],
+      scope: `app:${payload.applicationId}`,
+      blastRadius: "single-instance",
+      reversible: true,
+      estimatedAffectedInstances: 1,
+    },
+    validation: demoValidate({ script } as PlatformRecord),
+    revert: {
+      strategy: "DISABLE_RULE_VERSION",
+      description: "停用规则版本后，系统在保留期结束后自动删除；已发布的版本可通过发布管理卸载立即生效回滚。",
+      steps: [
+        "POST /api/v1/rules/{id}/versions/{version}/disable",
+        "POST /api/v1/operation-plans/{id}/unload (已发布版本的立即回滚)",
+        "保留期结束后自动删除（当前为 30 天）",
+      ],
+    },
+  };
+}
+
 export function demoMutation(path: string, body: PlatformRecord) {
   const normalized = normalize(path);
   if (normalized === "auth/tokens" || normalized.endsWith("/token/replace")) {

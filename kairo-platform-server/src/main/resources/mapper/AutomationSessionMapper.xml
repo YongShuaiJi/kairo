@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.kairo.platform.persistence.mapper.AutomationSessionMapper">
+
+    <insert id="insertSession">
+        insert into automation_session(
+            id, caller, source, application_id, environment_id, instance_id, agent_id,
+            max_capability_profile, ttl_millis, deadline_millis, status, risk_level,
+            cleanup_result_json, correlation_id, token_id, version, created_at, updated_at
+        ) values (
+            #{id}, #{caller}, #{source}, #{applicationId}, #{environmentId}, #{instanceId}, #{agentId},
+            #{maxCapabilityProfile}, #{ttlMillis}, #{deadlineMillis}, #{status}, #{riskLevel},
+            '{}', #{correlationId}, #{tokenId}, 0, #{createdAt}, #{updatedAt}
+        )
+    </insert>
+
+    <select id="findById" resultType="map">
+        select * from automation_session where id = #{id}
+    </select>
+
+    <update id="transition">
+        update automation_session
+           set status = #{status},
+               risk_level = #{riskLevel},
+               <if test="cleanupResultJson != null">
+               cleanup_result_json = #{cleanupResultJson},
+               </if>
+               updated_at = #{updatedAt},
+               version = version + 1
+         where id = #{id}
+           and version = #{expectedVersion}
+    </update>
+
+    <select id="listExpired" resultType="map">
+        select * from automation_session
+         where status in ('CREATED','ACTIVE')
+           and deadline_millis &lt; #{nowMillis}
+         order by deadline_millis asc
+    </select>
+
+    <insert id="insertResource">
+        insert into automation_session_resource(
+            id, session_id, resource_type, resource_id, reversible, created_at
+        ) values (
+            #{id}, #{sessionId}, #{resourceType}, #{resourceId}, #{reversible}, #{createdAt}
+        )
+    </insert>
+
+    <select id="listResources" resultType="map">
+        select resource_type, resource_id, reversible, created_at
+          from automation_session_resource
+         where session_id = #{sessionId}
+         order by created_at asc
+    </select>
+
+    <select id="countActiveByToken" resultType="int">
+        select count(*) from automation_session
+         where token_id = #{tokenId}
+           and status in ('CREATED','ACTIVE')
+    </select>
+
+    <select id="listByStatus" resultType="map">
+        select * from automation_session
+        <where>
+            <if test="status != null and status != ''">
+                status = #{status}
+            </if>
+        </where>
+        order by created_at desc, id
+    </select>
+
+</mapper>

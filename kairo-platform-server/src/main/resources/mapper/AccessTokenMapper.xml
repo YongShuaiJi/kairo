@@ -43,10 +43,12 @@
     <insert id="insertToken">
         insert into platform_access_token(
             id, token_hash, subject_type, subject_id, display_name, status,
-            created_by, created_at, expires_at, last_used_at, revoked_at
+            created_by, created_at, expires_at, last_used_at, revoked_at,
+            scope_json, source, max_sessions
         ) values (
             #{id}, #{tokenHash}, #{subjectType}, #{subjectId}, #{displayName}, 'ACTIVE',
-            #{createdBy}, #{createdAt}, #{expiresAt}, null, null
+            #{createdBy}, #{createdAt}, #{expiresAt}, null, null,
+            #{scopeJson}, #{source}, #{maxSessions}
         )
     </insert>
 

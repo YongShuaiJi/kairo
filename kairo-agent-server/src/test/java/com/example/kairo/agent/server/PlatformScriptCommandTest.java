@@ -179,8 +179,11 @@ class PlatformScriptCommandTest {
 
     @Test
     void unsupportedScriptActionIsRejected() {
+        // V1.6 §5.2: an unadvertised command yields a structured CAPABILITY_NOT_SUPPORTED
+        // failure (not a generic "unsupported" crash), so the platform can degrade gracefully.
         assertThatThrownBy(() -> execute(commandPayload("SCRIPT_SESSION_UNKNOWN", "nope")))
-                .hasMessageContaining("Unsupported platform command");
+                .isInstanceOf(com.example.kairo.agent.server.protocol.CapabilityNotSupportedException.class)
+                .hasMessageContaining("does not advertise capability");
     }
 
     // -------------------------------------------------------- helpers

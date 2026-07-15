@@ -2,6 +2,7 @@ package com.example.kairo.platform.auth;
 
 import com.example.kairo.platform.persistence.mapper.AccessTokenMapper;
 import com.example.kairo.platform.service.PlatformException;
+import com.example.kairo.platform.service.PlatformJson;
 import com.example.kairo.platform.service.RequestContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
@@ -60,8 +61,51 @@ public class AccessTokenService {
                 String.valueOf(token.get("id")),
                 subjectType,
                 subjectId,
-                "AGENT".equals(subjectType) ? "agent" : "local-token"
+                "AGENT".equals(subjectType) ? "agent" : "local-token",
+                parseScope(token.get("scope_json")),
+                nullableString(token.get("source")),
+                parseInt(token.get("max_sessions"))
         );
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Set<String> parseScope(Object scopeJson) {
+        if (scopeJson == null || String.valueOf(scopeJson).isBlank()) {
+            return null;
+        }
+        try {
+            Object parsed = new com.fasterxml.jackson.databind.ObjectMapper().readValue(String.valueOf(scopeJson), Object.class);
+            if (parsed instanceof java.util.List<?> list) {
+                java.util.Set<String> caps = new java.util.LinkedHashSet<>();
+                for (Object o : list) {
+                    if (o instanceof String s && !s.isBlank()) {
+                        caps.add(s);
+                    }
+                }
+                return caps;
+            }
+        } catch (Exception ignored) {
+            // malformed scope_json -> treat as no narrowing (fail open to subject's full set)
+        }
+        return null;
+    }
+
+    private static String nullableString(Object o) {
+        return o == null ? null : String.valueOf(o);
+    }
+
+    private static Integer parseInt(Object o) {
+        if (o == null) {
+            return null;
+        }
+        if (o instanceof Number n) {
+            return n.intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(o));
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     public Map<String, Object> describe(String rawToken) {
@@ -89,15 +133,62 @@ public class AccessTokenService {
         if (displayName.isBlank()) {
             displayName = subjectId;
         }
+        String scopeJson = scopeJsonFromRequest(request);
+        String source = sourceFromRequest(request);
+        Integer maxSessions = maxSessionsFromRequest(request);
         if ("USER".equals(subjectType)) {
             Map<String, Object> user = ensureLocalUser(subjectId, displayName);
             accessTokenMapper.deleteUserTokens(String.valueOf(user.get("id")));
-            return createUserToken(context.actor(), user, validatedExpiresAt(request, clock.instant()));
+            return createUserToken(context.actor(), user, validatedExpiresAt(request, clock.instant()),
+                    scopeJson, source, maxSessions);
         } else {
             validateSubject(subjectType, subjectId);
         }
         return createToken(context.actor(), subjectType, subjectId, displayName,
-                validatedExpiresAt(request, clock.instant()));
+                validatedExpiresAt(request, clock.instant()), scopeJson, source, maxSessions);
+    }
+
+    /** Serialise the requested capability scope to JSON; null when no narrowing requested. */
+    @SuppressWarnings("unchecked")
+    private static String scopeJsonFromRequest(Map<String, Object> request) {
+        Object scope = request.get("scope");
+        if (scope == null) {
+            return null;
+        }
+        List<String> caps;
+        if (scope instanceof List<?> list) {
+            caps = list.stream().filter(s -> s instanceof String && !String.valueOf(s).isBlank())
+                    .map(String::valueOf).distinct().toList();
+        } else if (scope instanceof String s && !s.isBlank()) {
+            caps = List.of(s.trim());
+        } else {
+            return null;
+        }
+        if (caps.isEmpty()) {
+            return null;
+        }
+        return PlatformJson.write(caps);
+    }
+
+    private static String sourceFromRequest(Map<String, Object> request) {
+        Object source = request.get("source");
+        if (source == null || String.valueOf(source).isBlank()) {
+            return null;
+        }
+        String s = String.valueOf(source).trim().toLowerCase();
+        return switch (s) {
+            case "web", "cli", "sdk", "mcp", "automation", "local-token", "agent" -> s;
+            default -> "custom";
+        };
+    }
+
+    private static Integer maxSessionsFromRequest(Map<String, Object> request) {
+        Object value = request.get("maxSessions");
+        if (value == null) {
+            return null;
+        }
+        Integer parsed = parseInt(value);
+        return parsed != null && parsed > 0 ? parsed : null;
     }
 
     public List<Map<String, Object>> list() {
@@ -147,15 +238,20 @@ public class AccessTokenService {
     @Transactional
     public Map<String, Object> replaceSelfToken(RequestContext context, String rawToken) {
         Map<String, Object> user = normalizeUserById(context.actor());
-        Instant expiresAt = instantValue(describe(rawToken).get("expires_at"));
-        return replaceUserTokenInternal(user, context.actor(), expiresAt);
+        Map<String, Object> described = describe(rawToken);
+        Instant expiresAt = instantValue(described.get("expires_at"));
+        return replaceUserTokenInternal(user, context.actor(), expiresAt,
+                nullableString(described.get("scope_json")),
+                nullableString(described.get("source")),
+                parseInt(described.get("max_sessions")));
     }
 
     @Transactional
     public Map<String, Object> replaceUserToken(RequestContext context, String username, Map<String, Object> request) {
         String normalizedUsername = username == null ? "" : username.trim();
         Map<String, Object> user = normalizeUser(normalizedUsername);
-        return replaceUserTokenInternal(user, context.actor(), validatedExpiresAt(request, clock.instant()));
+        return replaceUserTokenInternal(user, context.actor(), validatedExpiresAt(request, clock.instant()),
+                scopeJsonFromRequest(request), sourceFromRequest(request), maxSessionsFromRequest(request));
     }
 
     @Transactional
@@ -312,28 +408,31 @@ public class AccessTokenService {
         return normalized;
     }
 
-    private Map<String, Object> replaceUserTokenInternal(Map<String, Object> user, String createdBy, Instant expiresAt) {
+    private Map<String, Object> replaceUserTokenInternal(Map<String, Object> user, String createdBy, Instant expiresAt,
+                                                         String scopeJson, String source, Integer maxSessions) {
         accessTokenMapper.deleteUserTokens(String.valueOf(user.get("id")));
-        return createUserToken(createdBy, user, expiresAt);
+        return createUserToken(createdBy, user, expiresAt, scopeJson, source, maxSessions);
     }
 
-    private Map<String, Object> createUserToken(String createdBy, Map<String, Object> user, Instant expiresAt) {
+    private Map<String, Object> createUserToken(String createdBy, Map<String, Object> user, Instant expiresAt,
+                                                String scopeJson, String source, Integer maxSessions) {
         Map<String, Object> response = createToken(createdBy, "USER",
                 String.valueOf(user.get("id")),
                 String.valueOf(user.get("display_name")),
-                expiresAt);
+                expiresAt, scopeJson, source, maxSessions);
         response.put("subjectId", user.get("username"));
         response.put("userId", user.get("id"));
         return response;
     }
 
     private Map<String, Object> createToken(String createdBy, String subjectType, String subjectId,
-                                            String displayName, Instant expiresAt) {
+                                            String displayName, Instant expiresAt,
+                                            String scopeJson, String source, Integer maxSessions) {
         Instant now = clock.instant();
         String rawToken = generateToken();
         String id = "token-" + UUID.randomUUID();
         accessTokenMapper.insertToken(id, hash(rawToken), subjectType, subjectId, displayName,
-                createdBy, Timestamp.from(now), timestamp(expiresAt));
+                createdBy, Timestamp.from(now), timestamp(expiresAt), scopeJson, source, maxSessions);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("id", id);
         response.put("token", rawToken);
@@ -342,6 +441,15 @@ public class AccessTokenService {
         response.put("displayName", displayName);
         response.put("status", "VALID");
         response.put("expiresAt", expiresAt);
+        if (source != null) {
+            response.put("source", source);
+        }
+        if (scopeJson != null) {
+            response.put("scope", PlatformJson.readList(scopeJson));
+        }
+        if (maxSessions != null) {
+            response.put("maxSessions", maxSessions);
+        }
         return response;
     }
 
@@ -442,6 +550,11 @@ public class AccessTokenService {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-    public record TokenPrincipal(String tokenId, String subjectType, String subjectId, String identitySource) {
+    public record TokenPrincipal(String tokenId, String subjectType, String subjectId,
+                                  String identitySource, java.util.Set<String> scope,
+                                  String source, Integer maxSessions) {
+        public TokenPrincipal(String tokenId, String subjectType, String subjectId, String identitySource) {
+            this(tokenId, subjectType, subjectId, identitySource, null, null, null);
+        }
     }
 }

@@ -36,7 +36,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { platformFetch } from "@/lib/api/client";
-import type { PlatformRecord, ScriptDiagnostic, ScriptTestResult, ScriptValidationResult } from "@/lib/api/types";
+import type { PlatformRecord, ScriptDiagnostic, ScriptTestResult } from "@/lib/api/types";
+import { platformErrorMessage } from "@/lib/api/error";
+import { previewRule, type RulePreviewInput, type RulePreviewResponse } from "@/lib/api/rules";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { LoaderTreeSelector } from "@/components/rules/loader-tree-selector";
@@ -373,6 +375,9 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
   // panel can render the declared/proxy/actual class distinction and the metadata badges.
   const [selectedTargetMeta, setSelectedTargetMeta] = useState<TargetOption | null>(null);
   const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
+  // V1.6 §5.3: the server-assembled preview (canonical payload + token/revision/risk/impact/revert).
+  // The workbench no longer assembles business defaults client-side; it calls /rules/preview.
+  const [previewMeta, setPreviewMeta] = useState<RulePreviewResponse | null>(null);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const disposables = useRef<IDisposable[]>([]);
@@ -785,24 +790,18 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
     setTestResult(null);
   }
 
-  function requestPayload() {
+  function previewInput(): RulePreviewInput {
     return {
       name,
       applicationId,
       environmentId: resolvedEnvironmentId,
-      status: "ENABLED",
-      versionStatus: "ENABLED",
-      riskLevel: "LOW",
-      script: { phase: executionPhase, script },
-      matcher: { phase: executionPhase },
-      targets: [{
-        protocol: "JAVA_METHOD",
-        className,
-        methodName,
-        matcher: { classId, classLoaderId, descriptor: methodDescriptor },
-      }],
-      capabilities: ["RETURN_VALUE", "THROW_EXCEPTION"],
-      target: { classId, className, classLoaderId, methodName, methodDescriptor },
+      classId,
+      className,
+      classLoaderId,
+      methodName,
+      methodDescriptor,
+      executionPhase: executionPhase as InvokePhase,
+      script,
     };
   }
 
@@ -814,12 +813,17 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
     setBusy("validate");
     setSideOpen(true);
     try {
-      const result = await platformFetch<ScriptValidationResult>("scripts/validate", { method: "POST", body: JSON.stringify(requestPayload()) });
-      setDiagnostics(result.diagnostics);
-      setValidationStatus(result.valid ? "valid" : "invalid");
+      const preview = await previewRule(previewInput());
+      setPreviewMeta(preview);
+      setDiagnostics(preview.validation.diagnostics);
+      setValidationStatus(preview.validation.valid ? "valid" : "invalid");
       setSideTab("diagnostics");
-      toast[result.valid ? "success" : "error"](result.valid ? `校验通过（${result.compileTimeMs ?? 0} ms）` : "脚本存在需要处理的问题");
-      return result.valid;
+      toast[preview.validation.valid ? "success" : "error"](
+        preview.validation.valid
+          ? `校验通过（${preview.validation.compileTimeMs ?? 0} ms · 风险 ${preview.riskLevel}）`
+          : "脚本存在需要处理的问题",
+      );
+      return preview.validation.valid;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "服务端校验失败");
       return false;
@@ -838,9 +842,16 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
     setBottomOpen(true);
     try {
       const input = JSON.parse(testInput) as object;
-      const result = await platformFetch<ScriptTestResult>("scripts/test", { method: "POST", body: JSON.stringify({ ...requestPayload(), input }) });
+      const preview = await previewRule(previewInput());
+      setPreviewMeta(preview);
+      const result = await platformFetch<ScriptTestResult>("scripts/test", {
+        method: "POST",
+        body: JSON.stringify({ ...preview.payload, input }),
+      });
       setTestResult(result);
-      toast[result.status === "SUCCESS" ? "success" : "error"](result.status === "SUCCESS" ? "受控试运行完成" : "试运行返回异常");
+      toast[result.status === "SUCCESS" ? "success" : "error"](
+        result.status === "SUCCESS" ? "受控试运行完成" : "试运行返回异常",
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "试运行失败，请检查 JSON 输入");
     } finally {
@@ -855,21 +866,29 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
     }
     setBusy("save");
     try {
-      const validation = await platformFetch<ScriptValidationResult>("scripts/validate", { method: "POST", body: JSON.stringify(requestPayload()) });
-      setDiagnostics(validation.diagnostics);
-      setValidationStatus(validation.valid ? "valid" : "invalid");
-      if (!validation.valid) {
+      // V1.6 §5.3: the platform assembles the canonical payload and validates the script
+      // in one preview call; the workbench forwards the returned payload verbatim.
+      const preview = await previewRule(previewInput());
+      setPreviewMeta(preview);
+      setDiagnostics(preview.validation.diagnostics);
+      setValidationStatus(preview.validation.valid ? "valid" : "invalid");
+      if (!preview.validation.valid) {
         toast.error("脚本校验未通过，已阻止保存");
         return;
       }
       const endpoint = ruleId ? `rules/${ruleId}/versions` : "rules";
-      const saved = await platformFetch<{ id?: string; rule_id?: string }>(endpoint, { method: "POST", body: JSON.stringify(requestPayload()), idempotencyKey: crypto.randomUUID() });
+      const saved = await platformFetch<{ id?: string; rule_id?: string }>(endpoint, {
+        method: "POST",
+        body: JSON.stringify(preview.payload),
+        idempotencyKey: crypto.randomUUID(),
+      });
       setDirty(false);
       toast.success(ruleId ? "已创建不可变规则版本" : "规则草稿已保存");
       if (!ruleId && saved.id) router.replace(`/rules/${saved.id}`);
       if (ruleId) router.replace(`/rules/${ruleId}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存失败，编辑内容仍保留在当前页面");
+      // V1.6 §5.3: code-based error handling via the structured PlatformError payload.
+      toast.error(platformErrorMessage(error) || "保存失败，编辑内容仍保留在当前页面");
     } finally {
       setBusy(null);
     }
@@ -1348,6 +1367,24 @@ export function RuleWorkbench({ ruleId, version }: { ruleId?: string; version?: 
                   ["ctx", "InvocationContext", "阶段、方法、参数、结果和异常"],
                   ["mock", "MockApi", "创建 proceed、returnValue 和 throwException 决策"],
                 ].map(([variable, type, detail]) => <div key={variable} className="rounded-lg border p-3"><div className="flex items-center justify-between"><code className="text-xs font-semibold text-indigo-700">{variable}</code><Badge variant="neutral">{type}</Badge></div><p className="mt-2 text-xs text-slate-500">{detail}</p></div>)}
+                {previewMeta ? (
+                  <div className="rounded-lg border border-slate-200 bg-[var(--surface-muted)] p-3 text-xs leading-5 text-[color:var(--foreground)]" data-testid="rule-preview-meta">
+                    <div className="mb-2 flex items-center gap-2">
+                      <ShieldAlert className="size-4 text-[color:var(--primary)]" />
+                      <span className="font-semibold">服务端预览</span>
+                      <Badge variant={previewMeta.riskLevel === "HIGH" || previewMeta.riskLevel === "CRITICAL" ? "warning" : "neutral"} className="ml-auto">{previewMeta.riskLevel}</Badge>
+                    </div>
+                    <p className="text-[color:var(--muted-strong)]">影响范围：{previewMeta.impact.blastRadius} · 可撤销：{previewMeta.impact.reversible ? "是" : "否"}</p>
+                    <p className="mt-1 text-[color:var(--muted-strong)]">预览令牌：<code className="font-mono">{previewMeta.previewToken.slice(0, 16)}…</code></p>
+                    <div className="mt-2 rounded-lg border border-amber-100 bg-amber-50 p-2 text-amber-800">
+                      <p className="font-semibold">撤销策略：{previewMeta.revert.strategy}</p>
+                      <p className="mt-1 text-[11px]">{previewMeta.revert.description}</p>
+                      <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px]">
+                        {previewMeta.revert.steps.map((step) => <li key={step} className="font-mono">{step}</li>)}
+                      </ul>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-xs leading-5 text-indigo-800"><BookOpen className="mb-2 size-4" />脚本只在服务端受控沙箱执行；浏览器仅提供编辑、高亮和诊断定位。</div>
               </div>
             )}

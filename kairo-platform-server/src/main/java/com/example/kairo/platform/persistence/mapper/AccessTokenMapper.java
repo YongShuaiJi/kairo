@@ -21,7 +21,10 @@ public interface AccessTokenMapper {
                     @Param("displayName") String displayName,
                     @Param("createdBy") String createdBy,
                     @Param("createdAt") Timestamp createdAt,
-                    @Param("expiresAt") Timestamp expiresAt);
+                    @Param("expiresAt") Timestamp expiresAt,
+                    @Param("scopeJson") String scopeJson,
+                    @Param("source") String source,
+                    @Param("maxSessions") Integer maxSessions);
 
     List<Map<String, Object>> listVisibleTokens();
 

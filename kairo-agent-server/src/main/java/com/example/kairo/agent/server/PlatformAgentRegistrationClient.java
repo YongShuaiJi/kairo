@@ -60,14 +60,11 @@ final class PlatformAgentRegistrationClient {
             body.put("loadMode", jvmInfo.loadMode());
             body.put("listenHost", config.host());
             body.put("listenPort", listenPort);
-            body.put("capabilities", List.of(
-                    "BYTECODE_TRANSFORM",
-                    "DISCOVER_TARGETS",
-                    "APPLY_RULE",
-                    "RESET_CLASS",
-                    "RESET_ALL",
-                    "RECORD_INVOCATIONS"
-            ));
+            // V1.6 §5.2: advertise protocol versions + command capabilities for negotiation.
+            com.example.kairo.agent.server.protocol.AgentProtocolInfo protocol =
+                    com.example.kairo.agent.server.protocol.AgentProtocolInfo.defaultV1();
+            body.put("protocolVersions", protocol.protocolVersions());
+            body.put("capabilities", protocol.capabilities());
             HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(
                             config.platformUrl() + "/api/v1/agent-registrations/self"))
                     .timeout(Duration.ofSeconds(10))

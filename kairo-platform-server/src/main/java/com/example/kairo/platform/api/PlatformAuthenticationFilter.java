@@ -29,7 +29,12 @@ final class PlatformAuthenticationFilter extends OncePerRequestFilter {
         return "/".equals(path)
                 || "/api/v1".equals(path)
                 || "/api/v1/control/health".equals(path)
-                || path.startsWith("/actuator/health");
+                || path.startsWith("/actuator/health")
+                // V1.6: OpenAPI contract + JSON schemas are publicly discoverable for AI/SDK clients;
+                // the operations themselves still require authentication.
+                || path.startsWith("/v3/api-docs")
+                || path.startsWith("/swagger-ui")
+                || "/api/v1/schemas".equals(path);
     }
 
     @Override

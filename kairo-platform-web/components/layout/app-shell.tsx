@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Terminal,
+  Bot,
   X,
   Zap,
 } from "lucide-react";
@@ -43,6 +44,7 @@ const navigation = [
     items: [
       { href: "/rules", label: "规则中心", icon: SlidersHorizontal },
       { href: "/script-sessions", label: "脚本会话", icon: Terminal },
+      { href: "/automation-sessions", label: "AI 自动化", icon: Bot },
       { href: "/rollouts", label: "发布管理", icon: Zap },
     ],
   },

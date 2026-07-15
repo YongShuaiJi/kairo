@@ -1,12 +1,25 @@
 import type { PlatformError, PlatformRecord } from "@/lib/api/types";
 
 export class PlatformRequestError extends Error {
+  public readonly code: string;
+  public readonly category?: string;
+  public readonly retryable: boolean;
+  public readonly suggestedActions?: import("@/lib/api/types").SuggestedAction[];
+  public readonly field?: string;
+  public readonly path?: string;
+
   constructor(
     message: string,
     public readonly status: number,
     public readonly payload?: PlatformError,
   ) {
     super(message);
+    this.code = payload?.code ?? "UNKNOWN";
+    this.category = payload?.category;
+    this.retryable = payload?.retryable ?? false;
+    this.suggestedActions = payload?.suggestedActions;
+    this.field = payload?.field;
+    this.path = payload?.path;
   }
 }
 

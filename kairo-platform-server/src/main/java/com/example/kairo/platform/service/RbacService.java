@@ -37,11 +37,33 @@ public final class RbacService {
         if (!allowed(context.actor(), capability)) {
             throw PlatformException.forbidden(capability);
         }
+        requireScope(context, capability);
     }
 
     public void require(RequestContext context, String capability, String resourceType, String resourceId) {
         if (!allowed(context.actor(), capability)) {
             throw PlatformException.forbidden(capability);
+        }
+        requireScope(context, capability);
+    }
+
+    /**
+     * Enforce API-token scope narrowing (V1.6 &sect;5.1). A scoped token may only
+     * exercise capabilities listed in its scope, even if the underlying subject
+     * holds them. A session/token can never widen permissions.
+     */
+    private void requireScope(RequestContext context, String capability) {
+        if (context == null || context.tokenScope() == null) {
+            return;
+        }
+        TokenScope scope = context.tokenScope();
+        if (scope.isNarrowed() && !scope.permits(capability)) {
+            throw PlatformException.forbidden("TOKEN_SCOPE_DENIED",
+                    "Token scope 不包含能力：" + capability + "（仅允许 " + scope.capabilities() + "）",
+                    java.util.Map.of("capability", capability,
+                            "allowedCapabilities", scope.capabilities()),
+                    java.util.List.of(com.example.kairo.api.error.SuggestedAction.manual(
+                            "REQUEST_SCOPED_TOKEN", "申请包含 " + capability + " 的 scoped Token")));
         }
     }
 

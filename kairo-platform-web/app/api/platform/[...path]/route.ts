@@ -16,6 +16,7 @@ import {
   demoMutation,
   demoPage,
   demoRuleDetail,
+  demoRulePreview,
   demoScriptCompile,
   demoScriptPolicy,
   demoScriptSession,
@@ -88,6 +89,7 @@ async function forward(request: Request, context: RouteContext) {
     }
     if (resourcePath === "control/health") return NextResponse.json(demoHealth());
     if (resourcePath === "dashboard/overview") return NextResponse.json(demoDashboard());
+    if (resourcePath === "rules/preview") return NextResponse.json(demoRulePreview(jsonBody ?? {}));
     if (resourcePath === "scripts/validate") return NextResponse.json(demoValidate(jsonBody ?? {}));
     if (resourcePath === "scripts/test" || resourcePath === "scripts/preview") return NextResponse.json(demoTest(jsonBody ?? {}));
     if (resourcePath === "scripts/compile") return NextResponse.json(demoScriptCompile(jsonBody ?? {}));

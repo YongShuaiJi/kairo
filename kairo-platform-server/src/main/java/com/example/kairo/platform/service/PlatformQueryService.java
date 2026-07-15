@@ -99,6 +99,11 @@ public final class PlatformQueryService {
         return Map.of("rule", rule, "versions", versions, "targets", targets, "capabilities", capabilities);
     }
 
+    /** V1.6 §3: dedicated audit-event list resource (was only embedded in the dashboard). */
+    public List<Map<String, Object>> recentAudits() {
+        return normalize(queryMapper.recentAudits());
+    }
+
     public Map<String, Object> dashboard() {
         List<Map<String, Object>> recentAudits = normalize(queryMapper.recentAudits());
         Map<String, Object> counts = new LinkedHashMap<>();

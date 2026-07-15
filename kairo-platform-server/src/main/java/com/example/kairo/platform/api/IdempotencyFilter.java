@@ -45,8 +45,9 @@ final class IdempotencyFilter extends OncePerRequestFilter {
                                     FilterChain filterChain) throws ServletException, IOException {
         String key = request.getHeader("Idempotency-Key");
         if (key.isBlank() || key.length() > 255) {
-            writeError(response, 400, "INVALID_IDEMPOTENCY_KEY",
-                    "Idempotency-Key 不能为空且长度不能超过 255 个字符");
+            writeError(request, response, 400, "INVALID_IDEMPOTENCY_KEY",
+                    "Idempotency-Key 不能为空且长度不能超过 255 个字符",
+                    com.example.kairo.api.error.ErrorCategory.VALIDATION);
             return;
         }
         byte[] requestBody = request.getInputStream().readAllBytes();
@@ -64,8 +65,9 @@ final class IdempotencyFilter extends OncePerRequestFilter {
         if (record != null && !record.isEmpty()) {
             if (!actor.equals(String.valueOf(record.get("actor")))
                     || !requestHash.equals(String.valueOf(record.get("request_hash")))) {
-                writeError(response, 409, "IDEMPOTENCY_KEY_CONFLICT",
-                        "该 Idempotency-Key 已用于其他请求，请更换后重试");
+                writeError(request, response, 409, "IDEMPOTENCY_KEY_CONFLICT",
+                        "该 Idempotency-Key 已用于其他请求，请更换后重试",
+                        com.example.kairo.api.error.ErrorCategory.CONFLICT);
                 return;
             }
             response.setStatus(((Number) record.get("response_status")).intValue());
@@ -88,14 +90,22 @@ final class IdempotencyFilter extends OncePerRequestFilter {
         wrappedResponse.copyBodyToResponse();
     }
 
-    private void writeError(HttpServletResponse response, int status, String code, String message)
+    private void writeError(HttpServletRequest request, HttpServletResponse response, int status,
+                            String code, String message,
+                            com.example.kairo.api.error.ErrorCategory category)
             throws IOException {
+        com.example.kairo.api.error.ApiError error = com.example.kairo.api.error.ApiError.of(
+                code, message, category, false)
+                .withCorrelationId(headerOrDefault(request, "X-Correlation-Id", ""));
         response.setStatus(status);
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
         response.setContentType("application/json");
-        response.getWriter().write("""
-                {"code":"%s","message":"%s","retryable":false}
-                """.formatted(code, message).trim());
+        response.getWriter().write(com.example.kairo.platform.service.PlatformJson.write(error));
+    }
+
+    private static String headerOrDefault(HttpServletRequest request, String name, String defaultValue) {
+        String value = request.getHeader(name);
+        return value == null || value.isBlank() ? defaultValue : value;
     }
 
     private static final class CachedBodyRequest extends HttpServletRequestWrapper {

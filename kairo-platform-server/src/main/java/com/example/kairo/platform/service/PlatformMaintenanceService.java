@@ -24,6 +24,7 @@ public class PlatformMaintenanceService {
     private final RuleVersionLifecycleMapper ruleVersionLifecycleMapper;
     private final ObjectProvider<RolloutExecutor> rolloutExecutor;
     private final ObjectProvider<ScriptSessionService> scriptSessionService;
+    private final com.example.kairo.platform.automation.AutomationSessionService automationSessionService;
     private final Clock clock;
 
     @Value("${kairo.platform.runtime-cleanup.retention-ms:1800000}")
@@ -34,9 +35,10 @@ public class PlatformMaintenanceService {
                                       PlatformMaintenanceMapper maintenanceMapper,
                                       RuleVersionLifecycleMapper ruleVersionLifecycleMapper,
                                       ObjectProvider<RolloutExecutor> rolloutExecutor,
-                                      ObjectProvider<ScriptSessionService> scriptSessionService) {
+                                      ObjectProvider<ScriptSessionService> scriptSessionService,
+                                      com.example.kairo.platform.automation.AutomationSessionService automationSessionService) {
         this(rbacService, maintenanceMapper, ruleVersionLifecycleMapper, rolloutExecutor,
-                scriptSessionService, Clock.systemUTC());
+                scriptSessionService, automationSessionService, Clock.systemUTC());
     }
 
     PlatformMaintenanceService(RbacService rbacService,
@@ -44,12 +46,14 @@ public class PlatformMaintenanceService {
                                       RuleVersionLifecycleMapper ruleVersionLifecycleMapper,
                                       ObjectProvider<RolloutExecutor> rolloutExecutor,
                                       ObjectProvider<ScriptSessionService> scriptSessionService,
+                                      com.example.kairo.platform.automation.AutomationSessionService automationSessionService,
                                       Clock clock) {
         this.rbacService = rbacService;
         this.maintenanceMapper = maintenanceMapper;
         this.ruleVersionLifecycleMapper = ruleVersionLifecycleMapper;
         this.rolloutExecutor = rolloutExecutor;
         this.scriptSessionService = scriptSessionService;
+        this.automationSessionService = automationSessionService;
         this.clock = clock;
     }
 
@@ -60,6 +64,7 @@ public class PlatformMaintenanceService {
         result.put("runtimeCleanup", cleanupOfflineRuntime());
         result.put("disabledRuleCleanup", cleanupExpiredDisabledRules());
         result.put("scriptSessionExpiry", expireScriptSessions());
+        result.put("automationSessionExpiry", expireAutomationSessions());
         RolloutExecutor rollout = rolloutExecutor.getIfAvailable();
         result.put("rollout", rollout == null ? Map.of("status", "DISABLED") : rollout.runOnce(context));
         return result;
@@ -82,6 +87,21 @@ public class PlatformMaintenanceService {
     public Map<String, Object> expireScriptSessions() {
         ScriptSessionService service = scriptSessionService.getIfAvailable();
         return service == null ? Map.of("status", "DISABLED") : service.expireSessions();
+    }
+
+    /** V1.6 §4.1: expire automation sessions past their deadline and revert their resources. */
+    public Map<String, Object> expireAutomationSessions() {
+        if (automationSessionService == null) {
+            return Map.of("status", "DISABLED");
+        }
+        return automationSessionService.expireSessions();
+    }
+
+    @Scheduled(
+            initialDelayString = "${kairo.platform.automation.expiry.initial-delay-ms:10000}",
+            fixedDelayString = "${kairo.platform.automation.expiry.fixed-delay-ms:10000}")
+    public void expireAutomationSessionsScheduled() {
+        expireAutomationSessions();
     }
 
     @Scheduled(

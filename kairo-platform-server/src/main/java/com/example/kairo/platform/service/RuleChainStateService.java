@@ -113,6 +113,39 @@ public class RuleChainStateService {
         return ReconcileResult.aheadOrDiverged(actual, desired);
     }
 
+    /**
+     * V1.6 &sect;3: describe the desired + actual rule-chain state for a target
+     * (the {@code /rule-chains} read resource).
+     */
+    public Map<String, Object> describe(String applicationId, String environmentId, String agentId, String chainId) {
+        Map<String, Object> desired = stateMapper.findDesiredState(applicationId, environmentId, agentId, chainId);
+        if (desired == null) {
+            throw PlatformException.notFound("rule-chain",
+                    applicationId + "/" + environmentId + "/" + agentId + "/" + chainId);
+        }
+        Map<String, Object> instance = stateMapper.findInstanceState(String.valueOf(desired.get("id")), agentId);
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("desired", desired);
+        result.put("instance", instance);
+        return result;
+    }
+
+    /**
+     * V1.6 &sect;3: reconcile using the persisted desired revision (the
+     * {@code /reconciliations} resource), so a caller need only name the target.
+     */
+    public ReconcileResult reconcileCurrent(String applicationId, String environmentId, String agentId, String chainId) {
+        Map<String, Object> desiredRow = stateMapper.findDesiredState(applicationId, environmentId, agentId, chainId);
+        if (desiredRow == null) {
+            throw PlatformException.notFound("rule-chain",
+                    applicationId + "/" + environmentId + "/" + agentId + "/" + chainId);
+        }
+        long desiredRevision = ((Number) desiredRow.get("revision")).longValue();
+        String desiredHash = String.valueOf(desiredRow.get("canonical_hash"));
+        return reconcile(applicationId, environmentId, agentId, chainId,
+                new RuleChainRevision(desiredRevision, desiredHash));
+    }
+
     private static Timestamp timestamp(Instant instant) {
         return Timestamp.from(instant);
     }

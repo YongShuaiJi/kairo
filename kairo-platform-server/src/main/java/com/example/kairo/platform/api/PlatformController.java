@@ -37,6 +37,7 @@ public final class PlatformController {
     private final PlatformMaintenanceService maintenanceService;
     private final PlatformAgentLifecycleService agentLifecycleService;
     private final RuleUnloadService ruleUnloadService;
+    private final com.example.kairo.platform.operation.OperationService operationService;
     private final RequestContextFactory requestContextFactory;
 
     public PlatformController(PlatformCoreService service, AgentCommandService agentCommandService,
@@ -44,6 +45,7 @@ public final class PlatformController {
                               PlatformMaintenanceService maintenanceService,
                               PlatformAgentLifecycleService agentLifecycleService,
                               RuleUnloadService ruleUnloadService,
+                              com.example.kairo.platform.operation.OperationService operationService,
                               RequestContextFactory requestContextFactory) {
         this.service = service;
         this.agentCommandService = agentCommandService;
@@ -51,6 +53,7 @@ public final class PlatformController {
         this.maintenanceService = maintenanceService;
         this.agentLifecycleService = agentLifecycleService;
         this.ruleUnloadService = ruleUnloadService;
+        this.operationService = operationService;
         this.requestContextFactory = requestContextFactory;
     }
 
@@ -72,8 +75,8 @@ public final class PlatformController {
     @PostMapping("/fencing-tokens")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> issueFencingToken(HttpServletRequest httpRequest,
-                                                 @Valid @RequestBody Map<String, Object> request) {
-        return service.issueFencingToken(context(httpRequest), request);
+                                                 @Valid @RequestBody com.example.kairo.platform.api.dto.IssueFencingTokenRequest request) {
+        return service.issueFencingToken(context(httpRequest), toMap(request));
     }
 
     @GetMapping("/instances")
@@ -84,8 +87,8 @@ public final class PlatformController {
     @PostMapping("/instances")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> createInstance(HttpServletRequest httpRequest,
-                                              @Valid @RequestBody Map<String, Object> request) {
-        return service.createInstance(context(httpRequest), request);
+                                              @Valid @RequestBody com.example.kairo.platform.api.dto.CreateInstanceRequest request) {
+        return service.createInstance(context(httpRequest), toMap(request));
     }
 
     @PostMapping("/agent-registrations/self")
@@ -166,8 +169,8 @@ public final class PlatformController {
     @PostMapping("/sidecars")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> createSidecar(HttpServletRequest httpRequest,
-                                             @Valid @RequestBody Map<String, Object> request) {
-        return service.createSidecar(context(httpRequest), request);
+                                             @Valid @RequestBody com.example.kairo.platform.api.dto.CreateSidecarRequest request) {
+        return service.createSidecar(context(httpRequest), toMap(request));
     }
 
     @GetMapping("/agents")
@@ -178,8 +181,8 @@ public final class PlatformController {
     @PostMapping("/agents")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> createAgent(HttpServletRequest httpRequest,
-                                           @Valid @RequestBody Map<String, Object> request) {
-        return service.createAgent(context(httpRequest), request);
+                                           @Valid @RequestBody com.example.kairo.platform.api.dto.CreateAgentRequest request) {
+        return service.createAgent(context(httpRequest), toMap(request));
     }
 
     @PostMapping("/agents/{id}/heartbeat")
@@ -224,8 +227,8 @@ public final class PlatformController {
     @PostMapping("/rules")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> createRule(HttpServletRequest httpRequest,
-                                          @Valid @RequestBody Map<String, Object> request) {
-        return service.createRule(context(httpRequest), request);
+                                          @Valid @RequestBody com.example.kairo.platform.api.dto.CreateRuleRequest request) {
+        return service.createRule(context(httpRequest), toMap(request));
     }
 
     @DeleteMapping("/rules/{id}")
@@ -273,8 +276,8 @@ public final class PlatformController {
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> createRuleVersion(@PathVariable String id,
                                                  HttpServletRequest httpRequest,
-                                                 @Valid @RequestBody Map<String, Object> request) {
-        return service.createRuleVersion(id, context(httpRequest), request);
+                                                 @Valid @RequestBody com.example.kairo.platform.api.dto.CreateRuleVersionRequest request) {
+        return service.createRuleVersion(id, context(httpRequest), toMap(request));
     }
 
     @DeleteMapping("/rules/{id}/versions/{version}")
@@ -301,22 +304,31 @@ public final class PlatformController {
     @PostMapping("/operation-plans")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> createOperationPlan(HttpServletRequest httpRequest,
-                                                   @Valid @RequestBody Map<String, Object> request) {
-        return service.createOperationPlan(context(httpRequest), request);
+                                                   @Valid @RequestBody com.example.kairo.platform.api.dto.CreateOperationPlanRequest request) {
+        return service.createOperationPlan(context(httpRequest), toMap(request));
     }
 
     @PostMapping("/operation-plans/{id}/transition")
     public Map<String, Object> transitionOperationPlan(@PathVariable String id,
                                                        HttpServletRequest httpRequest,
                                                        @Valid @RequestBody Map<String, Object> request) {
-        return service.transitionOperationPlan(id, context(httpRequest), request);
+        RequestContext ctx = context(httpRequest);
+        Map<String, Object> result = service.transitionOperationPlan(id, ctx, request);
+        // V1.6 §5.1: converge publish/rollback into the unified Operation resource.
+        recordPlanOperation(ctx, id, com.example.kairo.api.operation.OperationType.RULE_PUBLISH,
+                com.example.kairo.api.write.RiskLevel.HIGH, result);
+        return result;
     }
 
     @PostMapping("/operation-plans/{id}/unload")
     public Map<String, Object> unloadOperationPlan(@PathVariable String id,
                                                   HttpServletRequest httpRequest,
                                                   @Valid @RequestBody Map<String, Object> request) {
-        return ruleUnloadService.unload(id, context(httpRequest), request);
+        RequestContext ctx = context(httpRequest);
+        Map<String, Object> result = ruleUnloadService.unload(id, ctx, request);
+        recordPlanOperation(ctx, id, com.example.kairo.api.operation.OperationType.RULE_ROLLBACK,
+                com.example.kairo.api.write.RiskLevel.HIGH, result);
+        return result;
     }
 
     @GetMapping("/rollout-executions")
@@ -326,5 +338,33 @@ public final class PlatformController {
 
     private RequestContext context(HttpServletRequest request) {
         return requestContextFactory.from(request);
+    }
+
+    /**
+     * Convert a strongly-typed request DTO to the Map the service layer still
+     * consumes (V1.6 &sect;2.2 gradual strong-typing: the API contract is typed,
+     * the service boundary is unchanged).
+     */
+    private static java.util.Map<String, Object> toMap(Object dto) {
+        if (dto == null) {
+            return java.util.Map.of();
+        }
+        return com.example.kairo.platform.service.PlatformJson.readMap(
+                com.example.kairo.platform.service.PlatformJson.write(dto));
+    }
+
+    /** V1.6 §5.1: record a publish/rollback as a unified Operation (best-effort). */
+    private void recordPlanOperation(RequestContext ctx, String planId,
+                                     com.example.kairo.api.operation.OperationType type,
+                                     com.example.kairo.api.write.RiskLevel risk,
+                                     java.util.Map<String, Object> result) {
+        try {
+            String opId = operationService.start(new com.example.kairo.platform.operation.OperationService.StartRequest(
+                    type, "operation-plan", planId, risk, null, ctx.actor(), ctx.correlationId(), null, null));
+            operationService.succeed(opId, java.util.Map.of(
+                    "planId", planId, "status", String.valueOf(result.get("status"))));
+        } catch (RuntimeException ignored) {
+            // Operation recording is best-effort; never fail the publish/rollback because of it.
+        }
     }
 }

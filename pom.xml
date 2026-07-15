@@ -34,6 +34,9 @@
         <module>kairo-ops</module>
         <module>kairo-sidecar</module>
         <module>kairo-platform-server</module>
+        <module>kairo-sdk</module>
+        <module>kairo-cli</module>
+        <module>kairo-mcp</module>
         <module>kairo-demo</module>
         <module>kairo-integration-tests</module>
     </modules>

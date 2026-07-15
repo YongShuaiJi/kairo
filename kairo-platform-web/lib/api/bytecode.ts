@@ -162,10 +162,6 @@ export type SnapshotSelector = {
   revision: number;
 };
 
-function bytecodeBase(agentId: string, classId: string) {
-  return `agents/${encodeURIComponent(agentId)}/classes/${encodeURIComponent(classId)}`;
-}
-
 function ensureValidSegment(value: string, label: string) {
   // base64url classIds and agent ids are path-safe, but a stray slash would silently
   // re-route the catch-all BFF - reject early with a clear client-side error.
@@ -178,7 +174,9 @@ function ensureValidSegment(value: string, label: string) {
 export function fetchBytecodeTransformations(agentId: string, classId: string) {
   ensureValidSegment(agentId, "agentId");
   ensureValidSegment(classId, "classId");
-  return platformFetch<TransformationsResponse>(`${bytecodeBase(agentId, classId)}/transformations`);
+  return platformFetch<TransformationsResponse>(
+    `agents/${encodeURIComponent(agentId)}/classes/${encodeURIComponent(classId)}/transformations`,
+  );
 }
 
 /**
@@ -196,7 +194,7 @@ export async function fetchBytecodeBytes(
   ensureValidSegment(classId, "classId");
   const search = new URLSearchParams({ kind, revision: String(revision) });
   const response = await fetch(
-    `/api/platform/${bytecodeBase(agentId, classId)}/bytecode?${search.toString()}`,
+    `/api/platform/agents/${encodeURIComponent(agentId)}/classes/${encodeURIComponent(classId)}/bytecode?${search.toString()}`,
     { headers: { Accept: "application/octet-stream" } },
   );
   if (!response.ok) {
@@ -222,11 +220,14 @@ export async function previewBytecode(
 ): Promise<PreviewResponse> {
   ensureValidSegment(agentId, "agentId");
   ensureValidSegment(classId, "classId");
-  const response = await fetch(`/api/platform/${bytecodeBase(agentId, classId)}/preview`, {
-    method: "POST",
-    headers: { "Content-Type": "application/octet-stream", Accept: "application/json" },
-    body: (inputBytes instanceof Uint8Array ? inputBytes : new Uint8Array(inputBytes)) as BodyInit,
-  });
+  const response = await fetch(
+    `/api/platform/agents/${encodeURIComponent(agentId)}/classes/${encodeURIComponent(classId)}/preview`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream", Accept: "application/json" },
+      body: (inputBytes instanceof Uint8Array ? inputBytes : new Uint8Array(inputBytes)) as BodyInit,
+    },
+  );
   if (!response.ok) {
     throw await toPlatformError(response);
   }
@@ -237,10 +238,10 @@ export async function previewBytecode(
 export async function captureBytecode(agentId: string, classId: string): Promise<CaptureResponse> {
   ensureValidSegment(agentId, "agentId");
   ensureValidSegment(classId, "classId");
-  const response = await fetch(`/api/platform/${bytecodeBase(agentId, classId)}/capture`, {
-    method: "POST",
-    headers: { Accept: "application/json" },
-  });
+  const response = await fetch(
+    `/api/platform/agents/${encodeURIComponent(agentId)}/classes/${encodeURIComponent(classId)}/capture`,
+    { method: "POST", headers: { Accept: "application/json" } },
+  );
   if (!response.ok) {
     throw await toPlatformError(response);
   }
@@ -263,7 +264,7 @@ export async function fetchBytecodeDiff(
     toRevision: String(to.revision),
   });
   return platformFetch<BytecodeDiffResult>(
-    `${bytecodeBase(agentId, classId)}/diff?${search.toString()}`,
+    `agents/${encodeURIComponent(agentId)}/classes/${encodeURIComponent(classId)}/diff?${search.toString()}`,
   );
 }
 

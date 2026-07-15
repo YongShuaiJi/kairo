@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.kairo.platform.persistence.mapper.OperationMapper">
+
+    <insert id="insertOperation">
+        insert into operation(
+            id, operation_type, status, resource_type, resource_id, risk_level,
+            impact_json, progress, result_json, error_json, revert_operation_id,
+            automation_session_id, agent_command_id, correlation_id, actor,
+            idempotency_key, version, created_at, updated_at, completed_at
+        ) values (
+            #{id}, #{operationType}, #{status}, #{resourceType}, #{resourceId}, #{riskLevel},
+            #{impactJson}, #{progress}, #{resultJson}, #{errorJson}, #{revertOperationId},
+            #{automationSessionId}, #{agentCommandId}, #{correlationId}, #{actor},
+            #{idempotencyKey}, 0, #{createdAt}, #{updatedAt}, null
+        )
+    </insert>
+
+    <select id="findById" resultType="map">
+        select * from operation where id = #{id}
+    </select>
+
+    <select id="findByIdempotencyKey" resultType="map">
+        select * from operation where idempotency_key = #{idempotencyKey}
+    </select>
+
+    <select id="findByAgentCommandId" resultType="map">
+        select * from operation where agent_command_id = #{agentCommandId}
+    </select>
+
+    <select id="listByResource" resultType="map">
+        select * from operation
+         where resource_type = #{resourceType}
+           and resource_id = #{resourceId}
+         order by created_at desc, id
+    </select>
+
+    <select id="listBySession" resultType="map">
+        select * from operation
+         where automation_session_id = #{sessionId}
+         order by created_at asc, id
+    </select>
+
+    <select id="listRecent" resultType="map">
+        select * from operation
+        <where>
+            <if test="status != null and status != ''">
+                status = #{status}
+            </if>
+        </where>
+        order by updated_at desc, id
+        limit #{limit}
+    </select>
+
+    <update id="transition">
+        update operation
+           set status = #{status},
+               progress = #{progress},
+               result_json = #{resultJson},
+               error_json = #{errorJson},
+               revert_operation_id = #{revertOperationId},
+               completed_at = #{completedAt},
+               updated_at = #{updatedAt},
+               version = version + 1
+         where id = #{id}
+           and version = #{expectedVersion}
+    </update>
+
+    <update id="updateRisk">
+        update operation
+           set risk_level = #{riskLevel},
+               impact_json = #{impactJson},
+               updated_at = #{updatedAt}
+         where id = #{id}
+    </update>
+
+    <update id="linkAgentCommand">
+        update operation
+           set agent_command_id = #{agentCommandId},
+               updated_at = #{updatedAt}
+         where id = #{id}
+    </update>
+
+    <insert id="insertEvent">
+        insert into operation_event(
+            id, operation_id, sequence, event_type, actor, detail_json, occurred_at
+        ) values (
+            #{id}, #{operationId}, #{sequence}, #{eventType}, #{actor}, #{detailJson}, #{occurredAt}
+        )
+    </insert>
+
+    <select id="listEvents" resultType="map">
+        select operation_id, sequence, event_type, actor, detail_json, occurred_at
+          from operation_event
+         where operation_id = #{operationId}
+         order by sequence asc
+    </select>
+
+    <select id="nextEventSequence" resultType="java.lang.Long">
+        select coalesce(max(sequence), 0) + 1 from operation_event where operation_id = #{operationId}
+    </select>
+
+</mapper>
