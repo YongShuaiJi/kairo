@@ -52,4 +52,11 @@ public interface AutomationSessionMapper {
     int countActiveByToken(@Param("tokenId") String tokenId);
 
     List<Map<String, Object>> listByStatus(@Param("status") String status);
+
+    /**
+     * Row-lock the platform_access_token row (SELECT ... FOR UPDATE) to serialize the
+     * per-token automation-session count-then-insert (V1.6 acceptance safety). Must be
+     * called inside a transaction; the lock is held until commit.
+     */
+    String lockToken(@Param("tokenId") String tokenId);
 }

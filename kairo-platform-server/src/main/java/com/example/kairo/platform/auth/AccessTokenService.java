@@ -68,44 +68,74 @@ public class AccessTokenService {
         );
     }
 
-    @SuppressWarnings("unchecked")
+    /**
+     * Parse a persisted {@code scope_json} for authentication (V1.6 fail-closed).
+     * <ul>
+     *   <li>{@code null}/blank &rarr; {@code null} (no narrowing; inherit the subject's full set).</li>
+     *   <li>A JSON array of non-blank strings &rarr; that capability set (possibly empty for {@code []},
+     *       which grants zero capabilities).</li>
+     *   <li>Any other shape (object/string/number/bool), a malformed JSON document, or an array
+     *       containing non-string/blank elements &rarr; {@link PlatformException#unauthorized(String, String)}
+     *       so a corrupted row can never widen to the subject's full set.</li>
+     * </ul>
+     */
     private static java.util.Set<String> parseScope(Object scopeJson) {
         if (scopeJson == null || String.valueOf(scopeJson).isBlank()) {
             return null;
         }
+        Object parsed;
         try {
-            Object parsed = new com.fasterxml.jackson.databind.ObjectMapper().readValue(String.valueOf(scopeJson), Object.class);
-            if (parsed instanceof java.util.List<?> list) {
-                java.util.Set<String> caps = new java.util.LinkedHashSet<>();
-                for (Object o : list) {
-                    if (o instanceof String s && !s.isBlank()) {
-                        caps.add(s);
-                    }
-                }
-                return caps;
-            }
-        } catch (Exception ignored) {
-            // malformed scope_json -> treat as no narrowing (fail open to subject's full set)
+            parsed = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(String.valueOf(scopeJson), Object.class);
+        } catch (Exception e) {
+            throw PlatformException.unauthorized("TOKEN_SCOPE_INVALID",
+                    "Token scope 损坏，拒绝认证");
         }
-        return null;
+        if (!(parsed instanceof java.util.List<?> list)) {
+            throw PlatformException.unauthorized("TOKEN_SCOPE_INVALID",
+                    "Token scope 必须是能力数组，拒绝认证");
+        }
+        java.util.Set<String> caps = new java.util.LinkedHashSet<>();
+        for (Object o : list) {
+            if (!(o instanceof String s) || s.isBlank()) {
+                throw PlatformException.unauthorized("TOKEN_SCOPE_INVALID",
+                        "Token scope 包含非字符串或空能力，拒绝认证");
+            }
+            caps.add(s);
+        }
+        return caps;
     }
 
     private static String nullableString(Object o) {
         return o == null ? null : String.valueOf(o);
     }
 
+    /**
+     * Parse a persisted {@code max_sessions} for authentication (V1.6 fail-closed).
+     * {@code null} &rarr; unlimited; a positive integer &rarr; that limit; any non-positive
+     * or non-integer value &rarr; {@link PlatformException#unauthorized(String, String)} so a
+     * corrupted row can never silently become unlimited.
+     */
     private static Integer parseInt(Object o) {
         if (o == null) {
             return null;
         }
+        int value;
         if (o instanceof Number n) {
-            return n.intValue();
+            value = n.intValue();
+        } else {
+            try {
+                value = Integer.parseInt(String.valueOf(o).trim());
+            } catch (NumberFormatException e) {
+                throw PlatformException.unauthorized("TOKEN_MAX_SESSIONS_INVALID",
+                        "Token maxSessions 损坏，拒绝认证");
+            }
         }
-        try {
-            return Integer.parseInt(String.valueOf(o));
-        } catch (NumberFormatException e) {
-            return null;
+        if (value <= 0) {
+            throw PlatformException.unauthorized("TOKEN_MAX_SESSIONS_INVALID",
+                    "Token maxSessions 必须为正数，拒绝认证");
         }
+        return value;
     }
 
     public Map<String, Object> describe(String rawToken) {
@@ -148,25 +178,35 @@ public class AccessTokenService {
                 validatedExpiresAt(request, clock.instant()), scopeJson, source, maxSessions);
     }
 
-    /** Serialise the requested capability scope to JSON; null when no narrowing requested. */
-    @SuppressWarnings("unchecked")
+    /**
+     * Serialise the requested capability scope to JSON (V1.6 fail-closed at issue time).
+     * <ul>
+     *   <li>{@code null} &rarr; {@code null} (no narrowing; inherit the subject's full set).</li>
+     *   <li>A list of non-blank strings &rarr; that list as JSON.</li>
+     *   <li>An empty list &rarr; {@code "[]"} (explicit zero-capability scope; stored, not
+     *       silently widened to full access).</li>
+     *   <li>Any other shape (string/object/number) or a list containing non-string/blank
+     *       items &rarr; {@code 400 INVALID_TOKEN_SCOPE}.</li>
+     * </ul>
+     */
     private static String scopeJsonFromRequest(Map<String, Object> request) {
         Object scope = request.get("scope");
         if (scope == null) {
             return null;
         }
-        List<String> caps;
-        if (scope instanceof List<?> list) {
-            caps = list.stream().filter(s -> s instanceof String && !String.valueOf(s).isBlank())
-                    .map(String::valueOf).distinct().toList();
-        } else if (scope instanceof String s && !s.isBlank()) {
-            caps = List.of(s.trim());
-        } else {
-            return null;
+        if (!(scope instanceof List<?> list)) {
+            throw PlatformException.badRequest("INVALID_TOKEN_SCOPE",
+                    "scope 必须是能力字符串数组");
         }
-        if (caps.isEmpty()) {
-            return null;
+        List<String> caps = new java.util.ArrayList<>();
+        for (Object o : list) {
+            if (!(o instanceof String s) || s.isBlank()) {
+                throw PlatformException.badRequest("INVALID_TOKEN_SCOPE",
+                        "scope 数组只能包含非空字符串");
+            }
+            caps.add(s);
         }
+        // Explicit empty scope -> "[]" (zero capabilities), distinct from null (inherit all).
         return PlatformJson.write(caps);
     }
 
@@ -182,13 +222,44 @@ public class AccessTokenService {
         };
     }
 
+    /**
+     * Parse the requested {@code maxSessions} (V1.6 fail-closed at issue time).
+     * {@code null} &rarr; unlimited; a positive integer/numeric string &rarr; that value;
+     * any non-positive, fractional, or non-numeric value &rarr; {@code 400 INVALID_TOKEN_MAX_SESSIONS}.
+     * A JSON {@code 2.5} arrives as a {@code Double} and is rejected (not silently truncated to 2).
+     */
     private static Integer maxSessionsFromRequest(Map<String, Object> request) {
         Object value = request.get("maxSessions");
         if (value == null) {
             return null;
         }
-        Integer parsed = parseInt(value);
-        return parsed != null && parsed > 0 ? parsed : null;
+        int parsed;
+        if (value instanceof Number n) {
+            // Reject fractional/BigDecimal numbers; only integral values may coerce to a session limit.
+            double d = n.doubleValue();
+            if (!Double.isFinite(d) || d != Math.floor(d)) {
+                throw PlatformException.badRequest("INVALID_TOKEN_MAX_SESSIONS",
+                        "maxSessions 必须为正整数");
+            }
+            parsed = n.intValue();
+        } else {
+            String raw = String.valueOf(value).trim();
+            if (raw.isEmpty()) {
+                throw PlatformException.badRequest("INVALID_TOKEN_MAX_SESSIONS",
+                        "maxSessions 必须为正整数");
+            }
+            try {
+                parsed = Integer.parseInt(raw);
+            } catch (NumberFormatException e) {
+                throw PlatformException.badRequest("INVALID_TOKEN_MAX_SESSIONS",
+                        "maxSessions 必须为正整数");
+            }
+        }
+        if (parsed <= 0) {
+            throw PlatformException.badRequest("INVALID_TOKEN_MAX_SESSIONS",
+                    "maxSessions 必须为正整数");
+        }
+        return parsed;
     }
 
     public List<Map<String, Object>> list() {
@@ -534,7 +605,7 @@ public class AccessTokenService {
         return result;
     }
 
-    static String hash(String token) {
+    public static String hash(String token) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
                     .digest(token.getBytes(StandardCharsets.UTF_8));
