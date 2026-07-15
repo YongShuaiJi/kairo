@@ -61,6 +61,10 @@
            and status in ('CREATED','ACTIVE')
     </select>
 
+    <select id="lockToken" resultType="string">
+        select id from platform_access_token where id = #{tokenId} for update
+    </select>
+
     <select id="listByStatus" resultType="map">
         select * from automation_session
         <where>

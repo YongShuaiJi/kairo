@@ -23,11 +23,15 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * V1.6 &sect;9.6 real-JVM AI trial: drives {@link AutomationSessionService#trial}
+ * V1.6 &sect;9.6 AI trial reconciliation: drives {@link AutomationSessionService#trial}
  * (which delegates to {@code ScriptSessionService.create}+{@code apply}) and
- * {@link AutomationSessionService#revert} with simulated agent acks on a real
- * JVM, proving the AI temporary-enhancement + reliable-revert path through the
- * actual agent command channel.
+ * {@link AutomationSessionService#revert} through the real agent command channel, acking each
+ * dispatched command with a simulated result. This proves the platform-side trial+revert
+ * state machine and resource bookkeeping, but the agent acks are simulated (no live agent),
+ * so it does <em>not</em> assert any real method-behavior change. That proof &mdash; real
+ * {@code AgentRuntime} instrumentation driving the same lifecycle with an actual
+ * compute()-behavior change and revert &mdash; lives in
+ * {@code com.example.kairo.agent.server.V16RealAgentAiLifecycleTest}.
  */
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:kairo_platform_v16_ai_trial;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH",

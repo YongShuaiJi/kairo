@@ -1,6 +1,7 @@
 package com.example.kairo.platform.api;
 
 import com.example.kairo.platform.service.PlatformException;
+import com.example.kairo.platform.service.PlatformJson;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -45,17 +46,23 @@ final class PlatformAuthenticationFilter extends OncePerRequestFilter {
             requireAllowedAgentRoute(request, context);
             filterChain.doFilter(request, response);
         } catch (PlatformException e) {
+            // Emit the frozen V1.6 ApiError (code/category/retryable/details/suggestedActions/
+            // correlationId) so authentication failures are machine-readable, not a minimal blob.
+            com.example.kairo.api.error.ApiError error = com.example.kairo.api.error.ApiError.of(
+                    e.code(), e.getMessage(), e.category(), e.retryable())
+                    .withDetails(e.details())
+                    .withSuggestedActions(e.suggestedActions())
+                    .withCorrelationId(headerOrDefault(request, "X-Correlation-Id", ""));
             response.setStatus(e.status());
             response.setCharacterEncoding(StandardCharsets.UTF_8.name());
             response.setContentType("application/json");
-            response.getWriter().write("""
-                    {"code":"%s","message":"%s","retryable":false}
-                    """.formatted(json(e.code()), json(e.getMessage())).trim());
+            response.getWriter().write(PlatformJson.write(error));
         }
     }
 
-    private String json(String value) {
-        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    private static String headerOrDefault(HttpServletRequest request, String name, String defaultValue) {
+        String value = request.getHeader(name);
+        return value == null || value.isBlank() ? defaultValue : value;
     }
 
     private void requireAllowedAgentRoute(HttpServletRequest request,

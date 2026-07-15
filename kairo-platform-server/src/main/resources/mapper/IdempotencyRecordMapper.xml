@@ -4,20 +4,67 @@
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.example.kairo.platform.persistence.mapper.IdempotencyRecordMapper">
 
-    <select id="activeRecord" resultType="map">
-        select *
+    <select id="findRecord" resultType="map">
+        select idempotency_key, actor, request_hash, status, response_status, response_json,
+               created_at, expires_at, lease_expires_at, owner_token
           from idempotency_record
          where idempotency_key = #{idempotencyKey}
            and expires_at > current_timestamp
          limit 1
     </select>
 
-    <insert id="insertRecord">
+    <insert id="insertReservation">
         insert into idempotency_record(
-            idempotency_key, actor, request_hash, response_status, response_json, created_at, expires_at
+            idempotency_key, actor, request_hash, status, response_status, response_json,
+            created_at, expires_at, lease_expires_at, owner_token
         ) values (
-            #{idempotencyKey}, #{actor}, #{requestHash}, #{responseStatus},
-            #{responseJson}, #{createdAt}, #{expiresAt}
+            #{idempotencyKey}, #{actor}, #{requestHash}, #{status}, 0, '',
+            #{createdAt}, #{expiresAt}, #{leaseExpiresAt}, #{ownerToken}
         )
     </insert>
+
+    <update id="completeRecord">
+        update idempotency_record
+           set status = 'COMPLETED',
+               response_status = #{responseStatus},
+               response_json = #{responseJson},
+               lease_expires_at = null,
+               owner_token = null
+         where idempotency_key = #{idempotencyKey}
+           and status = 'IN_PROGRESS'
+           and owner_token = #{ownerToken}
+    </update>
+
+    <delete id="deleteReservation">
+        delete from idempotency_record
+         where idempotency_key = #{idempotencyKey}
+           and status = 'IN_PROGRESS'
+           and owner_token = #{ownerToken}
+    </delete>
+
+    <update id="renewLease">
+        update idempotency_record
+           set lease_expires_at = #{leaseExpiresAt}
+         where idempotency_key = #{idempotencyKey}
+           and status = 'IN_PROGRESS'
+           and owner_token = #{ownerToken}
+    </update>
+
+    <update id="reclaimReservation">
+        update idempotency_record
+           set lease_expires_at = #{leaseExpiresAt},
+               owner_token = #{newOwnerToken}
+         where idempotency_key = #{idempotencyKey}
+           and status = 'IN_PROGRESS'
+           and actor = #{actor}
+           and request_hash = #{requestHash}
+           and lease_expires_at is not null
+           and lease_expires_at &lt; #{now}
+    </update>
+
+    <delete id="deleteExpired">
+        delete from idempotency_record
+         where idempotency_key = #{idempotencyKey}
+           and expires_at &lt;= #{now}
+    </delete>
 </mapper>

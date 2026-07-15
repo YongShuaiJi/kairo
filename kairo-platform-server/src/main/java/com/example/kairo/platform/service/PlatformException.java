@@ -113,6 +113,17 @@ public final class PlatformException extends RuntimeException {
                 List.of(SuggestedAction.safe("REAUTHENTICATE", "提供有效的 Bearer Token 后重试")));
     }
 
+    /**
+     * Authentication failure carrying a specific stable code (V1.6 &sect;2.4). Used when a
+     * persisted token is structurally invalid (e.g. corrupted scope_json or max_sessions) so
+     * authentication fails closed with a machine-readable code rather than a generic message.
+     */
+    public static PlatformException unauthorized(String code, String message) {
+        return new PlatformException(401, code, ErrorCategory.AUTHENTICATION,
+                message, false, Map.of(), null,
+                List.of(SuggestedAction.safe("REAUTHENTICATE", "提供有效的 Bearer Token 后重试")));
+    }
+
     public static PlatformException notFound(String resourceType, String resourceId) {
         return new PlatformException(404, "RESOURCE_NOT_FOUND", ErrorCategory.NOT_FOUND,
                 "未找到资源：" + resourceType + "（" + resourceId + "）", false,

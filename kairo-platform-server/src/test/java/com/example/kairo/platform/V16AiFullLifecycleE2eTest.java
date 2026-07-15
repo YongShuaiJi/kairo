@@ -41,9 +41,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * run through the real {@link AutomationSessionService} on the real agent command channel
  * (script compile + dispatch + ack). The flow is: create -&gt; resolve -&gt; validate broken
  * (structured diagnostics) -&gt; AI auto-corrects on the diagnostic code -&gt; re-validate
- * (valid) -&gt; preview -&gt; real-JVM trial (create+validate+apply) -&gt; observe -&gt; promote
+ * (valid) -&gt; preview -&gt; trial (create+validate+apply, simulated agent acks) -&gt; observe -&gt; promote
  * -&gt; one-click revert. Nothing is mocked at the service boundary; only the agent acks
- * are simulated (no live agent process), mirroring {@link V16AiTrialRealJvmTest}.
+ * are simulated (no live agent process, so no real method-behavior change is asserted here),
+ * mirroring {@link V16AiTrialRealJvmTest}. The real-agent, real-instrumentation proof of the
+ * trial's behavior change + revert lives in
+ * {@code com.example.kairo.agent.server.V16RealAgentAiLifecycleTest}.
  */
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:kairo_platform_v16_ai_full_e2e;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH",

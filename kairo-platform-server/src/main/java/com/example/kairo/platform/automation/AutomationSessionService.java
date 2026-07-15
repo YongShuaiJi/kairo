@@ -26,6 +26,7 @@ import com.example.kairo.platform.service.ScriptWorkbenchService;
 import com.example.kairo.platform.service.TargetDiscoveryService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.Timestamp;
 import java.time.Clock;
@@ -119,6 +120,7 @@ public final class AutomationSessionService {
     private final ScriptWorkbenchService scriptWorkbenchService;
     private final RbacService rbacService;
     private final Clock clock;
+    private final TransactionTemplate transactionTemplate;
 
     @Autowired
     public AutomationSessionService(AutomationSessionMapper sessionMapper,
@@ -128,9 +130,11 @@ public final class AutomationSessionService {
                                     TargetDiscoveryService targetDiscoveryService,
                                     EnhancementTargetResolutionService resolutionService,
                                     ScriptWorkbenchService scriptWorkbenchService,
-                                    RbacService rbacService) {
+                                    RbacService rbacService,
+                                    TransactionTemplate transactionTemplate) {
         this(sessionMapper, operationService, scriptSessionService, policyService,
-                targetDiscoveryService, resolutionService, scriptWorkbenchService, rbacService, Clock.systemUTC());
+                targetDiscoveryService, resolutionService, scriptWorkbenchService, rbacService,
+                Clock.systemUTC(), transactionTemplate);
     }
 
     AutomationSessionService(AutomationSessionMapper sessionMapper,
@@ -140,7 +144,8 @@ public final class AutomationSessionService {
                              TargetDiscoveryService targetDiscoveryService,
                              EnhancementTargetResolutionService resolutionService,
                              ScriptWorkbenchService scriptWorkbenchService,
-                             RbacService rbacService, Clock clock) {
+                             RbacService rbacService, Clock clock,
+                             TransactionTemplate transactionTemplate) {
         this.sessionMapper = sessionMapper;
         this.operationService = operationService;
         this.scriptSessionService = scriptSessionService;
@@ -150,6 +155,7 @@ public final class AutomationSessionService {
         this.scriptWorkbenchService = scriptWorkbenchService;
         this.rbacService = rbacService;
         this.clock = clock;
+        this.transactionTemplate = transactionTemplate;
     }
 
     /** Create a session. The capability profile is narrowed to the effective tier. */
@@ -160,28 +166,45 @@ public final class AutomationSessionService {
         // A session may never widen beyond the effective tier; SAFE is the floor for AI use.
         CapabilityProfile maxProfile = effective;
         long ttl = Math.min(request.ttlMillis(), MAX_TTL_MILLIS);
-        // Enforce optional per-token concurrent session limit (V1.6 §5.1).
-        String tokenId = context.tokenId();
-        if (context.tokenScope() != null && context.tokenScope().maxSessions() != null && tokenId != null) {
-            int active = sessionMapper.countActiveByToken(tokenId);
-            if (active >= context.tokenScope().maxSessions()) {
-                throw PlatformException.conflict("AUTOMATION_SESSION_LIMIT_EXCEEDED",
-                        "已达到该 Token 的并发会话上限：" + context.tokenScope().maxSessions(),
-                        Map.of("active", active, "maxSessions", context.tokenScope().maxSessions()));
-            }
-        }
         Instant now = clock.instant();
         long deadline = now.toEpochMilli() + ttl;
         String id = "auto-" + UUID.randomUUID();
+        String tokenId = context.tokenId();
+        Integer maxSessions = context.tokenScope() == null ? null : context.tokenScope().maxSessions();
+        // V1.6 acceptance safety: the per-token count-then-insert is serialized by row-locking the
+        // token row (SELECT ... FOR UPDATE) inside a programmatic transaction, so two concurrent
+        // creates for the same token cannot both pass the limit. The class is final, so a CGLIB
+        // @Transactional proxy is unavailable; a TransactionTemplate wraps the critical section
+        // instead. Owner failure (an exception) rolls back the insert with the transaction.
+        if (maxSessions != null && tokenId != null) {
+            Integer limit = maxSessions;
+            transactionTemplate.executeWithoutResult(status -> {
+                sessionMapper.lockToken(tokenId);
+                int active = sessionMapper.countActiveByToken(tokenId);
+                if (active >= limit) {
+                    throw PlatformException.conflict("AUTOMATION_SESSION_LIMIT_EXCEEDED",
+                            "已达到该 Token 的并发会话上限：" + limit,
+                            Map.of("active", active, "maxSessions", limit));
+                }
+                insertSessionRow(id, request, maxProfile, ttl, deadline, now, tokenId, context);
+            });
+        } else {
+            insertSessionRow(id, request, maxProfile, ttl, deadline, now, tokenId, context);
+        }
+        operationService.recordEvent(id, "SESSION_CREATED", context.actor(),
+                Map.of("source", request.source(), "maxCapabilityProfile", maxProfile.name()));
+        return get(context, id);
+    }
+
+    private void insertSessionRow(String id, CreateRequest request, CapabilityProfile maxProfile,
+                                  long ttl, long deadline, Instant now, String tokenId,
+                                  RequestContext context) {
         sessionMapper.insertSession(id, request.caller(), request.source(),
                 request.applicationId(), request.environmentId(), request.instanceId(),
                 request.agentId(), maxProfile.name(), ttl, deadline,
                 AutomationSessionStatus.CREATED.name(), RiskLevel.LOW.name(),
                 context.correlationId(), tokenId,
                 Timestamp.from(now), Timestamp.from(now));
-        operationService.recordEvent(id, "SESSION_CREATED", context.actor(),
-                Map.of("source", request.source(), "maxCapabilityProfile", maxProfile.name()));
-        return get(context, id);
     }
 
     public AutomationSession get(RequestContext context, String id) {

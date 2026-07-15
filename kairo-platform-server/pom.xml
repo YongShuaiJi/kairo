@@ -77,6 +77,27 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- V1.6 acceptance safety: a real-agent AI-lifecycle test drives the platform's
+             AutomationSessionService.trial/revert through the real AgentRuntime + PlatformCommandPoller
+             (real JVM instrumentation), asserting actual method-behavior change + revert rather than
+             simulated acknowledgements. Test-scope only: production never depends on the agent. -->
+        <dependency>
+            <groupId>com.example.kairo</groupId>
+            <artifactId>kairo-agent-core</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.example.kairo</groupId>
+            <artifactId>kairo-agent-server</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy-agent</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
