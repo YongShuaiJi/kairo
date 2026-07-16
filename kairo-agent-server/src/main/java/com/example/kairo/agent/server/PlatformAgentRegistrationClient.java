@@ -60,9 +60,9 @@ final class PlatformAgentRegistrationClient {
             body.put("loadMode", jvmInfo.loadMode());
             body.put("listenHost", config.host());
             body.put("listenPort", listenPort);
-            // V1.6 §5.2: advertise protocol versions + command capabilities for negotiation.
+            // V1.7 §3.4: advertise v1 plus the strict capability-negotiation marker.
             com.example.kairo.agent.server.protocol.AgentProtocolInfo protocol =
-                    com.example.kairo.agent.server.protocol.AgentProtocolInfo.defaultV1();
+                    com.example.kairo.agent.server.protocol.AgentProtocolInfo.currentV17();
             body.put("protocolVersions", protocol.protocolVersions());
             body.put("capabilities", protocol.capabilities());
             HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(

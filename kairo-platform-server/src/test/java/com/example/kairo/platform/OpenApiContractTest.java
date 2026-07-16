@@ -1,5 +1,8 @@
 package com.example.kairo.platform;
 
+import com.example.kairo.platform.api.KairoApiAuthorizationCatalog;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -126,5 +129,36 @@ class OpenApiContractTest {
                 .andExpect(jsonPath("$.components.schemas.RulePreviewResponse.properties.previewToken").exists())
                 .andExpect(jsonPath("$.components.schemas.RulePreviewResponse.properties.riskLevel").exists())
                 .andExpect(jsonPath("$.components.schemas.RulePreviewResponse.properties.revert").exists());
+    }
+
+    @Test
+    void everyOperationPublishesItsFrozenAuthorizationExpression() throws Exception {
+        JsonNode document = new ObjectMapper().readTree(openApiDoc());
+        java.util.Set<KairoApiAuthorizationCatalog.Route> live = new java.util.LinkedHashSet<>();
+        java.util.Set<String> methods = java.util.Set.of(
+                "get", "post", "put", "patch", "delete", "head", "options");
+        document.path("paths").fields().forEachRemaining(pathEntry ->
+                pathEntry.getValue().fields().forEachRemaining(methodEntry -> {
+                    if (!methods.contains(methodEntry.getKey())) {
+                        return;
+                    }
+                    KairoApiAuthorizationCatalog.Route route =
+                            new KairoApiAuthorizationCatalog.Route(
+                                    methodEntry.getKey(), pathEntry.getKey());
+                    live.add(route);
+                    org.assertj.core.api.Assertions.assertThat(methodEntry.getValue()
+                                    .path(KairoApiAuthorizationCatalog.EXTENSION).asText())
+                            .as("authorization extension for " + route)
+                            .isEqualTo(KairoApiAuthorizationCatalog.requirement(
+                                    route.method(), route.path()));
+                }));
+
+        org.assertj.core.api.Assertions.assertThat(live)
+                .as("every explicit authorization override must resolve to a live operation")
+                .containsAll(KairoApiAuthorizationCatalog.overrides().keySet());
+        String expressions = String.join("\n", KairoApiAuthorizationCatalog.declaredExpressions());
+        org.assertj.core.api.Assertions.assertThat(expressions)
+                .contains("ADMIN", "USER_MANAGE", "INSTANCE_MANAGE", "AGENT_MANAGE",
+                        "RULE_MANAGE", "ROLLOUT_MANAGE");
     }
 }

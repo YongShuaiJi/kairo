@@ -1,0 +1,5767 @@
+{
+  "operations" : [ {
+    "method" : "get",
+    "path" : "/",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/agent-commands",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/agent-commands/{id}/ack",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "SELF_AGENT_OR_AGENT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/agent-registrations/self",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "201",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/agents",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/agents",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"$ref\":\"CreateAgentRequest\"}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "201",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/agents/{agentId}/classes/{classId}/bytecode",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE@agent_instance:{agentId}",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "agentId",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "classId",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "kind",
+      "in" : "query",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "revision",
+      "in" : "query",
+      "required" : true,
+      "type" : "integer",
+      "format" : "int64",
+      "nullable" : false,
+      "schemaRef" : "integer",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"integer\",\"format\":\"int64\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"application/octet-stream\":{\"type\":\"string\",\"format\":\"byte\"}}",
+      "contentTypes" : [ "application/octet-stream" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/agents/{agentId}/classes/{classId}/capture",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE@agent_instance:{agentId}",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "agentId",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "classId",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/agents/{agentId}/classes/{classId}/diff",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE@agent_instance:{agentId}",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "agentId",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "classId",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "fromKind",
+      "in" : "query",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "fromRevision",
+      "in" : "query",
+      "required" : true,
+      "type" : "integer",
+      "format" : "int64",
+      "nullable" : false,
+      "schemaRef" : "integer",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"integer\",\"format\":\"int64\"}"
+    }, {
+      "name" : "toKind",
+      "in" : "query",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "toRevision",
+      "in" : "query",
+      "required" : true,
+      "type" : "integer",
+      "format" : "int64",
+      "nullable" : false,
+      "schemaRef" : "integer",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"integer\",\"format\":\"int64\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/agents/{agentId}/classes/{classId}/preview",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE@agent_instance:{agentId}",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "agentId",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "classId",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/octet-stream\":{\"type\":\"string\",\"format\":\"byte\"}}",
+    "requestContentTypes" : [ "application/octet-stream" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/agents/{agentId}/classes/{classId}/transformations",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE@agent_instance:{agentId}",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "agentId",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "classId",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/agents/{id}/commands",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "201",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/agents/{id}/commands/next",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "SELF_AGENT_OR_AGENT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/agents/{id}/heartbeat",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "SELF_AGENT_OR_AGENT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/applications",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/apps/{appId}/script-policy",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "appId",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "put",
+    "path" : "/api/v1/apps/{appId}/script-policy",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "appId",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/attach-executor-commands",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/attach-executor-commands/{id}/ack",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/attach-executors",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/attach-executors/{id}/commands/next",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/attach-executors/{id}/heartbeat",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/attach-sidecars/self",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "201",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/attach-targets",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/audit-events",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/auth/me",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "patch",
+    "path" : "/api/v1/auth/me",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/auth/me/token/replace",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/auth/tokens",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "ADMIN",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/auth/tokens",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "ADMIN",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "201",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "delete",
+    "path" : "/api/v1/auth/tokens/{id}",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "ADMIN",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "204",
+      "schema" : null,
+      "contentTypes" : [ ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/auth/tokens/{id}/renew",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "ADMIN",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/auth/users",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "USER_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "delete",
+    "path" : "/api/v1/auth/users/{username}",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "USER_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "username",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "204",
+      "schema" : null,
+      "contentTypes" : [ ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/auth/users/{username}/token/replace",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "USER_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "username",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/auth/users/{username}/tokens/renew",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "USER_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "username",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/automation-sessions",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "status",
+      "in" : "query",
+      "required" : false,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"$ref\":\"AutomationSession\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/automation-sessions",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"$ref\":\"CreateRequest\"}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "201",
+      "schema" : "{\"*/*\":{\"$ref\":\"AutomationSession\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/automation-sessions/{id}",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"$ref\":\"AutomationSession\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/automation-sessions/{id}/events",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/automation-sessions/{id}/preview",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"$ref\":\"PreviewRequest\"}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"$ref\":\"PreviewResult\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/automation-sessions/{id}/promote",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/automation-sessions/{id}/resolve-targets",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"$ref\":\"ResolveTargetsRequest\"}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"$ref\":\"EnhancementContextBundle\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/automation-sessions/{id}/revert",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "CONDITIONAL_CREATED_RESOURCE{script-session=RULE_MANAGE}",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"$ref\":\"AutomationSession\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/automation-sessions/{id}/trial",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"$ref\":\"TrialRequest\"}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/automation-sessions/{id}/validate-script",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"$ref\":\"ValidateScriptRequest\"}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/control/health",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/control/schedulers/run-once",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "ADMIN",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/dashboard/overview",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/details/{resource}/{id}",
+    "deprecated" : true,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "CONDITIONAL_RESOURCE{tokens=USER_MANAGE;default=AUTHENTICATED}",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "resource",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/diagnostics",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/environments",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/fencing-tokens",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/fencing-tokens",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "BY_RESOURCE_TYPE{operation_plan|rollout_batch|rollout_instance_execution=ROLLOUT_MANAGE;rule|rule_version=RULE_MANAGE;agent_instance|sidecar_instance=AGENT_MANAGE;default=ADMIN}",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"$ref\":\"IssueFencingTokenRequest\"}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "201",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/instances",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/instances",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "INSTANCE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"$ref\":\"CreateInstanceRequest\"}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "201",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/instances/{id}/agent/attach",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/instances/{id}/agent/deactivate",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/instances/{id}/agent/reload",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/instances/{id}/environment",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "INSTANCE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "patch",
+    "path" : "/api/v1/instances/{id}/nickname",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "INSTANCE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/operation-plans",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/operation-plans",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "ROLLOUT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"$ref\":\"CreateOperationPlanRequest\"}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "201",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/operation-plans/{id}/transition",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "ROLLOUT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/operation-plans/{id}/unload",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "ROLLOUT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/operations",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "limit",
+      "in" : "query",
+      "required" : false,
+      "type" : "integer",
+      "format" : "int32",
+      "nullable" : false,
+      "schemaRef" : "integer",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"integer\",\"format\":\"int32\",\"default\":50}"
+    }, {
+      "name" : "resourceId",
+      "in" : "query",
+      "required" : false,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "resourceType",
+      "in" : "query",
+      "required" : false,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "status",
+      "in" : "query",
+      "required" : false,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"$ref\":\"PageOperation\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/operations/{id}",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"$ref\":\"Operation\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/operations/{id}/events",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"$ref\":\"OperationEvent\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/query/{resource}",
+    "deprecated" : true,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "CONDITIONAL_RESOURCE{tokens=USER_MANAGE;default=AUTHENTICATED}",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "page",
+      "in" : "query",
+      "required" : false,
+      "type" : "integer",
+      "format" : "int32",
+      "nullable" : false,
+      "schemaRef" : "integer",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"integer\",\"format\":\"int32\",\"default\":0}"
+    }, {
+      "name" : "q",
+      "in" : "query",
+      "required" : false,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\",\"default\":\"\"}"
+    }, {
+      "name" : "resource",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "size",
+      "in" : "query",
+      "required" : false,
+      "type" : "integer",
+      "format" : "int32",
+      "nullable" : false,
+      "schemaRef" : "integer",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"integer\",\"format\":\"int32\",\"default\":25}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/reconciliations",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"$ref\":\"ReconcileResult\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/rollback-executions",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/rollout-applications",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/rollout-environments",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/rollout-executions",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/rollout-targets",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/rule-chains",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "agentId",
+      "in" : "query",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "applicationId",
+      "in" : "query",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "chainId",
+      "in" : "query",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "environmentId",
+      "in" : "query",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/rule-versions",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/rules",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/rules",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"$ref\":\"CreateRuleRequest\"}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "201",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/rules/preview",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"$ref\":\"RulePreviewRequest\"}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"$ref\":\"RulePreviewResponse\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "delete",
+    "path" : "/api/v1/rules/{id}",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/rules/{id}/detail",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/rules/{id}/disable",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/rules/{id}/enable",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/rules/{id}/versions",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"$ref\":\"CreateRuleVersionRequest\"}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "201",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/rules/{id}/versions/delete",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "delete",
+    "path" : "/api/v1/rules/{id}/versions/{version}",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "version",
+      "in" : "path",
+      "required" : true,
+      "type" : "integer",
+      "format" : "int64",
+      "nullable" : false,
+      "schemaRef" : "integer",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"integer\",\"format\":\"int64\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/rules/{id}/versions/{version}/disable",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "version",
+      "in" : "path",
+      "required" : true,
+      "type" : "integer",
+      "format" : "int64",
+      "nullable" : false,
+      "schemaRef" : "integer",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"integer\",\"format\":\"int64\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/rules/{id}/versions/{version}/enable",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    }, {
+      "name" : "version",
+      "in" : "path",
+      "required" : true,
+      "type" : "integer",
+      "format" : "int64",
+      "nullable" : false,
+      "schemaRef" : "integer",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"integer\",\"format\":\"int64\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/schemas",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/script-sessions",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "applicationId",
+      "in" : "query",
+      "required" : false,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/script-sessions",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "201",
+      "schema" : "{\"*/*\":{\"$ref\":\"ScriptSessionResult\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "delete",
+    "path" : "/api/v1/script-sessions/{id}",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"$ref\":\"ScriptSessionResult\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/script-sessions/{id}",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/script-sessions/{id}/apply",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"$ref\":\"ScriptSessionResult\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/script-sessions/{id}/events",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"$ref\":\"ScriptSessionEvent\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/script-sessions/{id}/promote",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"$ref\":\"ScriptSessionResult\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/script-sessions/{id}/validate",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "id",
+      "in" : "path",
+      "required" : true,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"$ref\":\"ScriptSessionResult\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/scripts/compile",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"$ref\":\"ScriptCompilationResult\"}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/scripts/preview",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/scripts/test",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/scripts/validate",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/sidecars",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/sidecars",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AGENT_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"$ref\":\"CreateSidecarRequest\"}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "201",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/targets/call-sites",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/targets/loaders",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "applicationId",
+      "in" : "query",
+      "required" : false,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\",\"default\":\"\"}"
+    }, {
+      "name" : "environmentId",
+      "in" : "query",
+      "required" : false,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\",\"default\":\"\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "post",
+    "path" : "/api/v1/targets/resolve",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "RULE_MANAGE",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ ],
+    "requestBodyRequired" : true,
+    "requestBodySchema" : "{\"application/json\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+    "requestContentTypes" : [ "application/json" ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  }, {
+    "method" : "get",
+    "path" : "/api/v1/targets/search",
+    "deprecated" : false,
+    "replacement" : "",
+    "removalVersion" : "",
+    "authorization" : "AUTHENTICATED",
+    "security" : [ "bearerAuth[]" ],
+    "parameters" : [ {
+      "name" : "applicationId",
+      "in" : "query",
+      "required" : false,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\",\"default\":\"\"}"
+    }, {
+      "name" : "environmentId",
+      "in" : "query",
+      "required" : false,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\",\"default\":\"\"}"
+    }, {
+      "name" : "q",
+      "in" : "query",
+      "required" : false,
+      "type" : "string",
+      "format" : null,
+      "nullable" : false,
+      "schemaRef" : "string",
+      "enum" : null,
+      "schemaContract" : "{\"type\":\"string\",\"default\":\"\"}"
+    } ],
+    "requestBodyRequired" : false,
+    "requestBodySchema" : null,
+    "requestContentTypes" : [ ],
+    "responses" : [ {
+      "status" : "200",
+      "schema" : "{\"*/*\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}}}",
+      "contentTypes" : [ "*/*" ]
+    } ]
+  } ],
+  "schemas" : [ {
+    "name" : "AffectedResource",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "resourceId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "resourceType",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "ApiError",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "category",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "AUTHENTICATION", "AUTHORIZATION", "BUSINESS_RULE", "CAPABILITY", "CONFLICT", "INTERNAL", "NOT_FOUND", "OPERATION_IN_PROGRESS", "RATE_LIMITED", "VALIDATION" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "code",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "correlationId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "details",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    }, {
+      "name" : "field",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "location",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "message",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "path",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "retryable",
+      "type" : "boolean",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "suggestedActions",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : "SuggestedAction",
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "AutomationSession",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "agentId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "applicationId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "caller",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "cleanupResult",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    }, {
+      "name" : "correlationId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "createdAt",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "createdResources",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : "AutomationSessionResource",
+      "additionalProperties" : null
+    }, {
+      "name" : "deadlineMillis",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "environmentId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "instanceId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "maxCapabilityProfile",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "EXTENDED", "SAFE", "UNRESTRICTED" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "riskLevel",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "CRITICAL", "HIGH", "LOW", "MEDIUM" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "sessionId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "source",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "status",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "ACTIVE", "COMPLETED", "CREATED", "EXPIRED", "FAILED", "REVERTED" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "ttlMillis",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "updatedAt",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "version",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "AutomationSessionResource",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "createdAt",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "resourceId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "resourceType",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "reversible",
+      "type" : "boolean",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "CallSiteSelector",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "ClassLoaderSummary",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "classLoaderId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "compatibilityNote",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "proxyType",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "BYTE_BUDDY", "CGLIB", "JDK_PROXY", "PLAIN", "UNKNOWN" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "supportLevel",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "EXPERIMENTAL", "LIMITED", "SUPPORTED", "UNSUPPORTED" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "ConflictFinding",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "blocking",
+      "type" : "boolean",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "kind",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "CALL_SITE_FINGERPRINT_DRIFT", "CAPABILITY_TIER_EXCEEDS_APP_LIMIT", "EXCLUSIVE_CALL_SITE_REPLACEMENT", "MULTIPLE_UNCONDITIONAL_TERMINATE", "MUTEX_GROUP_OVERLAP", "POTENTIAL_CONDITION_OVERLAP", "TARGET_REVISION_DRIFT", "UNREACHABLE_RULE" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "message",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "ruleIds",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : "string",
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "severity",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "ERROR", "POTENTIAL", "WARNING" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "CreateAgentRequest",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "agentVersion",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "bootstrapVersion",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "capabilities",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : "string",
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "id",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "instanceId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "listenHost",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "listenPort",
+      "type" : "integer",
+      "format" : "int32",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "reason",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "sidecarId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "status",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "tokenHash",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "CreateInstanceRequest",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "applicationId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "environmentId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "hostname",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "id",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "labels",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    }, {
+      "name" : "nickname",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "processId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "reason",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "runtime",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "status",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "CreateOperationPlanRequest",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "applicationId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "environmentId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "id",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "planType",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "reason",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "resourceId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "resourceType",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "resourceVersion",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "strategy",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "CreateRequest",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "agentId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "applicationId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "caller",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "environmentId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "instanceId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "requestedCapabilityProfile",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "EXTENDED", "SAFE", "UNRESTRICTED" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "source",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "ttlMillis",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "CreateRuleRequest",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "applicationId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "businessAbbreviation",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "businessCode",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "capabilities",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : "string",
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "environmentId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "governance",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    }, {
+      "name" : "id",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "matcher",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "RuleMatcherDto",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "name",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "reason",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "riskLevel",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "script",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "RuleScriptDto",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "scriptHash",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "status",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "target",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "RuleTargetDto",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "targets",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : "RuleTargetDto",
+      "additionalProperties" : null
+    }, {
+      "name" : "versionStatus",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "CreateRuleVersionRequest",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "applicationId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "businessAbbreviation",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "businessCode",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "capabilities",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : "string",
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "environmentId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "governance",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    }, {
+      "name" : "matcher",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "RuleMatcherDto",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "name",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "reason",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "riskLevel",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "script",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "RuleScriptDto",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "scriptHash",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "status",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "target",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "RuleTargetDto",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "targets",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : "RuleTargetDto",
+      "additionalProperties" : null
+    }, {
+      "name" : "versionStatus",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "CreateSidecarRequest",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "capabilities",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : "string",
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "endpoint",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "id",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "instanceId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "reason",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "sidecarVersion",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "status",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "EnhancementCandidate",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "classLoaderId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "className",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "confidence",
+      "type" : "number",
+      "format" : "double",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "descriptor",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "matchReason",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "methodName",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "proxyType",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "BYTE_BUDDY", "CGLIB", "JDK_PROXY", "PLAIN", "UNKNOWN" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "supportLevel",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "EXPERIMENTAL", "LIMITED", "SUPPORTED", "UNSUPPORTED" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "targetId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "EnhancementContextBundle",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "candidates",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : "EnhancementCandidate",
+      "additionalProperties" : null
+    }, {
+      "name" : "classLoaders",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : "ClassLoaderSummary",
+      "additionalProperties" : null
+    }, {
+      "name" : "enhancementLocations",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : "EnhancementLocationOption",
+      "additionalProperties" : null
+    }, {
+      "name" : "generatedAtMillis",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "ruleChainConflicts",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : "ConflictFinding",
+      "additionalProperties" : null
+    }, {
+      "name" : "scriptApiSurface",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "ScriptApiSurface",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "sessionId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "sizeBytes",
+      "type" : "integer",
+      "format" : "int32",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "version",
+      "type" : "integer",
+      "format" : "int32",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "EnhancementLocationOption",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "availableLocations",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : "string",
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "callSites",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : "CallSiteSelector",
+      "additionalProperties" : null
+    }, {
+      "name" : "targetId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "ImpactSummary",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "affectedResources",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : "AffectedResource",
+      "additionalProperties" : null
+    }, {
+      "name" : "blastRadius",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "estimatedAffectedInstances",
+      "type" : "integer",
+      "format" : "int32",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "reversible",
+      "type" : "boolean",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "scope",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "IssueFencingTokenRequest",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "purpose",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "reason",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "resourceId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "resourceType",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "ttlSeconds",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "Operation",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "actor",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "completedAt",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "correlationId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "createdAt",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "error",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "ApiError",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "impact",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "ImpactSummary",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "operationId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "progress",
+      "type" : "integer",
+      "format" : "int32",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "resourceId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "resourceType",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "result",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    }, {
+      "name" : "revertOperationId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "riskLevel",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "CRITICAL", "HIGH", "LOW", "MEDIUM" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "status",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "CANCELLED", "FAILED", "PENDING", "REVERTED", "RUNNING", "SUCCEEDED", "TIMEOUT" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "type",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "AGENT_COMMAND", "AUTOMATION_PROMOTE", "AUTOMATION_REVERT", "AUTOMATION_TRIAL", "PREVIEW", "RECONCILE", "RULE_PUBLISH", "RULE_ROLLBACK", "RULE_UNLOAD", "SCRIPT_SESSION" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "updatedAt",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "OperationEvent",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "actor",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "detail",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    }, {
+      "name" : "occurredAt",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "operationId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "sequence",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "type",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "PageOperation",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "hasMore",
+      "type" : "boolean",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "items",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : "Operation",
+      "additionalProperties" : null
+    }, {
+      "name" : "nextCursor",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "total",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "PreviewRequest",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "target",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "PreviewResult",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "diff",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    }, {
+      "name" : "expiresAt",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "impact",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "ImpactSummary",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "previewToken",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "revision",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "riskLevel",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "CRITICAL", "HIGH", "LOW", "MEDIUM" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "ReconcileResult",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "ResolveTargetsRequest",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "environmentId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "query",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "RevertHint",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "description",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "steps",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : "string",
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "strategy",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "RuleMatcherDto",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "phase",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "RulePreviewRequest",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "applicationId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "classId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "classLoaderId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "className",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "environmentId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "executionPhase",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "methodDescriptor",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "methodName",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "name",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "reason",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "script",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "RulePreviewResponse",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "impact",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "ImpactSummary",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "payload",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "CreateRuleRequest",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "previewToken",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "revert",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "RevertHint",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "revision",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "riskLevel",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "CRITICAL", "HIGH", "LOW", "MEDIUM" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "validation",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "RuleScriptDto",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "phase",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "script",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "RuleTargetDto",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "callSiteSelector",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    }, {
+      "name" : "className",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "location",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "matcher",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "RuleTargetMatcherDto",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "methodName",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "protocol",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "RuleTargetMatcherDto",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "classId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "classLoaderId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "descriptor",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "ScriptApiSurface",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "allowedProfile",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "EXTENDED", "SAFE", "UNRESTRICTED" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "diagnosticsFormat",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    }, {
+      "name" : "examples",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : "ScriptExample",
+      "additionalProperties" : null
+    }, {
+      "name" : "limits",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    }, {
+      "name" : "schema",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "ScriptCompilationResult",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "capabilityProfile",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "EXTENDED", "SAFE", "UNRESTRICTED" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "compilerVersion",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "diagnostics",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : "ScriptDiagnostic",
+      "additionalProperties" : null
+    }, {
+      "name" : "policyRevision",
+      "type" : "$ref",
+      "format" : null,
+      "schemaRef" : "ScriptPolicyRevision",
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "scriptHash",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "successful",
+      "type" : "boolean",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "targetClassLoaderId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "ScriptDiagnostic",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "code",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "column",
+      "type" : "integer",
+      "format" : "int32",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "line",
+      "type" : "integer",
+      "format" : "int32",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "message",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "phase",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "COMPILATION", "EXECUTION", "VALIDATION" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "severity",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "ERROR", "INFO", "WARNING" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "suggestion",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "targetClassLoaderId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "ScriptExample",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "description",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "name",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "source",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "ScriptPolicyRevision",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "hash",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "revision",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "ScriptSessionEvent",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "action",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "actor",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "commandId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "createdAt",
+      "type" : "string",
+      "format" : "date-time",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "detail",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "fromStatus",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "id",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "sessionId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "toStatus",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "ScriptSessionResult",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "createdAt",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "diagnostics",
+      "type" : "array",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : "ScriptDiagnostic",
+      "additionalProperties" : null
+    }, {
+      "name" : "expiresAt",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "hitCount",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "sessionId",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "status",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "APPLIED", "CREATED", "EXPIRED", "FAILED", "REVERTED", "VALIDATED" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "SuggestedAction",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "action",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "description",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "href",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "safe",
+      "type" : "boolean",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "TrialRequest",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "capabilityProfile",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : [ "EXTENDED", "SAFE", "UNRESTRICTED" ],
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "maxHits",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "script",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    }, {
+      "name" : "target",
+      "type" : "object",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : "schema:{\"type\":\"object\"}"
+    }, {
+      "name" : "ttlMillis",
+      "type" : "integer",
+      "format" : "int64",
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  }, {
+    "name" : "ValidateScriptRequest",
+    "type" : "object",
+    "format" : null,
+    "required" : [ ],
+    "properties" : [ {
+      "name" : "script",
+      "type" : "string",
+      "format" : null,
+      "schemaRef" : null,
+      "nullable" : false,
+      "enum" : null,
+      "itemsType" : null,
+      "itemsRef" : null,
+      "additionalProperties" : null
+    } ],
+    "composition" : [ ],
+    "additionalProperties" : null
+  } ],
+  "securitySchemes" : [ {
+    "name" : "bearerAuth",
+    "type" : "http",
+    "scheme" : "bearer",
+    "bearerFormat" : "opaque"
+  } ]
+}

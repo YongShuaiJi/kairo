@@ -2,6 +2,7 @@ package com.example.kairo.platform.service;
 
 import com.example.kairo.api.error.ErrorCategory;
 import com.example.kairo.api.error.ErrorTarget;
+import com.example.kairo.api.error.KairoErrorCatalog;
 import com.example.kairo.api.error.SuggestedAction;
 
 import java.util.List;
@@ -36,6 +37,23 @@ public final class PlatformException extends RuntimeException {
         this.code = code;
         this.category = category == null ? inferCategory(code, status) : category;
         this.retryable = retryable;
+        // V1.7 M0 / frozen plan §3.1: validate the code against the authoritative KairoErrorCatalog.
+        // An unknown code, a reused code, or a factory whose (status, category, retryable) disagrees
+        // with the catalog fails fast -- the emitted contract must match the frozen catalog. The
+        // catalog encodes the exact V1.6 values, so every existing emission is preserved.
+        KairoErrorCatalog.Entry catalog = KairoErrorCatalog.resolve(this.code);
+        if (catalog == null) {
+            throw new IllegalStateException("Unknown/unregistered error code not in catalog: "
+                    + this.code + " -- register it in KairoErrorCatalog or fix the caller.");
+        }
+        if (catalog.httpStatus() != this.status
+                || catalog.category() != this.category
+                || catalog.retryable() != this.retryable) {
+            throw new IllegalStateException("Error code metadata mismatch: " + this.code
+                    + " factory emits (status=" + this.status + ",category=" + this.category
+                    + ",retryable=" + this.retryable + ") but catalog has " + catalog
+                    + " -- a code cannot be reused or reclassified without a breaking change.");
+        }
         this.details = details == null ? Map.of() : details;
         this.target = target;
         this.suggestedActions = suggestedActions == null ? List.of() : List.copyOf(suggestedActions);
@@ -144,6 +162,16 @@ public final class PlatformException extends RuntimeException {
                 List.of(SuggestedAction.safe("REQUEST_PREVIEW", "降级为受支持的命令或升级 Agent")));
     }
 
+    /** Reject an Agent protocol version before registration creates or updates runtime state. */
+    public static PlatformException unsupportedProtocolVersion(List<String> advertised,
+                                                               List<String> supported) {
+        return new PlatformException(409, "PROTOCOL_VERSION_NOT_SUPPORTED", ErrorCategory.CAPABILITY,
+                "Agent 协议版本不受支持", false,
+                Map.of("advertisedProtocolVersions", List.copyOf(advertised),
+                        "supportedProtocolVersions", List.copyOf(supported)), null,
+                List.of(SuggestedAction.safe("UPGRADE_AGENT", "使用支持 v1 协议的 Agent")));
+    }
+
     /** Rate-limited / quota error (&sect;2.4 category=RATE_LIMITED). */
     public static PlatformException rateLimited(String code, String message, Map<String, Object> details) {
         return new PlatformException(429, code, ErrorCategory.RATE_LIMITED, message, true, details, null,
@@ -161,7 +189,7 @@ public final class PlatformException extends RuntimeException {
             case "RESOURCE_VERSION_CONFLICT", "AGENT_COMMAND_STATE_CONFLICT",
                  "USERNAME_CONFLICT", "SCRIPT_SESSION_TARGET_BUSY",
                  "FENCING_TOKEN_INVALID", "OPERATION_PLAN_INVALID_TRANSITION" -> ErrorCategory.CONFLICT;
-            case "CAPABILITY_NOT_SUPPORTED" -> ErrorCategory.CAPABILITY;
+            case "CAPABILITY_NOT_SUPPORTED", "PROTOCOL_VERSION_NOT_SUPPORTED" -> ErrorCategory.CAPABILITY;
             case "REDIS_UNAVAILABLE", "REDIS_FENCING_FAILED", "FENCING_SEQUENCE_FAILED",
                  "INTERNAL_ERROR" -> ErrorCategory.INTERNAL;
             default -> status >= 500 ? ErrorCategory.INTERNAL : ErrorCategory.VALIDATION;
@@ -205,6 +233,7 @@ public final class PlatformException extends RuntimeException {
             case "INVALID_ENVIRONMENT" -> "环境不存在或不属于所选应用";
             case "INVALID_ENVIRONMENT_TYPE" -> "环境类型只能是 dev、sit、uat 或 prod";
             case "CAPABILITY_NOT_SUPPORTED" -> "目标 Agent 不支持该命令能力";
+            case "PROTOCOL_VERSION_NOT_SUPPORTED" -> "Agent 协议版本不受支持";
             default -> "请求处理失败（" + code + "）";
         };
     }

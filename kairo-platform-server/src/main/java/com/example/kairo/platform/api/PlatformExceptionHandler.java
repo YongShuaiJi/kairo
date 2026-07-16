@@ -3,6 +3,7 @@ package com.example.kairo.platform.api;
 import com.example.kairo.api.error.ApiError;
 import com.example.kairo.api.error.ErrorCategory;
 import com.example.kairo.api.error.ErrorTarget;
+import com.example.kairo.api.error.KairoErrorCatalog;
 import com.example.kairo.api.error.SuggestedAction;
 import com.example.kairo.platform.service.PlatformException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -57,9 +58,11 @@ final class PlatformExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiError> unexpected(Exception exception, HttpServletRequest request) {
+        // V1.7 M0: resolve INTERNAL_ERROR from the authoritative catalog (handler validates).
+        KairoErrorCatalog.Entry internal = KairoErrorCatalog.require("INTERNAL_ERROR");
         return ResponseEntity.internalServerError().body(ApiError.of(
                 "INTERNAL_ERROR", "服务器内部错误，请根据关联 ID 查看服务端日志",
-                ErrorCategory.INTERNAL, false)
+                internal.category(), internal.retryable())
                 .withCorrelationId(correlationId(request))
                 .withSuggestedActions(List.of(
                         SuggestedAction.manual("CONTACT_OPERATOR", "携带 correlationId 联系运维"))));

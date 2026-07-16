@@ -180,6 +180,7 @@ public class PlatformCoreService {
     @Transactional
     public Map<String, Object> registerAgentRuntime(RequestContext context, Map<String, Object> request) {
         rbacService.require(context, "AGENT_MANAGE");
+        validateAgentProtocolVersions(request);
         RegistrationApplication registrationApplication = resolveRegistrationApplication(request);
         String applicationId = registrationApplication.applicationId();
         String environmentId = resolveEnvironmentId(applicationId, optionalString(request, "environmentId", null),
@@ -275,6 +276,36 @@ public class PlatformCoreService {
         result.put("leaseExpiresAt", leaseExpiresAt.toString());
         result.put("restoredOperationPlans", restoredOperationPlans);
         return result;
+    }
+
+    /**
+     * V1.7 protocol negotiation. A missing/empty advertisement is the frozen V1.6 legacy shape;
+     * an explicit advertisement must be structurally valid and include the only supported wire
+     * version. This runs before registration is allowed to mutate project/application/runtime data.
+     */
+    private void validateAgentProtocolVersions(Map<String, Object> request) {
+        Object raw = request.get("protocolVersions");
+        if (raw == null) {
+            return;
+        }
+        if (!(raw instanceof List<?> values)) {
+            throw PlatformException.badRequest("INVALID_FIELD",
+                    "Field must be an array: protocolVersions");
+        }
+        if (values.isEmpty()) {
+            return;
+        }
+        List<String> advertised = new ArrayList<>();
+        for (Object value : values) {
+            if (!(value instanceof String version) || version.isBlank()) {
+                throw PlatformException.badRequest("INVALID_FIELD",
+                        "protocolVersions must contain non-blank strings");
+            }
+            advertised.add(version);
+        }
+        if (!advertised.contains("v1")) {
+            throw PlatformException.unsupportedProtocolVersion(advertised, List.of("v1"));
+        }
     }
 
     private RegistrationApplication resolveRegistrationApplication(Map<String, Object> request) {

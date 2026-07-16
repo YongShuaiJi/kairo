@@ -13,6 +13,7 @@
 | V1.4 | [多规则增强链与可靠恢复](./v1.4-rule-chain-recovery.md) | V1.1～V1.3 |
 | V1.5 | [现代 JVM 场景兼容](./v1.5-modern-jvm-compatibility.md) | V1.4 |
 | V1.6 | [API First 与 AI First](./v1.6-api-ai-first.md) | V1.4 稳定，V1.5 契约冻结 |
+| V1.7 | [LTS 稳定性验证与封版](./v1.7-lts-stabilization.md)；[LTS 维护策略](./v1.7-lts-policy.md) | V1.6 全部通过验收 |
 
 ## 所有智能体必须遵守的冻结契约
 
@@ -70,3 +71,5 @@
 - V1.5 与 V1.6 可在 V1.4 稳定后并行，但 V1.6 不得提前冻结尚未稳定的底层语义。
 - 所有数据库迁移在合入前重新编号，开发分支不要假定迁移序号永久有效。
 - 所有共享文件修改必须保持小步提交，避免同时重写 `AgentRuntime`、`AgentHttpServer` 或平台大控制器。
+- V1.7 先冻结契约和证据格式，再按恢复、长稳、兼容、运维、供应链顺序推进；不得用未执行的
+  `SKIPPED`、`continue-on-error` 或文档声明代替 LTS 验收证据。

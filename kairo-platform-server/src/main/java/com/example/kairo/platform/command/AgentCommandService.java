@@ -30,6 +30,7 @@ public class AgentCommandService {
     private final PlatformCoreService eventWriter;
     private final BusinessIdService businessIdService;
     private final Clock clock;
+    private final CapabilityGate capabilityGate;
     private BytecodeDiagnosticExchange bytecodeExchange;
     private ScriptSessionExchange scriptSessionExchange;
     private TargetResolutionExchange targetResolutionExchange;
@@ -57,17 +58,20 @@ public class AgentCommandService {
 
     @Autowired
     public AgentCommandService(AgentCommandMapper commandMapper, RbacService rbacService,
-                               PlatformCoreService eventWriter, BusinessIdService businessIdService) {
-        this(commandMapper, rbacService, eventWriter, businessIdService, Clock.systemUTC());
+                               PlatformCoreService eventWriter, BusinessIdService businessIdService,
+                               CapabilityGate capabilityGate) {
+        this(commandMapper, rbacService, eventWriter, businessIdService, Clock.systemUTC(), capabilityGate);
     }
 
     AgentCommandService(AgentCommandMapper commandMapper, RbacService rbacService,
-                        PlatformCoreService eventWriter, BusinessIdService businessIdService, Clock clock) {
+                        PlatformCoreService eventWriter, BusinessIdService businessIdService, Clock clock,
+                        CapabilityGate capabilityGate) {
         this.commandMapper = commandMapper;
         this.rbacService = rbacService;
         this.eventWriter = eventWriter;
         this.businessIdService = businessIdService;
         this.clock = clock;
+        this.capabilityGate = capabilityGate;
     }
 
     public List<Map<String, Object>> listCommands() {
@@ -162,6 +166,8 @@ public class AgentCommandService {
                                        Map<String, Object> payload, String idempotencyKey,
                                        long maxAttempts, Instant availableAt) {
         requireExistingAgent(agentId);
+        // V1.7 M0 / §3.4: never enqueue a command whose capability the agent did not advertise.
+        capabilityGate.requireDispatchable(commandMapper.findAgentCapabilities(agentId), commandType);
         Instant now = clock.instant();
         Map<String, Object> fullPayload = new LinkedHashMap<>(payload);
         fullPayload.putIfAbsent("protocolVersion", "v1");
@@ -194,6 +200,10 @@ public class AgentCommandService {
             return Map.of("status", "NO_COMMAND", "agentId", agentId);
         }
         Map<String, Object> candidate = normalizeRow(candidates.get(0));
+        // Capabilities may change after enqueue (agent upgrade/downgrade or corrupted state).
+        // Re-negotiate before changing the command row so an incompatible command is never leased.
+        capabilityGate.requireDispatchable(commandMapper.findAgentCapabilities(agentId),
+                String.valueOf(candidate.get("command_type")));
         int updated = commandMapper.dispatchCommand(candidate.get("id"), timestamp(now),
                 timestamp(leaseExpiresAt), timestamp(now));
         if (updated == 0) {

@@ -7,6 +7,7 @@ import io.swagger.v3.oas.models.security.SecurityScheme;
 import io.swagger.v3.oas.models.servers.Server;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springdoc.core.customizers.OpenApiCustomizer;
 
 /**
  * OpenAPI contract configuration (V1.6 &sect;5.1 "OpenAPI 由代码/契约统一生成或校验").
@@ -33,5 +34,20 @@ public class OpenApiConfig {
                         .bearerFormat("opaque")
                         .description("Platform access token (least-privilege); scoped tokens narrow capabilities."))
                 .addSecurityItem(new SecurityRequirement().addList(BEARER_SCHEME));
+    }
+
+    /** Publish the actual V1 RBAC expression on every operation for compatibility diffing. */
+    @Bean
+    OpenApiCustomizer kairoAuthorizationContract() {
+        return openApi -> {
+            if (openApi.getPaths() == null) {
+                return;
+            }
+            openApi.getPaths().forEach((path, item) -> item.readOperationsMap()
+                    .forEach((method, operation) -> operation.addExtension(
+                            KairoApiAuthorizationCatalog.EXTENSION,
+                            KairoApiAuthorizationCatalog.requirement(
+                                    method.name().toLowerCase(java.util.Locale.ROOT), path))));
+        };
     }
 }

@@ -1,0 +1,22 @@
+{
+  "baselineSha256" : {
+    "v1.7/agent-protocol-v1.json" : "c3d1b0b851c5ef49b0aa56ceef1e361c50be594987e7a3ce055b80989b20d8d9",
+    "v1.7/api-v1-openapi-normalized.json" : "63c3f2e12797687e32a1d78922a75127f1c5ff1af2d78a4a4b1052af66d77311",
+    "v1.7/config-v1-frozen.json" : "370e882e7c9e5030f728d4f78362fb9212e9efa4525bf5dd410c2e58bcd898cc",
+    "v1.7/error-codes-v1.json" : "57c46726c134772409a8973d791fd7ede588bc43aac61e49b7101904308ffa23",
+    "v1.7/migration-v1-hashes.json" : "4610af4e8549523ba32d70ed9f308ed7254db79cc9ae4da54f06f7a1943fa3b7"
+  },
+  "classification" : "historical V1.6 compatibility floor",
+  "historicalCommandWireResource" : "v1.7/fixtures/v1.6-agent-command-wire.json",
+  "historicalCommandWireSha256" : "4ce5f6e201e2f2032e7090d07c0b0ae2cdf0b1718c7180a8dc9409a884507f8a",
+  "historicalDbMilestonesResource" : "v1.7/fixtures/historical-db-milestones.json",
+  "historicalDbMilestonesSha256" : "f9395e7a7ea0f126376c4e314b66237890ba8336de86f6245c8cac95a2f4a799",
+  "rawOpenApiSha256" : "aefb4f9b7d1eb5855e3c6218e503bdaf419de1e0edc41083e49946ef39684400",
+  "sourceCheckoutClean" : true,
+  "sourceCheckoutMode" : "separate detached clean worktree",
+  "sourceCommit" : "113823b41981a2d8fb5473a772ae2d2938d9582e",
+  "sourceTag" : "V1.6.0",
+  "sourceTree" : "a1a858d0a377b6162f8283fa1d357e55c9da83d4",
+  "v17AgentToV16PlatformResource" : "v1.7/fixtures/v1.7-agent-to-v1.6-platform-registration.json",
+  "v17AgentToV16PlatformSha256" : "543f6fc16d1577c5c790c384484cff34cfb3d06dfe6a5dde469a167080eb84bd"
+}

@@ -1,0 +1,931 @@
+{
+  "configKeys" : [ {
+    "key" : "kairo.platform.api.enabled",
+    "component" : "platform",
+    "type" : "boolean",
+    "defaultValue" : "true",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.attach.agent-host",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "127.0.0.1",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.attach.agent-jar",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "/app/kairo-agent-bootstrap.jar",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.attach.agent-port",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "0",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.attach.bootstrap-jar",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "/app/kairo-bootstrap-api.jar",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.attach.command-max-attempts",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "3",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.attach.core-jar",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "/app/kairo-agent-core-modern.jar",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.attach.platform-token",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "<redacted>",
+    "sensitive" : true,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.attach.platform-url",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "http://127.0.0.1:18280",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.attach.sidecar-token",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "<redacted>",
+    "sensitive" : true,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.auth.bootstrap-actor",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "system",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.auth.bootstrap-token",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "<redacted>",
+    "sensitive" : true,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.auth.bootstrap-ttl-days",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "365",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.auth.mode",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "local-token",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.automation.expiry.fixed-delay-ms",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "10000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.automation.expiry.initial-delay-ms",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "10000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.bytecode.timeout-ms",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "15000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.fencing.default-ttl-seconds",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "300",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.fencing.key-prefix",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "kairo:fencing:",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.fencing.redis-enabled",
+    "component" : "platform",
+    "type" : "boolean",
+    "defaultValue" : "false",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.idempotency.lease-millis",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "30000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.idempotency.max-wait-millis",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "35000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.idempotency.poll-millis",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "25",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.idempotency.renew-millis",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "10000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.rollout.scheduler.command-lease-seconds",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "60",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.rollout.scheduler.enabled",
+    "component" : "platform",
+    "type" : "boolean",
+    "defaultValue" : "true",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.rollout.scheduler.fixed-delay-ms",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "3000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.runtime-cleanup.fixed-delay-ms",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "60000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.runtime-cleanup.initial-delay-ms",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "60000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.runtime-cleanup.retention-ms",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "1800000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.runtime-lease.fixed-delay-ms",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "5000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.runtime-lease.initial-delay-ms",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "5000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.script.command-timeout-ms",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "15000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.script.default-max-hits",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "1",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.script.default-ttl-millis",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "60000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.script.expiry.fixed-delay-ms",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "5000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.script.expiry.initial-delay-ms",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "5000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.script.max-hits",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "100",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.script.max-ttl-millis",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "300000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.script.platform-max-profile",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "kairo.platform.target-resolution.timeout-ms",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "10000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "management.endpoints.web.exposure.include",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "health,info,metrics",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  } ],
+  "envVars" : [ {
+    "key" : "KAIRO_PLATFORM_URL",
+    "component" : "cli",
+    "type" : "string",
+    "defaultValue" : "",
+    "sensitive" : false,
+    "defaultPresent" : false,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_TOKEN",
+    "component" : "cli",
+    "type" : "string",
+    "defaultValue" : "<redacted>",
+    "sensitive" : true,
+    "defaultPresent" : false,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_PLATFORM_URL",
+    "component" : "mcp",
+    "type" : "string",
+    "defaultValue" : "",
+    "sensitive" : false,
+    "defaultPresent" : false,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_TOKEN",
+    "component" : "mcp",
+    "type" : "string",
+    "defaultValue" : "<redacted>",
+    "sensitive" : true,
+    "defaultPresent" : false,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_AGENT_COMMAND_LEASE_SECONDS",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "60",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_API_ENABLED",
+    "component" : "platform",
+    "type" : "boolean",
+    "defaultValue" : "true",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_ATTACH_AGENT_HOST",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "127.0.0.1",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_ATTACH_AGENT_JAR",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "/app/kairo-agent-bootstrap.jar",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_ATTACH_AGENT_PORT",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "0",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_ATTACH_BOOTSTRAP_JAR",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "/app/kairo-bootstrap-api.jar",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_ATTACH_COMMAND_MAX_ATTEMPTS",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "3",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_ATTACH_CORE_JAR",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "/app/kairo-agent-core-modern.jar",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_ATTACH_PLATFORM_TOKEN",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "<redacted>",
+    "sensitive" : true,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_ATTACH_PLATFORM_URL",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "http://127.0.0.1:18280",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_ATTACH_SIDECAR_TOKEN",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "<redacted>",
+    "sensitive" : true,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_AUTH_MODE",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "local-token",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_BOOTSTRAP_ACTOR",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "system",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_BOOTSTRAP_TOKEN",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "<redacted>",
+    "sensitive" : true,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_BOOTSTRAP_TTL_DAYS",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "365",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_DB_PASSWORD",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "<redacted>",
+    "sensitive" : true,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_DB_URL",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "jdbc:postgresql://127.0.0.1:5432/kairo",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_DB_USER",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "kairo",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_FENCING_DEFAULT_TTL_SECONDS",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "300",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_FENCING_KEY_PREFIX",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "kairo:fencing:",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_FENCING_REDIS_ENABLED",
+    "component" : "platform",
+    "type" : "boolean",
+    "defaultValue" : "false",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_REDIS_HOST",
+    "component" : "platform",
+    "type" : "string",
+    "defaultValue" : "127.0.0.1",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_REDIS_PORT",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "6379",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_ROLLOUT_SCHEDULER_ENABLED",
+    "component" : "platform",
+    "type" : "boolean",
+    "defaultValue" : "true",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_ROLLOUT_SCHEDULER_FIXED_DELAY_MS",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "3000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_RUNTIME_CLEANUP_FIXED_DELAY_MS",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "60000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_RUNTIME_CLEANUP_INITIAL_DELAY_MS",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "60000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_RUNTIME_CLEANUP_RETENTION_MS",
+    "component" : "platform",
+    "type" : "number",
+    "defaultValue" : "1800000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_AGENT_JAR",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "/app/kairo-agent-bootstrap.jar",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_APPLICATION_NAME",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "kairo-demo",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_ENVIRONMENT_NAME",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "SIT",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_EXECUTOR_COMMAND_LEASE_SECONDS",
+    "component" : "sidecar",
+    "type" : "number",
+    "defaultValue" : "30",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_EXECUTOR_ID",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "executor-<hostname>",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_EXECUTOR_POLL_WAIT_MILLIS",
+    "component" : "sidecar",
+    "type" : "number",
+    "defaultValue" : "25000",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_EXECUTOR_TYPE",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "SIDECAR_CONTAINER",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_INSTANCE_NICKNAME",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "<applicationName>",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_PLATFORM_TOKEN",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "<redacted>",
+    "sensitive" : true,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_PLATFORM_URL",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "http://platform:18280",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_PROCESS_START_ID",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "<applicationName>:<hostname>:<targetPid>",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_PROJECT_NAME",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "kairo",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_SIDECAR_ENDPOINT",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "http://localhost:18480",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_SIDECAR_HOST",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "0.0.0.0",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_SIDECAR_PORT",
+    "component" : "sidecar",
+    "type" : "number",
+    "defaultValue" : "18480",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_SIDECAR_TOKEN",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "<redacted>",
+    "sensitive" : true,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_SIDECAR_VERSION",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "0.1.0-SNAPSHOT",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_TARGETS_JSON",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "",
+    "sensitive" : false,
+    "defaultPresent" : false,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_TARGET_JAVA_VERSION",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "unknown",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_TARGET_PID",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "1",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_TARGET_RUNTIME",
+    "component" : "sidecar",
+    "type" : "string",
+    "defaultValue" : "java",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_ACTOR",
+    "component" : "smoke",
+    "type" : "string",
+    "defaultValue" : "system",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_API",
+    "component" : "smoke",
+    "type" : "string",
+    "defaultValue" : "http://127.0.0.1:18280/api/v1",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_TOKEN",
+    "component" : "smoke",
+    "type" : "string",
+    "defaultValue" : "<redacted>",
+    "sensitive" : true,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_PLATFORM_API_URL",
+    "component" : "web",
+    "type" : "string",
+    "defaultValue" : "http://127.0.0.1:18280",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_WEB_DEMO_MODE",
+    "component" : "web",
+    "type" : "boolean",
+    "defaultValue" : "false",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_WEB_ENVIRONMENT",
+    "component" : "web",
+    "type" : "string",
+    "defaultValue" : "local",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_WEB_PUBLIC_BASE_URL",
+    "component" : "web",
+    "type" : "string",
+    "defaultValue" : "http://127.0.0.1:18380",
+    "sensitive" : false,
+    "defaultPresent" : true,
+    "deprecated" : false,
+    "replacement" : ""
+  }, {
+    "key" : "KAIRO_WEB_SESSION_KEY",
+    "component" : "web",
+    "type" : "string",
+    "defaultValue" : "<redacted>",
+    "sensitive" : true,
+    "defaultPresent" : false,
+    "deprecated" : false,
+    "replacement" : ""
+  } ]
+}

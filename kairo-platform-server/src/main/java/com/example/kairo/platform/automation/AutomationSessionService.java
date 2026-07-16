@@ -579,8 +579,11 @@ public final class AutomationSessionService {
             return com.example.kairo.api.error.ApiError.of(pe.code(), pe.getMessage(),
                     pe.category(), pe.retryable());
         }
+        // V1.7 M0: resolve INTERNAL_ERROR from the authoritative catalog (validates the code).
+        com.example.kairo.api.error.KairoErrorCatalog.Entry internal =
+                com.example.kairo.api.error.KairoErrorCatalog.require("INTERNAL_ERROR");
         return com.example.kairo.api.error.ApiError.of("INTERNAL_ERROR", ex.getMessage(),
-                com.example.kairo.api.error.ErrorCategory.INTERNAL, false);
+                internal.category(), internal.retryable());
     }
 
     private static AutomationSession toSession(Map<String, Object> row) {

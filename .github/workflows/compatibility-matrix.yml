@@ -16,9 +16,9 @@ name: compatibility-matrix
 
 on:
   push:
-    branches: [main, V1.5, "V1.x"]
+    branches: [main, V1.5, V1.6, V1.7, "V1.x"]
   pull_request:
-    branches: [main, V1.5]
+    branches: [main, V1.5, V1.6, V1.7]
   schedule:
     # Nightly full matrix at 03:17 UTC (off the :00 mark).
     - cron: "17 3 * * *"
@@ -29,7 +29,11 @@ jobs:
     name: Fast (JDK 21)
     runs-on: ubuntu-latest
     steps:
+      # M0 migration/provenance gates verify every historical V1.X source commit. A shallow
+      # checkout would make the test non-reproducible even though the committed fixtures exist.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:

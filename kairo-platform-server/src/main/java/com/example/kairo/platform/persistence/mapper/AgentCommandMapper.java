@@ -119,6 +119,9 @@ public interface AgentCommandMapper {
 
     int countAgent(@Param("id") String id);
 
+    /** The advertised capability JSON array for an agent (V1.7 M0 dispatch gate). */
+    String findAgentCapabilities(@Param("agentId") String agentId);
+
     Map<String, Object> commandById(@Param("id") String id);
 
     Map<String, Object> commandByIdempotencyKey(@Param("idempotencyKey") String idempotencyKey);

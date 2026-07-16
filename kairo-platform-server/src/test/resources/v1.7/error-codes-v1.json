@@ -1,0 +1,398 @@
+{
+  "codes" : [ {
+    "code" : "AGENT_COMMAND_STATE_CONFLICT",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "AGENT_NOT_REGISTERED",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "AMBIGUOUS_TARGET",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "ATTACH_EXECUTOR_REQUIRED",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "ATTACH_TARGET_REQUIRED",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "AUTOMATION_SESSION_LIMIT_EXCEEDED",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "AUTOMATION_SESSION_TERMINAL",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "BUSINESS_ID_SEQUENCE_FAILED",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "BYTECODE_DIAGNOSTIC_TIMEOUT",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "BYTECODE_RESULT_MISSING",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "BYTECODE_TOO_LARGE",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "CALL_SITE_SCAN_FAILED",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "CALL_SITE_SCAN_TIMEOUT",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "CANNOT_DELETE_SUPER_ADMIN",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "CANNOT_RENEW_SELF_TOKEN",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "CAPABILITY_NOT_SUPPORTED",
+    "category" : "CAPABILITY",
+    "httpStatus" : 409,
+    "retryable" : false
+  }, {
+    "code" : "CLIENT_DELIVERY_ID_DISABLED",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "CLIENT_RULE_ID_DISABLED",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "FENCING_SEQUENCE_FAILED",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "FENCING_TOKEN_INVALID",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "FIELD_REQUIRED",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "FORBIDDEN",
+    "category" : "AUTHORIZATION",
+    "httpStatus" : 403,
+    "retryable" : false
+  }, {
+    "code" : "IDEMPOTENCY_KEY_CONFLICT",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : false
+  }, {
+    "code" : "IDEMPOTENCY_KEY_IN_PROGRESS",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "INSTANCE_NICKNAME_CONFLICT",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "INTERNAL_ERROR",
+    "category" : "INTERNAL",
+    "httpStatus" : 500,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_COMMAND_STATUS",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_ENVIRONMENT",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_ENVIRONMENT_TYPE",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_FIELD",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_MAX_HITS",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_PHASE",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_RESOURCE_TYPE",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_REVISION",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_ROLLOUT_RESOURCE",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_ROLLOUT_VERSION",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_RULE_STATUS",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_SUBJECT_TYPE",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_TOKEN_EXPIRES_AT",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_TOKEN_MAX_SESSIONS",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_TOKEN_SCOPE",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_TOKEN_TTL",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "INVALID_TTL",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "LIST_LOADERS_FAILED",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "LIST_LOADERS_TIMEOUT",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "MISSING_FIELD",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "NO_ACTIVE_ROLLOUT_AGENT",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "OPERATION_PLAN_INVALID_TRANSITION",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "OPERATION_PLAN_NOT_UNLOADABLE",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "REDIS_FENCING_FAILED",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "REDIS_SEQUENCE_FAILED",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "REDIS_UNAVAILABLE",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "RESOURCE_NOT_FOUND",
+    "category" : "NOT_FOUND",
+    "httpStatus" : 404,
+    "retryable" : false
+  }, {
+    "code" : "RESOURCE_VERSION_CONFLICT",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "ROUTE_NOT_FOUND",
+    "category" : "NOT_FOUND",
+    "httpStatus" : 404,
+    "retryable" : false
+  }, {
+    "code" : "RULE_AGGREGATE_LIFECYCLE_DISABLED",
+    "category" : "VALIDATION",
+    "httpStatus" : 405,
+    "retryable" : false
+  }, {
+    "code" : "RULE_DISABLED",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "RULE_MANUAL_DELETE_DISABLED",
+    "category" : "VALIDATION",
+    "httpStatus" : 405,
+    "retryable" : false
+  }, {
+    "code" : "RULE_TARGET_CLASS_MISSING",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "RULE_TARGET_NOT_FOUND",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "RULE_VERSION_DELETE_ALL",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "RULE_VERSION_MANUAL_DELETE_DISABLED",
+    "category" : "VALIDATION",
+    "httpStatus" : 405,
+    "retryable" : false
+  }, {
+    "code" : "SCRIPT_COMMAND_DISPATCH_FAILED",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "SCRIPT_SESSION_EXISTS",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "SCRIPT_SESSION_INVALID_TRANSITION",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "SCRIPT_SESSION_TARGET_BUSY",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "TARGET_DRIFTED",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "TARGET_NOT_FOUND",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "TARGET_REJECTED",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  }, {
+    "code" : "TARGET_RESOLUTION_FAILED",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "TARGET_RESOLUTION_TIMEOUT",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "TARGET_RESOLUTION_UNAVAILABLE",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "TARGET_RESOLUTION_UNEXPECTED",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "TOKEN_MAX_SESSIONS_INVALID",
+    "category" : "AUTHENTICATION",
+    "httpStatus" : 401,
+    "retryable" : false
+  }, {
+    "code" : "TOKEN_SCOPE_DENIED",
+    "category" : "AUTHORIZATION",
+    "httpStatus" : 403,
+    "retryable" : false
+  }, {
+    "code" : "TOKEN_SCOPE_INVALID",
+    "category" : "AUTHENTICATION",
+    "httpStatus" : 401,
+    "retryable" : false
+  }, {
+    "code" : "UNAUTHORIZED",
+    "category" : "AUTHENTICATION",
+    "httpStatus" : 401,
+    "retryable" : false
+  }, {
+    "code" : "USERNAME_CONFLICT",
+    "category" : "CONFLICT",
+    "httpStatus" : 409,
+    "retryable" : true
+  }, {
+    "code" : "VALIDATION_FAILED",
+    "category" : "VALIDATION",
+    "httpStatus" : 400,
+    "retryable" : false
+  } ]
+}

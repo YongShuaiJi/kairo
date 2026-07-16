@@ -1,0 +1,39 @@
+{
+  "milestones": [
+    {
+      "release": "V1.0.1",
+      "sourceCommit": "305a95bedd4afbf696d479a547e483d511263e4f",
+      "maxMigration": 34
+    },
+    {
+      "release": "V1.1",
+      "sourceCommit": "dbb035bf6b6db91132c28a425394add57f02ea41",
+      "maxMigration": 35
+    },
+    {
+      "release": "V1.2",
+      "sourceCommit": "fd9b4e9e7321634cbfdbb8191664711a3c8812c3",
+      "maxMigration": 36
+    },
+    {
+      "release": "V1.3",
+      "sourceCommit": "000aeb60732e649757e87d77c4c82fd34fb40d66",
+      "maxMigration": 37
+    },
+    {
+      "release": "V1.4",
+      "sourceCommit": "a6ac9d4688f8f070a4e59e22f390dd49c121285c",
+      "maxMigration": 38
+    },
+    {
+      "release": "V1.5",
+      "sourceCommit": "ce47fcd919bce74c154e24d53840693a2a5b3b0e",
+      "maxMigration": 39
+    },
+    {
+      "release": "V1.6.0",
+      "sourceCommit": "113823b41981a2d8fb5473a772ae2d2938d9582e",
+      "maxMigration": 41
+    }
+  ]
+}

@@ -1,0 +1,249 @@
+{
+  "migrations" : [ {
+    "file" : "V10__unique_topology_names.sql",
+    "version" : "10",
+    "sha256" : "7ed94710a1011c9db99d514afd453fc947b0775b5bed7aec9e4a4acb967c6156",
+    "flywayChecksum" : 1953757420,
+    "lines" : 5
+  }, {
+    "file" : "V11__track_rollback_commands.sql",
+    "version" : "11",
+    "sha256" : "706283f2cadbeda2d4dd3aff556923a721b1b9b43b594c7ef9254932d2468c02",
+    "flywayChecksum" : -2102550811,
+    "lines" : 5
+  }, {
+    "file" : "V12__simplify_rollout_and_replay_objects.sql",
+    "version" : "12",
+    "sha256" : "8ec48bb67b1254ba265b3d0a9ef0c2619fb9bacf541d2e1faf15517873d44e6c",
+    "flywayChecksum" : -1561306059,
+    "lines" : 45
+  }, {
+    "file" : "V13__remove_rule_hit_and_ttl_governance.sql",
+    "version" : "13",
+    "sha256" : "079102567b526d411b96d3184f42851780094f90c4c84a5ac15c2a02488739a2",
+    "flywayChecksum" : 1251363392,
+    "lines" : 4
+  }, {
+    "file" : "V14__instance_nickname.sql",
+    "version" : "14",
+    "sha256" : "613f7c61b1b9725de1422314e357c2f7d34282e84b7761e155aef16751f746e5",
+    "flywayChecksum" : 934324775,
+    "lines" : 26
+  }, {
+    "file" : "V15__attach_executor_targets.sql",
+    "version" : "15",
+    "sha256" : "3cf237e5efe86a3c7daedbfb8be7bb615698c0a18a2156e541904b61b4552b51",
+    "flywayChecksum" : -1580007817,
+    "lines" : 38
+  }, {
+    "file" : "V16__attach_executor_commands.sql",
+    "version" : "16",
+    "sha256" : "cb7eee99c7c0a2561f90ebce27ac48ef2f7b3cafa7e3d21e0df847e7663c5e0e",
+    "flywayChecksum" : -1631175612,
+    "lines" : 29
+  }, {
+    "file" : "V17__rollout_instance_snapshots.sql",
+    "version" : "17",
+    "sha256" : "94cde703bec13d9469461c40de49c732428bf0fd2e48813152e76babed1de84e",
+    "flywayChecksum" : 1685653237,
+    "lines" : 167
+  }, {
+    "file" : "V18__detach_runtime_instance_foreign_keys.sql",
+    "version" : "18",
+    "sha256" : "bb80ecc9351e021b365d10b9d16782ada98dde99b55dd84a84064847fae52db1",
+    "flywayChecksum" : 886033263,
+    "lines" : 23
+  }, {
+    "file" : "V19__drop_all_foreign_key_constraints.sql",
+    "version" : "19",
+    "sha256" : "34aa252196eb33bacc960eb7b60fa28c941cfcd15eced529908d4ff874d2385f",
+    "flywayChecksum" : -110425431,
+    "lines" : 56
+  }, {
+    "file" : "V1__platform_core.sql",
+    "version" : "1",
+    "sha256" : "262e6528be28ce380beebff5c9ec7e0e3ab064ac0adc18b7ac3986fb13bccde6",
+    "flywayChecksum" : -1485414224,
+    "lines" : 267
+  }, {
+    "file" : "V20__rule_disable_retention.sql",
+    "version" : "20",
+    "sha256" : "42de9927b5b011ff4448846735677964f29d202c01da792137e5f39d66eaa4d5",
+    "flywayChecksum" : -1228105055,
+    "lines" : 8
+  }, {
+    "file" : "V21__rule_version_disable_retention.sql",
+    "version" : "21",
+    "sha256" : "2faee1d64f8e6f9eea4b5f241028dcdfae66d8c7d2c66d814000e1c821407e1a",
+    "flywayChecksum" : 1199758826,
+    "lines" : 39
+  }, {
+    "file" : "V22__lowercase_environment_codes.sql",
+    "version" : "22",
+    "sha256" : "a4559d7d38ca0ef46ceb78645b87848ca00a490d1e733867fcd0e064d411f283",
+    "flywayChecksum" : -1114625033,
+    "lines" : 13
+  }, {
+    "file" : "V23__lowercase_environment_prefixes_in_rule_names.sql",
+    "version" : "23",
+    "sha256" : "a310914bfac3b1314619c1c465d96eb733c9af4a358ef4b2e359376e5ffdfe4f",
+    "flywayChecksum" : 1567570587,
+    "lines" : 15
+  }, {
+    "file" : "V24__simplify_operation_plan_statuses.sql",
+    "version" : "24",
+    "sha256" : "83b19d2e596584e6192c0eb8ee8e832299329298c09d43b9578af54e2b5732d0",
+    "flywayChecksum" : 1225198419,
+    "lines" : 17
+  }, {
+    "file" : "V25__rename_operation_unload_statuses.sql",
+    "version" : "25",
+    "sha256" : "8978bbe8bf37cb0ddfb777c8f4e8a75e807becee4d96a41d4e510286746cb015",
+    "flywayChecksum" : 919501332,
+    "lines" : 17
+  }, {
+    "file" : "V26__drop_unused_record_replay_outbox_tables.sql",
+    "version" : "26",
+    "sha256" : "ad89e26e61a2f90c866be0f63de5defa4d9f30daa81a9fed6cfdfa2d63c1ff81",
+    "flywayChecksum" : -451167314,
+    "lines" : 83
+  }, {
+    "file" : "V27__operation_plan_terminal_source.sql",
+    "version" : "27",
+    "sha256" : "7777a83b0d9398f634dfcf9a9ae9f8c6c34df8b000f992f3af5d0e4b7cb9ed67",
+    "flywayChecksum" : 515346205,
+    "lines" : 8
+  }, {
+    "file" : "V28__remove_default_topology_seed.sql",
+    "version" : "28",
+    "sha256" : "370ca82eb0d10070e561e0058bb3035aba5e0414198a7bc785e6ee09f1d02890",
+    "flywayChecksum" : -630678760,
+    "lines" : 16
+  }, {
+    "file" : "V29__simplify_rule_lifecycle_statuses.sql",
+    "version" : "29",
+    "sha256" : "26451e14daec5ed1c49c57931e053c019b3c7e54f6553f6f53f5226390f01fa9",
+    "flywayChecksum" : 1219959583,
+    "lines" : 64
+  }, {
+    "file" : "V2__control_plane_assets_rules_rollout.sql",
+    "version" : "2",
+    "sha256" : "14bee34d3d7d28dc96e7cf9344e8aaac198ec0e773b4c2e7d2acd2cc96907730",
+    "flywayChecksum" : 1765074671,
+    "lines" : 318
+  }, {
+    "file" : "V30__allow_permanent_access_tokens.sql",
+    "version" : "30",
+    "sha256" : "b6ae293a86e0cff568b32d851686394c1df91f873f80e41f1af4d2ae038db8f2",
+    "flywayChecksum" : -122583255,
+    "lines" : 1
+  }, {
+    "file" : "V31__deduplicate_user_access_tokens.sql",
+    "version" : "31",
+    "sha256" : "34902a5b5be5b3bd9d61703195d6e773eb078c1557e7e45a018a0764f24f62a4",
+    "flywayChecksum" : -1030533262,
+    "lines" : 14
+  }, {
+    "file" : "V32__repair_bootstrap_user_tokens.sql",
+    "version" : "32",
+    "sha256" : "e8f656ded2bfe161b8bc2a47cb419ade063e962ae09ccba22285120850b6f6fe",
+    "flywayChecksum" : -1462391771,
+    "lines" : 32
+  }, {
+    "file" : "V33__store_user_token_subject_as_user_id.sql",
+    "version" : "33",
+    "sha256" : "cdcf40ebc29d83e57630c43cafa4caa8636f3c48a2249665522d9be9956c5cb7",
+    "flywayChecksum" : 182320870,
+    "lines" : 32
+  }, {
+    "file" : "V34__rename_internal_user_roles.sql",
+    "version" : "34",
+    "sha256" : "ee2e1034655470e67bd84f3bb0efb2d998f27ec6995f43ffe2e66df765caad28",
+    "flywayChecksum" : 610599768,
+    "lines" : 15
+  }, {
+    "file" : "V35__bytecode_transformation_metadata.sql",
+    "version" : "35",
+    "sha256" : "223d51e4989ba79185ce71fa1c9189a254dbd71af7e8de10e9d383ba9e21415a",
+    "flywayChecksum" : -893778475,
+    "lines" : 27
+  }, {
+    "file" : "V36__script_capabilities.sql",
+    "version" : "36",
+    "sha256" : "266c38781cacd5d0ba538db607acf8d9b5718ee6b0ed2ee79107913fd356d826",
+    "flywayChecksum" : -56247509,
+    "lines" : 108
+  }, {
+    "file" : "V37__enhancement_location_targets.sql",
+    "version" : "37",
+    "sha256" : "93b51e00a794d828e2a105cc8ad2d14f3bd1633dd07152e7200839f967d19b9a",
+    "flywayChecksum" : -554259780,
+    "lines" : 31
+  }, {
+    "file" : "V38__rule_chain_state_and_operations.sql",
+    "version" : "38",
+    "sha256" : "0922f34b370623f7699db5256c62fde8dc200b89a827475d0573596e3ce8da2f",
+    "flywayChecksum" : 1932996693,
+    "lines" : 95
+  }, {
+    "file" : "V39__v15_target_loader_metadata.sql",
+    "version" : "39",
+    "sha256" : "dea8bc888f996059b5fb9e46ae9656d042770cff896275f1fd2dd3a3743cf58a",
+    "flywayChecksum" : -1293551938,
+    "lines" : 41
+  }, {
+    "file" : "V3__record_extract_replay_metadata.sql",
+    "version" : "3",
+    "sha256" : "0e8a51c3fbc317cdc1f15590484cb321a02dafdbb3f9cd41934c4e4588f32d91",
+    "flywayChecksum" : 437043862,
+    "lines" : 404
+  }, {
+    "file" : "V40__api_ai_first_operations_automation.sql",
+    "version" : "40",
+    "sha256" : "46948e3d72538cc9b881c20ee9de1bf9707649ef522a5ad3a412a3176b33b4ee",
+    "flywayChecksum" : 736201707,
+    "lines" : 99
+  }, {
+    "file" : "V41__idempotency_reservation_protocol.sql",
+    "version" : "41",
+    "sha256" : "637d6797bd63647e9b17f2bd321280311b666ceef027360c2cbb3fee4b3514d7",
+    "flywayChecksum" : -721570405,
+    "lines" : 18
+  }, {
+    "file" : "V4__fencing_tokens.sql",
+    "version" : "4",
+    "sha256" : "200ec3d381043d376b3d8c02b710a5a9797b33a57a98a523a124a0dfc9dc7a47",
+    "flywayChecksum" : 803095663,
+    "lines" : 22
+  }, {
+    "file" : "V5__agent_commands_and_worker_artifacts.sql",
+    "version" : "5",
+    "sha256" : "41f48160c4650ec74eb8f3e79173e49938a087d0205afafa8c841223ae3b564a",
+    "flywayChecksum" : 124108371,
+    "lines" : 39
+  }, {
+    "file" : "V6__audit_device_and_rollout_versions.sql",
+    "version" : "6",
+    "sha256" : "5182bdefb14a8fac1bd202743d75a2e05f29192887f98c3f6952a1f5aef4dd51",
+    "flywayChecksum" : 166664701,
+    "lines" : 25
+  }, {
+    "file" : "V7__local_auth_tokens.sql",
+    "version" : "7",
+    "sha256" : "6ee7ce06bb4dc64f25b725d996dfbe6abba2349964c51a232613f2172f8d627e",
+    "flywayChecksum" : -1032259993,
+    "lines" : 18
+  }, {
+    "file" : "V8__extraction_dataset_lineage.sql",
+    "version" : "8",
+    "sha256" : "39d67013633a585b7b0eca2b9fa7310925f49fa62d3ca38245b11509baee13ef",
+    "flywayChecksum" : -791735287,
+    "lines" : 15
+  }, {
+    "file" : "V9__runtime_registration_and_environments.sql",
+    "version" : "9",
+    "sha256" : "8a19c04769c2533e7043367ab3d738cdb740c9748a52f9c96bd07c0693c6159d",
+    "flywayChecksum" : -1933938146,
+    "lines" : 44
+  } ]
+}

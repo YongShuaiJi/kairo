@@ -246,6 +246,12 @@
          where id = #{id}
     </select>
 
+    <select id="findAgentCapabilities" resultType="string">
+        select capabilities_json
+          from agent_instance
+         where id = #{agentId}
+    </select>
+
     <select id="commandById" resultType="map">
         select *
           from agent_command
