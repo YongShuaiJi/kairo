@@ -42,7 +42,10 @@
                lease_expires_at = #{leaseExpiresAt},
                updated_at = #{updatedAt}
          where id = #{id}
-           and status in ('PENDING', 'DISPATCHED')
+           and (
+                status = 'PENDING'
+             or (status = 'DISPATCHED' and lease_expires_at &lt;= #{dispatchedAt})
+           )
     </update>
 
     <update id="ackCommand">
@@ -54,6 +57,32 @@
                updated_at = #{updatedAt}
          where id = #{id}
            and status = 'DISPATCHED'
+        <choose>
+            <when test="expectedAttempts != null">
+                and attempts = #{expectedAttempts}
+            </when>
+            <otherwise>
+                and attempts = 1
+            </otherwise>
+        </choose>
+    </update>
+
+    <!--
+      V1.7 M1-A sect 8.1: terminate a dispatched command whose lease expired and that exhausted
+      max_attempts, so it can never linger invisibly in DISPATCHED. The fixed error code is
+      stored in error_message (no dedicated error_code column exists; migrations are frozen).
+      Agent-scoped to the polling agent: the M1-A trigger (restart recovery is M1-B).
+    -->
+    <update id="expireExhaustedCommands">
+        update agent_command
+           set status = 'FAILED',
+               error_message = 'AGENT_COMMAND_MAX_ATTEMPTS_EXHAUSTED',
+               completed_at = #{now},
+               updated_at = #{now}
+         where agent_id = #{agentId}
+           and status = 'DISPATCHED'
+           and lease_expires_at &lt;= #{now}
+           and attempts &gt;= max_attempts
     </update>
 
     <update id="updateAgentStatus">

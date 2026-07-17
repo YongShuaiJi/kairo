@@ -28,17 +28,49 @@ public interface AgentCommandMapper {
 
     List<Map<String, Object>> pollCandidates(@Param("agentId") String agentId, @Param("now") Timestamp now);
 
+    /**
+     * V1.7 M1 / W1: atomically lease a pollable command. A {@code PENDING} command is always
+     * claimable; a {@code DISPATCHED} command is claimable only once its lease has expired
+     * ({@code lease_expires_at &lt;= dispatchedAt}), so a live lease can never be stolen and two
+     * workers racing on the same expired lease cannot both win (the first to update moves the
+     * lease into the future, the second matches zero rows). Bumps {@code attempts} so each
+     * successful lease is a distinct dispatch epoch used as the ack fencing token.
+     */
     int dispatchCommand(@Param("id") Object id,
                         @Param("dispatchedAt") Timestamp dispatchedAt,
                         @Param("leaseExpiresAt") Timestamp leaseExpiresAt,
                         @Param("updatedAt") Timestamp updatedAt);
 
+    /**
+     * V1.7 M1 / W1: record an agent ack only when the acker is the current lease owner. The
+     * agent echoes the {@code attempts} epoch it polled as {@code expectedAttempts}; a stale
+     * owner whose lease was reclaimed (a newer dispatch bumped {@code attempts}) matches zero
+     * rows, so it cannot overwrite the new owner's in-progress or terminal state. A null
+     * {@code expectedAttempts} (a V1.6 agent that does not echo the epoch) is accepted only on
+     * the <em>first dispatch</em> ({@code attempts = 1}): at epoch 1 there has been exactly one
+     * owner, so a late ack cannot belong to a different (stale) owner. After any redispatch
+     * ({@code attempts &gt;= 2}) a null epoch is ambiguous and is fenced out -- the command is
+     * retried again rather than risk a stale V1.6 owner overwriting the new owner's state. This
+     * preserves the V1.6 first-dispatch wire contract while closing the post-redispatch hole.
+     */
     int ackCommand(@Param("id") String id,
                    @Param("status") String status,
                    @Param("resultJson") String resultJson,
                    @Param("errorMessage") String errorMessage,
                    @Param("completedAt") Timestamp completedAt,
-                   @Param("updatedAt") Timestamp updatedAt);
+                   @Param("updatedAt") Timestamp updatedAt,
+                   @Param("expectedAttempts") Long expectedAttempts);
+
+    /**
+     * V1.7 M1-A &sect;8.1: atomically terminate a dispatched command whose lease has expired and
+     * that has exhausted {@code max_attempts}, so it can never linger invisibly in DISPATCHED.
+     * Sets the terminal {@code FAILED} state with the fixed error code
+     * {@code AGENT_COMMAND_MAX_ATTEMPTS_EXHAUSTED}. Scoped to one agent's poll (the M1-A trigger
+     * for this state-machine transition); cross-restart reconciliation belongs to M1-B. A command
+     * still under its live lease, or one that may still be re-dispatched ({@code attempts <
+     * max_attempts}), is left untouched.
+     */
+    int expireExhaustedCommands(@Param("agentId") String agentId, @Param("now") Timestamp now);
 
     int updateAgentStatus(@Param("id") Object id,
                           @Param("status") String status,

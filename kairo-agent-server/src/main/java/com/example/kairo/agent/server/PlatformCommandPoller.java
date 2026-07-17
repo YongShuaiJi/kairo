@@ -76,27 +76,62 @@ final class PlatformCommandPoller implements AutoCloseable {
             return;
         }
         String commandId = command.path("id").asText();
+        // V1.7 M1-A §8.1: the dispatch epoch (attempts) the agent polled is the ack fencing token.
+        // Every ack path -- success, capability failure and exception failure -- echoes it so the
+        // platform can reject a stale owner whose lease was reclaimed by a re-dispatch.
+        long epoch = expectedAttempts(command);
         try {
             Map<String, Object> result = execute(command);
             post("/api/v1/agent-commands/" + commandId + "/ack",
-                    Map.of("status", "ACKED", "result", result, "reason", "agent command applied"));
+                    ackBody(epoch, "ACKED", "agent command applied", result, null));
         } catch (com.example.kairo.agent.server.protocol.CapabilityNotSupportedException ce) {
             // V1.6 §5.2: structured CAPABILITY_NOT_SUPPORTED ack so the platform can degrade.
             post("/api/v1/agent-commands/" + commandId + "/ack",
-                    Map.of("status", "FAILED",
-                            "errorMessage", ce.getMessage(),
-                            "reason", "capability not supported",
-                            "result", Map.of(
+                    ackBody(epoch, "FAILED", "capability not supported",
+                            Map.of(
                                     "code", "CAPABILITY_NOT_SUPPORTED",
                                     "category", "CAPABILITY",
                                     "commandType", ce.commandType(),
-                                    "retryable", false)));
+                                    "retryable", false),
+                            ce.getMessage()));
         } catch (Exception e) {
             post("/api/v1/agent-commands/" + commandId + "/ack",
-                    Map.of("status", "FAILED",
-                            "errorMessage", e.getClass().getName() + ": " + e.getMessage(),
-                            "reason", "agent command failed"));
+                    ackBody(epoch, "FAILED", "agent command failed", null,
+                            e.getClass().getName() + ": " + e.getMessage()));
         }
+    }
+
+    /**
+     * V1.7 M1-A &sect;8.1: the dispatch epoch the agent polled (the {@code attempts} value the
+     * platform returned on dispatch), echoed on every ack as the fencing token so the platform can
+     * reject a stale owner whose lease was reclaimed. A V1.7 platform always returns {@code
+     * attempts}; a command missing it (malformed/legacy) resolves to {@code 0}, which the platform
+     * fences out rather than silently accepting as a stale owner.
+     */
+    static long expectedAttempts(JsonNode command) {
+        return command.path("attempts").asLong();
+    }
+
+    /**
+     * V1.7 M1-A &sect;8.1: build the ack body. Every ack path echoes {@code expectedAttempts} so
+     * the platform's ack fencing can reject a stale owner. A {@code null} {@code result} or
+     * {@code errorMessage} is omitted to preserve each path's wire shape (success carries a result,
+     * capability failure carries both a structured result and an error message, exception failure
+     * carries only an error message).
+     */
+    static Map<String, Object> ackBody(long expectedAttempts, String status, String reason,
+                                       Map<String, Object> result, String errorMessage) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", status);
+        body.put("reason", reason);
+        body.put("expectedAttempts", expectedAttempts);
+        if (result != null) {
+            body.put("result", result);
+        }
+        if (errorMessage != null) {
+            body.put("errorMessage", errorMessage);
+        }
+        return body;
     }
 
     Map<String, Object> execute(JsonNode command) {

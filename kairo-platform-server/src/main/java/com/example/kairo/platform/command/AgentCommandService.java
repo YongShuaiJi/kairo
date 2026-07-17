@@ -194,6 +194,11 @@ public class AgentCommandService {
         requireAgentProtocolOrManager(agentId, context);
         requireExistingAgent(agentId);
         Instant now = clock.instant();
+        // V1.7 M1-A §8.1: terminate DISPATCHED commands whose lease expired and that exhausted
+        // max_attempts, so they never linger invisibly in DISPATCHED. Triggered on each poll
+        // (no background sweeper in M1-A; restart reconciliation is M1-B). Agent-scoped: only
+        // the polling agent's commands are touched, never another agent's in-flight lease.
+        commandMapper.expireExhaustedCommands(agentId, timestamp(now));
         Instant leaseExpiresAt = now.plusSeconds(optionalLong(request, "leaseSeconds", 60));
         List<Map<String, Object>> candidates = commandMapper.pollCandidates(agentId, timestamp(now));
         if (candidates.isEmpty()) {
@@ -243,12 +248,31 @@ public class AgentCommandService {
         Map<String, Object> persistedResult = bytecodeDiagnostic && bytecodeExchange != null
                 ? bytecodeExchange.sanitizeForPersistence(result) : result;
         String errorMessage = optionalString(request, "errorMessage", null);
+        // V1.7 M1 / W1: the agent echoes the dispatch epoch (attempts) it polled as the fencing
+        // token. A stale owner whose lease was reclaimed sees a newer attempts and matches zero
+        // rows; null preserves the V1.6 wire contract for agents that do not echo the epoch.
+        Long expectedAttempts = expectedAttempts(request);
         int updatedCount = commandMapper.ackCommand(commandId, resultStatus,
-                PlatformJson.write(persistedResult), errorMessage, timestamp(now), timestamp(now));
+                PlatformJson.write(persistedResult), errorMessage, timestamp(now), timestamp(now),
+                expectedAttempts);
         if (updatedCount == 0) {
+            // V1.7 M1-A §8.1: zero rows means the acker is not the current lease owner -- a stale
+            // epoch (re-dispatch bumped attempts), a missing epoch on a re-dispatched command, an
+            // already-terminal command, or a command that was never dispatched. Terminal state is
+            // immutable and a duplicate/delayed ack never re-advances rollout/unload/audit, so we
+            // fail closed with the fencing conflict rather than silently replaying the side effects.
+            // Reload after the conditional UPDATE. The command may have been re-dispatched between
+            // the initial read and the ACK, so the pre-update snapshot can report a stale epoch.
+            Map<String, Object> latest = getById(commandId);
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("commandId", commandId);
+            details.put("status", latest.get("status"));
+            details.put("expectedAttempts", expectedAttempts);
+            details.put("currentAttempts", latest.get("attempts"));
             throw PlatformException.conflict("AGENT_COMMAND_STATE_CONFLICT",
-                    "Agent command is not currently dispatched",
-                    Map.of("commandId", commandId, "status", current.get("status")));
+                    "Agent command ack fenced out: stale/missing dispatch epoch, terminal state, "
+                            + "or not currently dispatched",
+                    details);
         }
         Map<String, Object> updated = getById(commandId);
         if (bytecodeDiagnostic && bytecodeExchange != null) {
@@ -600,6 +624,27 @@ public class AgentCommandService {
             return number.longValue();
         }
         return Long.parseLong(String.valueOf(value));
+    }
+
+    /**
+     * V1.7 M1 / W1: the agent's echoed dispatch epoch ({@code attempts}) used as the ack fencing
+     * token, or {@code null} when the agent did not send one (V1.6 wire contract fallback).
+     */
+    private Long expectedAttempts(Map<String, Object> request) {
+        Object value = request.get("expectedAttempts");
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number || value instanceof String) {
+            try {
+                return new java.math.BigDecimal(String.valueOf(value)).longValueExact();
+            } catch (ArithmeticException | NumberFormatException ignored) {
+                // Converted below into the stable public validation error rather than a 500 or a
+                // truncated fractional epoch that could accidentally authorize the wrong owner.
+            }
+        }
+        throw PlatformException.badRequest("INVALID_FIELD",
+                "expectedAttempts must be an integer dispatch epoch");
     }
 
     private Timestamp timestamp(Instant instant) {
