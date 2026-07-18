@@ -85,6 +85,41 @@
            and attempts &gt;= max_attempts
     </update>
 
+    <!--
+      V1.7 M1-B sect 8.2: restart recovery input. Non-terminal commands (PENDING or
+      DISPATCHED) created before this process's startup boundary, projected to only the
+      columns the recovery needs. payload_json and result_json are intentionally excluded
+      so the recovery never loads sensitive
+      transient material (script source, class bytes, tokens). The DURABLE/TRANSIENT split
+      is applied in Java (AgentCommandClassification); DURABLE rows returned here are
+      left untouched so they stay claimable/redispatchable under M1-A.
+    -->
+    <select id="findPendingOrDispatchedCommands" resultType="map">
+        select id, command_type, status, attempts
+          from agent_command
+         where status in ('PENDING', 'DISPATCHED')
+           and created_at &lt; #{createdBefore}
+    </select>
+
+    <!--
+      V1.7 M1-B sect 8.2: atomically fail one orphan TRANSIENT command with the fixed
+      TRANSIENT_COMMAND_CONTEXT_LOST code (passed in so the constant is owned by
+      AgentCommandClassification). Guarded on status IN (PENDING, DISPATCHED) so the
+      recovery is idempotent per row: a second startup matches zero rows for an
+      already-terminal command and records no duplicate audit. No dedicated error_code
+      column exists (migrations are frozen), so the code is stored in error_message,
+      mirroring M1-A's AGENT_COMMAND_MAX_ATTEMPTS_EXHAUSTED convention.
+    -->
+    <update id="failTransientCommand">
+        update agent_command
+           set status = 'FAILED',
+               error_message = #{errorCode},
+               completed_at = #{now},
+               updated_at = #{now}
+         where id = #{id}
+           and status in ('PENDING', 'DISPATCHED')
+    </update>
+
     <update id="updateAgentStatus">
         update agent_instance
            set status = #{status},

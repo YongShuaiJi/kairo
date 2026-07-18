@@ -34,6 +34,23 @@
         )
     </insert>
 
+    <!--
+      V1.7 M1-B sect 8.2 (CompletedCommandNoReplayIntegrationTest): a WAITING_AGENT execution
+      linked to an agent command. An ACK completes it to SUCCEEDED (version 1 -> 2); after a
+      restart the no-replay test asserts the version does not advance again.
+    -->
+    <insert id="insertWaitingRolloutExecution">
+        insert into rollout_instance_execution(
+            id, rollout_batch_id, operation_plan_id, instance_id, status,
+            expected_agent_version, expected_rule_version, command_id, error_message,
+            started_at, finished_at, version, updated_by, updated_at
+        ) values (
+            #{id}, null, #{operationId}, #{instanceId}, 'WAITING_AGENT',
+            '0.1.0', 1, #{commandId}, null,
+            current_timestamp, null, 1, 'system', current_timestamp
+        )
+    </insert>
+
     <update id="markOperationSucceeded">
         update operation_plan
            set status = 'SUCCEEDED',

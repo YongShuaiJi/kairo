@@ -14,6 +14,18 @@ public interface TestPlatformMapper {
                                          @Param("operationId") String operationId,
                                          @Param("instanceId") String instanceId);
 
+    /**
+     * V1.7 M1-B &sect;8.2 (CompletedCommandNoReplayIntegrationTest): insert a
+     * {@code WAITING_AGENT} rollout_instance_execution linked to an agent command so an ACK
+     * advances it to {@code SUCCEEDED} and the owning operation to a terminal state. The
+     * restart no-replay test asserts the execution/operation versions do not advance again
+     * after a Platform restart (a terminal command is never returned to the Agent).
+     */
+    void insertWaitingRolloutExecution(@Param("id") String id,
+                                       @Param("operationId") String operationId,
+                                       @Param("instanceId") String instanceId,
+                                       @Param("commandId") String commandId);
+
     void markOperationSucceeded(@Param("operationId") String operationId);
 
     void enableRuleVersion(@Param("ruleId") String ruleId);

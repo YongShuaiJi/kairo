@@ -72,6 +72,33 @@ public interface AgentCommandMapper {
      */
     int expireExhaustedCommands(@Param("agentId") String agentId, @Param("now") Timestamp now);
 
+    /**
+     * V1.7 M1-B &sect;8.2: the orphan TRANSIENT command recovery input. Returns commands
+     * created before this process's startup boundary that remain non-terminal (PENDING or
+     * DISPATCHED), with only the columns the recovery needs - deliberately NOT
+     * {@code payload_json} or {@code result_json}, so
+     * the restart recovery never loads sensitive transient material (script source, class
+     * bytes, tokens) even if a caller stored some. The DURABLE/TRANSIENT split is applied
+     * in Java ({@code AgentCommandClassification}) so the fixed classification lives in one
+     * reviewable place; DURABLE rows returned here are left untouched so a PENDING DURABLE
+     * command stays claimable and an expired DISPATCHED DURABLE command stays
+     * redispatchable under M1-A.
+     */
+    List<Map<String, Object>> findPendingOrDispatchedCommands(
+            @Param("createdBefore") Timestamp createdBefore);
+
+    /**
+     * V1.7 M1-B &sect;8.2: atomically fail one orphan TRANSIENT command with the fixed code
+     * passed in {@code errorCode} (the {@code TRANSIENT_COMMAND_CONTEXT_LOST} constant).
+     * Guarded on {@code status IN (PENDING, DISPATCHED)} so the recovery is idempotent per
+     * row: a second startup (or a direct re-run) matches zero rows for an already-terminal
+     * command and records no duplicate audit. Returns {@code 1} when the row was recovered,
+     * {@code 0} otherwise.
+     */
+    int failTransientCommand(@Param("id") String id,
+                             @Param("errorCode") String errorCode,
+                             @Param("now") Timestamp now);
+
     int updateAgentStatus(@Param("id") Object id,
                           @Param("status") String status,
                           @Param("updatedAt") Timestamp updatedAt);
