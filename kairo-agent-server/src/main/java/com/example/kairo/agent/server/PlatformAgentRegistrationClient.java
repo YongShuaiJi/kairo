@@ -1,6 +1,7 @@
 package com.example.kairo.agent.server;
 
 import com.example.kairo.agent.core.JvmInfo;
+import com.example.kairo.agent.core.ProcessStartId;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -49,9 +50,10 @@ final class PlatformAgentRegistrationClient {
             }
             body.put("hostname", jvmInfo.host());
             body.put("processId", String.valueOf(jvmInfo.pid()));
-            String processStartId = config.platformProcessStartId() == null
-                    ? jvmInfo.host() + ":" + jvmInfo.pid() + ":" + jvmInfo.startTimeMillis()
-                    : config.platformProcessStartId();
+            // V1.7 M1-C §8.3: resolve the process-start id through the single centralized formula
+            // shared with the runtime-state snapshot, so a snapshot's id can never drift from the id
+            // the Platform registered for this process.
+            String processStartId = ProcessStartId.resolve(config.platformProcessStartId(), jvmInfo);
             body.put("processStartId", processStartId);
             body.put("jvmStartedAtEpochMillis", jvmInfo.startTimeMillis());
             body.put("runtime", "java-" + jvmInfo.javaVersion());

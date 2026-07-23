@@ -205,6 +205,7 @@ public final class RuleChainApplier {
                 ? RuleChainSnapshot.empty()
                 : new RuleChainSnapshot(
                         new RuleChainRevision(desired.revision(), desired.hash()),
+                        desired.chainId(),
                         desired.hash(),
                         compiledRules, target, newTransformationRevision, newTransformationHash,
                         System.currentTimeMillis(), null);

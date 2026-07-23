@@ -10,6 +10,7 @@ import com.example.kairo.api.ScriptSessionResult;
 import com.example.kairo.api.ScriptSessionSpec;
 import com.example.kairo.core.ClassLoaderIdentity;
 import com.example.kairo.groovy.CompiledMockScript;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -171,7 +172,7 @@ final class PlatformCommandPoller implements AutoCloseable {
             case "LIST_LOADERS" -> listLoaders(payload);
             case "LIST_CALL_SITES" -> listCallSites(payload);
             case "RESOLVE_TARGET" -> resolveTarget(payload);
-            case "REFRESH_RUNTIME_STATE" -> Map.of("refreshed", true);
+            case "REFRESH_RUNTIME_STATE" -> refreshRuntimeState();
             case "BYTECODE_TRANSFORMATIONS" -> bytecodeTransformations(payload);
             case "BYTECODE_GET" -> bytecodeGet(payload);
             case "BYTECODE_PREVIEW" -> bytecodePreview(payload);
@@ -185,6 +186,23 @@ final class PlatformCommandPoller implements AutoCloseable {
             case "SCRIPT_COMPILE" -> scriptCompile(payload);
             default -> throw new com.example.kairo.agent.server.protocol.CapabilityNotSupportedException(commandType);
         };
+    }
+
+    /**
+     * V1.7 M1-C &sect;8.3: build a bounded, read-only snapshot of the Agent's in-memory runtime
+     * state for the {@code REFRESH_RUNTIME_STATE} command. The snapshot is read-only (it never
+     * mutates the enhancement engine), carried inside the durable ack {@code result}, and the
+     * Platform validates and persists it. {@code processStartId} is resolved through the same
+     * centralized {@link com.example.kairo.agent.core.ProcessStartId} formula used during Agent
+     * registration so the snapshot cannot carry a drifted identity.
+     */
+    private Map<String, Object> refreshRuntimeState() {
+        com.example.kairo.api.snapshot.AgentRuntimeSnapshot snapshot = runtime.snapshotRuntimeState(
+                config.platformAgentId(),
+                com.example.kairo.agent.core.ProcessStartId.resolve(
+                        config.platformProcessStartId(), runtime.jvmInfo()));
+        return mapper.convertValue(snapshot, new TypeReference<Map<String, Object>>() {
+        });
     }
 
     // -------------------------------------------------------- ScriptSession (V1.2 phase 5)

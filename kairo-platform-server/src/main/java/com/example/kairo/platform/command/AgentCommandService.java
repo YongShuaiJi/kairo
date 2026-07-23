@@ -35,6 +35,7 @@ public class AgentCommandService {
     private ScriptSessionExchange scriptSessionExchange;
     private TargetResolutionExchange targetResolutionExchange;
     private RuleUnloadMapper ruleUnloadMapper;
+    private AgentRuntimeStateExchange runtimeStateExchange;
 
     @Autowired
     void setBytecodeExchange(BytecodeDiagnosticExchange bytecodeExchange) {
@@ -54,6 +55,11 @@ public class AgentCommandService {
     @Autowired
     void setRuleUnloadMapper(RuleUnloadMapper ruleUnloadMapper) {
         this.ruleUnloadMapper = ruleUnloadMapper;
+    }
+
+    @Autowired
+    void setRuntimeStateExchange(AgentRuntimeStateExchange runtimeStateExchange) {
+        this.runtimeStateExchange = runtimeStateExchange;
     }
 
     @Autowired
@@ -275,6 +281,17 @@ public class AgentCommandService {
                     details);
         }
         Map<String, Object> updated = getById(commandId);
+        // V1.7 M1-C §8.3: validate and persist the runtime-state snapshot for a freshly ACKED
+        // REFRESH_RUNTIME_STATE command. Runs only after the guarded ACK UPDATE succeeded (so it
+        // never re-runs for a duplicate ack) and inside the ACK transaction, so a validation
+        // failure rolls the ACK back -- the command reverts to DISPATCHED (never falsely ACKED) and
+        // no actual state is overwritten. M1-A lease/epoch fencing and M1-B restart recovery are
+        // untouched. The snapshot's processStartId is fenced against the registered instance.
+        if ("REFRESH_RUNTIME_STATE".equals(String.valueOf(current.get("command_type")))
+                && "ACKED".equals(resultStatus)
+                && runtimeStateExchange != null) {
+            runtimeStateExchange.validateAndPersist(commandId, updated, result, now);
+        }
         if (bytecodeDiagnostic && bytecodeExchange != null) {
             if ("ACKED".equals(resultStatus)) bytecodeExchange.complete(commandId, result);
             else bytecodeExchange.fail(commandId, errorMessage == null ? "diagnostic failed" : errorMessage);

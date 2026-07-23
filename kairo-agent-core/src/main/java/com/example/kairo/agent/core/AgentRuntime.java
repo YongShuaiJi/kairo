@@ -55,6 +55,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
 
@@ -103,6 +104,16 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     private volatile boolean globallyEnabled = true;
     private volatile String loadMode = "unknown";
     private final CallSiteScanner callSiteScanner = new CallSiteScanner();
+
+    /**
+     * V1.7 M1-C &sect;8.3: the smallest explicit synchronization seam that coordinates a consistent
+     * runtime-state snapshot read with the apply/unload/reset/disable mutation paths. The snapshot
+     * takes the read lock; every path that mutates the snapshotted state (published rules, chains,
+     * degraded classes, the global enabled flag) takes the write lock. It is a seam, not a redesign:
+     * the enhancement engine, the dispatcher and the business hot path are untouched (the dispatcher
+     * reads the registry directly and never participates in this lock).
+     */
+    private final ReentrantReadWriteLock snapshotLock = new ReentrantReadWriteLock();
 
     public AgentRuntime(Instrumentation instrumentation) {
         this(instrumentation, RuleDispatcherConfig.defaults());
@@ -196,6 +207,15 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     }
 
     public CompiledRule publish(Method method, MockRule rule, String actor) {
+        snapshotLock.writeLock().lock();
+        try {
+            return publishLocked(method, rule, actor);
+        } finally {
+            snapshotLock.writeLock().unlock();
+        }
+    }
+
+    private CompiledRule publishLocked(Method method, MockRule rule, String actor) {
         requireOperationalForPublish();
         SyntheticBridgePolicy.Verdict verdict = syntheticBridgePolicy.evaluate(method);
         if (!verdict.isAllowed()) {
@@ -255,6 +275,15 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
      * {@code <init>} target and weaves {@link ConstructorAdvice}.
      */
     public CompiledRule publishConstructor(Constructor<?> constructor, MockRule rule, String actor) {
+        snapshotLock.writeLock().lock();
+        try {
+            return publishConstructorLocked(constructor, rule, actor);
+        } finally {
+            snapshotLock.writeLock().unlock();
+        }
+    }
+
+    private CompiledRule publishConstructorLocked(Constructor<?> constructor, MockRule rule, String actor) {
         requireOperationalForPublish();
         if (Modifier.isNative(constructor.getModifiers())) {
             throw new IllegalArgumentException("Native constructors cannot be enhanced: " + constructor);
@@ -338,6 +367,15 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     }
 
     private void remove(MethodKey methodKey, String ruleId, String actor) {
+        snapshotLock.writeLock().lock();
+        try {
+            removeLocked(methodKey, ruleId, actor);
+        } finally {
+            snapshotLock.writeLock().unlock();
+        }
+    }
+
+    private void removeLocked(MethodKey methodKey, String ruleId, String actor) {
         PublishedRule publishedRule = requireRule(ruleId);
         EnhancementTarget target = targetByRuleId.get(ruleId);
         Class<?> declaringClass = publishedRule.declaringClass();
@@ -368,6 +406,15 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     }
 
     public void disableAll(boolean disabled) {
+        snapshotLock.writeLock().lock();
+        try {
+            disableAllLocked(disabled);
+        } finally {
+            snapshotLock.writeLock().unlock();
+        }
+    }
+
+    private void disableAllLocked(boolean disabled) {
         globallyEnabled = !disabled;
         ruleDispatcher.enabled(globallyEnabled);
         if (state.get() != AgentState.DEGRADED) {
@@ -378,6 +425,15 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     }
 
     public void resetAll(String actor) {
+        snapshotLock.writeLock().lock();
+        try {
+            resetAllLocked(actor);
+        } finally {
+            snapshotLock.writeLock().unlock();
+        }
+    }
+
+    private void resetAllLocked(String actor) {
         state.set(AgentState.RESETTING);
         KairoBridge.uninstall();
         ruleDispatcher.enabled(false);
@@ -445,7 +501,12 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
      * idempotency keys replay the previous result.
      */
     public com.example.kairo.api.ApplyChainResult applyRuleChain(com.example.kairo.api.ApplyChainRequest request) {
-        return chainApplier.applyChain(request);
+        snapshotLock.writeLock().lock();
+        try {
+            return chainApplier.applyChain(request);
+        } finally {
+            snapshotLock.writeLock().unlock();
+        }
     }
 
     /** Reconcile the Agent's actual chain against the Platform's desired revision. */
@@ -460,6 +521,15 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     }
 
     public ResetClassResult resetClass(String classId, String actor) {
+        snapshotLock.writeLock().lock();
+        try {
+            return resetClassLocked(classId, actor);
+        } finally {
+            snapshotLock.writeLock().unlock();
+        }
+    }
+
+    private ResetClassResult resetClassLocked(String classId, String actor) {
         scriptSessionManager.deactivateTarget(classId, actor);
         activeRecordings.values().stream()
                 .filter(recording -> classId.equals(recording.classId()) || classId.equals(recording.className()))
@@ -899,6 +969,53 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
         return Map.copyOf(driftedClasses);
     }
 
+    /**
+     * V1.7 M1-C &sect;8.3: snapshot of currently-degraded classes (className -> reason). Read by the
+     * runtime-state snapshot under the snapshot read lock so it is consistent with the other
+     * snapshotted state.
+     */
+    public Map<String, String> degradedClasses() {
+        return Map.copyOf(degradedClasses);
+    }
+
+    /**
+     * V1.7 M1-C &sect;8.3: the Agent version, the single source also surfaced via {@link JvmInfo}
+     * during registration so a snapshot's {@code agentVersion} cannot drift from what the Agent
+     * registered.
+     */
+    public String agentVersion() {
+        return "0.1.0-SNAPSHOT";
+    }
+
+    /** V1.7 M1-C &sect;8.3: the global disabled flag (true when rule dispatch is globally disabled). */
+    public boolean disabled() {
+        return !globallyEnabled;
+    }
+
+    /**
+     * V1.7 M1-C &sect;8.3: a bounded, read-only snapshot of the Agent's in-memory runtime state,
+     * captured at one consistent logical point in time under the snapshot read lock. The snapshot
+     * reads published rules, published chains, the disabled flag and degraded classes; it never
+     * calls enhance, unload, compile, decompile, transform or discover. {@code agentId} and
+     * {@code processStartId} are the identity resolved by the caller through the same centralized
+     * logic used during Agent registration, so the snapshot cannot carry a drifted identity.
+     */
+    public com.example.kairo.api.snapshot.AgentRuntimeSnapshot snapshotRuntimeState(String agentId,
+                                                                                     String processStartId) {
+        snapshotLock.readLock().lock();
+        try {
+            return RuntimeStateSnapshotBuilder.build(
+                    ruleRegistry()::forEachChain,
+                    cons -> degradedClasses.forEach(cons),
+                    agentVersion(),
+                    disabled(),
+                    agentId,
+                    processStartId);
+        } finally {
+            snapshotLock.readLock().unlock();
+        }
+    }
+
     private Method resolveMethodOn(Class<?> type, MethodSelector selector) throws NoSuchMethodException {
         Class<?>[] params = com.example.kairo.core.MethodDescriptorTypes.parameterTypes(
                 selector.methodDescriptor(), type.getClassLoader());
@@ -943,7 +1060,7 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                 hostName(),
                 System.getProperty("java.version"),
                 startTimeMillis,
-                "0.1.0-SNAPSHOT",
+                agentVersion(),
                 loadMode,
                 state.get().name(),
                 metrics.enhancedClassCount(),
@@ -1004,10 +1121,21 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
 
     @Override
     public void close() {
-        state.set(AgentState.STOPPING);
-        KairoBridge.uninstall();
-        ruleRegistry.clear();
-        publishedRules.clear();
+        // V1.7 M1-C §8.3: coordinate with the snapshot write lock so a snapshot read never observes a
+        // half-closed registry/publishedRules set. Held only for the in-memory clear; the heavy
+        // subsystem close() calls run after the lock is released so a snapshot is not blocked by them.
+        snapshotLock.writeLock().lock();
+        try {
+            state.set(AgentState.STOPPING);
+            KairoBridge.uninstall();
+            ruleRegistry.clear();
+            publishedRules.clear();
+            targetByRuleId.clear();
+            degradedClasses.clear();
+            globallyEnabled = false;
+        } finally {
+            snapshotLock.writeLock().unlock();
+        }
         scriptSessionManager.close();
         activeRecordings.clear();
         recordingObserver.clear();
@@ -1392,10 +1520,17 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     }
 
     private void enterDegraded(String message) {
-        globallyEnabled = false;
-        ruleDispatcher.enabled(false);
-        KairoBridge.uninstall();
-        state.set(AgentState.DEGRADED);
+        // V1.7 M1-C §8.3: coordinate with the snapshot write lock (reentrant from the locked mutation
+        // paths that call this; start() is the only unlocked caller and runs before any snapshot).
+        snapshotLock.writeLock().lock();
+        try {
+            globallyEnabled = false;
+            ruleDispatcher.enabled(false);
+            KairoBridge.uninstall();
+            state.set(AgentState.DEGRADED);
+        } finally {
+            snapshotLock.writeLock().unlock();
+        }
         eventBuffer.record("agent.degraded", "system", null, null, message);
     }
 }

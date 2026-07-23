@@ -108,6 +108,21 @@ public final class RuleRegistry {
         return out;
     }
 
+    /**
+     * V1.7 M1-C &sect;8.3: visit every live (non-empty) chain once without building a map, so a
+     * bounded snapshot collector can scan all chains (to count totals and retain a bounded top-K)
+     * while retaining only the configured bound plus constant overhead. Read-only; the consumer must
+     * not retain the passed snapshot beyond the callback (it is the live immutable registry entry).
+     */
+    public void forEachChain(java.util.function.Consumer<RuleChainSnapshot> consumer) {
+        methods.forEach((key, ref) -> {
+            MethodChainSnapshot bundle = ref.get();
+            for (EnhancementTarget target : bundle.targets()) {
+                consumer.accept(bundle.chain(target.location(), target.callSiteSelector()));
+            }
+        });
+    }
+
     public void clear() {
         methods.clear();
     }
@@ -249,6 +264,7 @@ public final class RuleRegistry {
             List<CompiledRule> rules = canonicalize(entry.getValue());
             EnhancementTarget target = targetOf(methodKey, location, rules.get(0).rule().callSiteSelector());
             RuleChainSnapshot snapshot = RuleChainSnapshot.of(
+                    RuleChainSnapshot.chainIdOf(target),
                     new RuleChainRevision(localRevision.incrementAndGet(), ""),
                     rules, target, 0L, "", 0L);
             chains.put(target, snapshot);
@@ -265,7 +281,7 @@ public final class RuleRegistry {
             return RuleChainSnapshot.empty();
         }
         RuleChainRevision revision = new RuleChainRevision(localRevision.incrementAndGet(), "");
-        return RuleChainSnapshot.of(revision, canonical, target,
+        return RuleChainSnapshot.of(RuleChainSnapshot.chainIdOf(target), revision, canonical, target,
                 previous.transformationRevision(), previous.transformationHash(), 0L);
     }
 

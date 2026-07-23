@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.kairo.platform.persistence.mapper.AgentRuntimeStateMapper">
+
+    <!-- V1.7 M1-C §8.3: lock the agent's registration row for the duration of the ACK transaction
+         so two concurrent REFRESH acks for the same agent cannot race the delete+insert replacement
+         or violate the agent_runtime_state primary key. Single-table FOR UPDATE is portable across
+         H2 (PostgreSQL mode) and PostgreSQL. -->
+    <select id="lockAgentInstance" resultType="map">
+        select id
+          from agent_instance
+         where id = #{agentId}
+         for update
+    </select>
+
+    <!-- V1.7 M1-C §8.3: the instance_id and process_start_id currently registered for the agent,
+         via the agent_instance -> instance join. Used to fence out a snapshot whose processStartId
+         belongs to an old process. -->
+    <select id="findInstanceRegistrationByAgent" resultType="map">
+        select i.id as instance_id,
+               i.process_start_id as process_start_id
+          from instance i
+          join agent_instance a on a.instance_id = i.id
+         where a.id = #{agentId}
+    </select>
+
+    <delete id="deleteAgentRuntimeState">
+        delete from agent_runtime_state where agent_id = #{agentId}
+    </delete>
+
+    <insert id="insertAgentRuntimeState">
+        insert into agent_runtime_state(
+            agent_id, instance_id, process_start_id, protocol_version, agent_version,
+            observed_at, received_at, disabled, rule_count, chain_count, degraded_class_count,
+            serialized_bytes, snapshot_json, created_at, updated_at)
+        values (
+            #{agentId}, #{instanceId}, #{processStartId}, #{protocolVersion}, #{agentVersion},
+            #{observedAt}, #{receivedAt}, #{disabled}, #{ruleCount}, #{chainCount}, #{degradedClassCount},
+            #{serializedBytes}, #{snapshotJson}, #{now}, #{now})
+    </insert>
+
+    <select id="findAgentRuntimeState" resultType="map">
+        select *
+          from agent_runtime_state
+         where agent_id = #{agentId}
+    </select>
+
+</mapper>

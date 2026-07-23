@@ -48,7 +48,7 @@ class MigrationForwardCompatTest {
             assertThat(current.validateWithResult().validationSuccessful)
                     .as(milestone.release() + " Flyway validate after upgrade").isTrue();
             assertThat(current.info().current().getVersion())
-                    .isEqualTo(MigrationVersion.fromVersion("41"));
+                    .isEqualTo(MigrationVersion.fromVersion("42"));
             assertBusinessRows(dataSource, suffix(milestone.release()));
 
             assertThat(current.migrate().migrationsExecuted)
