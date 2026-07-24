@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.kairo.platform.persistence.mapper.AgentReconciliationMapper">
+
+    <!--
+      V1.7 M1-D §8.4: the authoritative desired state for an instance. rule_runtime_status is the
+      per-instance ledger of what should be applied (ACTIVE) or was formally removed (REMOVED).
+      Joined to rule_version (formal ENABLED / DISABLED) and the first rule_target (matching the
+      rollout's firstRuleTarget order) so the reconciler can build an APPLY_RULE payload identical
+      to a rollout and compare target identity against the actual snapshot chains[]. Trial/expired
+      script sessions never appear here (they create no rule_version row), so they are structurally
+      excluded from the recovery set (§8.4 item 7). NULL-safe left join on rule_target keeps a
+      corrupted formal rule visible so the service can report it and fail closed instead of
+      constructing an APPLY_RULE command with an unknown target.
+    -->
+    <select id="findInstanceRuntimeStatuses" resultType="map">
+        select rrs.rule_id          as rule_id,
+               rrs.rule_version     as rule_version,
+               rrs.status           as runtime_status,
+               rv.status           as version_status,
+               rv.script_hash       as script_hash,
+               rv.script_json       as script_json,
+               rv.matcher_json      as version_matcher_json,
+               rt.id                as target_id,
+               rt.class_name        as target_class_name,
+               rt.method_name       as target_method_name,
+               rt.matcher_json      as target_matcher_json,
+               rt.location          as target_location,
+               rt.call_site_selector_json as target_call_site_selector_json
+          from rule_runtime_status rrs
+          join rule_version rv on rv.rule_id = rrs.rule_id and rv.version = rrs.rule_version
+          left join rule_target rt on rt.id = (
+              select t.id from rule_target t
+               where t.rule_version_id = rv.id
+               order by t.created_at, t.id
+               limit 1
+          )
+         where rrs.instance_id = #{instanceId}
+    </select>
+
+    <select id="findOnlineAgentsForReconciliation" resultType="map">
+        select a.id   as agent_id,
+               a.instance_id as instance_id,
+               i.process_start_id as process_start_id
+          from agent_instance a
+          join instance i on i.id = a.instance_id
+         where a.status = 'ACTIVE'
+    </select>
+
+    <!-- Portable update-then-insert upsert: the service retries update after a concurrent insert. -->
+    <update id="updateDegradedClass">
+        update degraded_class
+           set reason = #{reason},
+               last_seen_at = #{now}
+         where agent_id = #{agentId}
+           and class_name = #{className}
+    </update>
+
+    <insert id="insertDegradedClass">
+        insert into degraded_class (id, agent_id, class_name, reason, first_seen_at, last_seen_at)
+        values (#{id}, #{agentId}, #{className}, #{reason}, #{now}, #{now})
+    </insert>
+
+    <delete id="deleteDegradedForAgent">
+        delete from degraded_class where agent_id = #{agentId}
+    </delete>
+
+</mapper>

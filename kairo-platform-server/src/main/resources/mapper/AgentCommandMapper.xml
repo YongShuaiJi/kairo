@@ -316,6 +316,22 @@
          where id = #{agentId}
     </select>
 
+    <select id="lockAgentForRuntimeStateRefresh" resultType="map">
+        select id
+          from agent_instance
+         where id = #{agentId}
+         for update
+    </select>
+
+    <select id="findNonTerminalCommandsByAgentAndType" resultType="map">
+        select id, status, idempotency_key
+          from agent_command
+         where agent_id = #{agentId}
+           and command_type = #{commandType}
+           and status in ('PENDING', 'DISPATCHED')
+         order by created_at, id
+    </select>
+
     <select id="commandById" resultType="map">
         select *
           from agent_command

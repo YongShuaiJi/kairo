@@ -181,6 +181,18 @@ public interface AgentCommandMapper {
     /** The advertised capability JSON array for an agent (V1.7 M0 dispatch gate). */
     String findAgentCapabilities(@Param("agentId") String agentId);
 
+    /**
+     * Serializes reconciliation-owned runtime snapshot requests for one agent. The lock and the
+     * subsequent non-terminal lookup run in the same command-service transaction, preventing two
+     * concurrent registrations from enqueueing duplicate refresh commands.
+     */
+    Map<String, Object> lockAgentForRuntimeStateRefresh(@Param("agentId") String agentId);
+
+    /** Non-terminal commands of one type, used while holding the per-agent refresh lock. */
+    List<Map<String, Object>> findNonTerminalCommandsByAgentAndType(
+            @Param("agentId") String agentId,
+            @Param("commandType") String commandType);
+
     Map<String, Object> commandById(@Param("id") String id);
 
     Map<String, Object> commandByIdempotencyKey(@Param("idempotencyKey") String idempotencyKey);

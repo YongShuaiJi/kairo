@@ -1,6 +1,7 @@
 package com.example.kairo.platform.service;
 
 import com.example.kairo.api.EnhancementLocation;
+import com.example.kairo.platform.command.AgentReconciliationService;
 import com.example.kairo.platform.domain.OperationPlanStatus;
 import com.example.kairo.platform.fencing.FencingTokenService;
 import com.example.kairo.platform.persistence.mapper.AttachRegistrationMapper;
@@ -43,11 +44,23 @@ public class PlatformCoreService {
     private final BusinessIdService businessIdService;
     private final Clock clock;
     private EnhancementTargetResolutionService enhancementTargetResolutionService;
+    private AgentReconciliationService agentReconciliationService;
 
     @Autowired
     void setEnhancementTargetResolutionService(
             @Lazy EnhancementTargetResolutionService enhancementTargetResolutionService) {
         this.enhancementTargetResolutionService = enhancementTargetResolutionService;
+    }
+
+    /**
+     * V1.7 M1-D &sect;8.4: inject the reconciliation service lazily. Registration triggers a
+     * runtime-snapshot request + reconciliation; injected lazily to break the
+     * PlatformCoreService &harr; AgentReconciliationService &harr; AgentCommandService cycle
+     * (AgentCommandService depends on this service as its event writer).
+     */
+    @Autowired
+    void setAgentReconciliationService(@Lazy AgentReconciliationService agentReconciliationService) {
+        this.agentReconciliationService = agentReconciliationService;
     }
     private final ObjectMapper mapper = JsonMapper.builder()
             .enable(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY)
@@ -260,6 +273,13 @@ public class PlatformCoreService {
         }
         insertAgentCapabilities(agentId, optionalList(request, "capabilities"), now);
         int restoredOperationPlans = restoreAgentGoneOperationPlans(context, instanceId, now);
+        // V1.7 M1-D §8.4: after a successful registration (initial, reconnect or new processStartId),
+        // request one runtime snapshot and reconcile desired vs actual. The snapshot request joins
+        // this transaction; convergence runs after commit so a reconciliation failure never rolls
+        // back registration. Concurrent registrations are deduped by the REFRESH idempotency key.
+        if (agentReconciliationService != null) {
+            agentReconciliationService.onAgentRegistered(context, agentId);
+        }
         recordAudit(context, "agent_instance.self_register", "agent_instance", agentId, 1,
                 "", hash(request), "SUCCESS", "Agent 运行时自动注册",
                 Map.of("instanceId", instanceId, "applicationId", applicationId,

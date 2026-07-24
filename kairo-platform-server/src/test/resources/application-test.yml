@@ -14,6 +14,9 @@ kairo:
     rollout:
       scheduler:
         enabled: false
+    reconciliation:
+      scheduler:
+        enabled: false
     runtime-lease:
       initial-delay-ms: 999999
       fixed-delay-ms: 999999

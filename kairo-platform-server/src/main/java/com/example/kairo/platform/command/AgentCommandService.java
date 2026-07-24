@@ -8,11 +8,16 @@ import com.example.kairo.platform.service.PlatformCoreService;
 import com.example.kairo.platform.service.PlatformJson;
 import com.example.kairo.platform.service.RbacService;
 import com.example.kairo.platform.service.RequestContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.sql.Timestamp;
 import java.time.Clock;
@@ -25,6 +30,8 @@ import java.util.UUID;
 @Service
 public class AgentCommandService {
 
+    private static final Logger log = LoggerFactory.getLogger(AgentCommandService.class);
+
     private final AgentCommandMapper commandMapper;
     private final RbacService rbacService;
     private final PlatformCoreService eventWriter;
@@ -36,6 +43,7 @@ public class AgentCommandService {
     private TargetResolutionExchange targetResolutionExchange;
     private RuleUnloadMapper ruleUnloadMapper;
     private AgentRuntimeStateExchange runtimeStateExchange;
+    private AgentReconciliationService agentReconciliationService;
 
     @Autowired
     void setBytecodeExchange(BytecodeDiagnosticExchange bytecodeExchange) {
@@ -60,6 +68,16 @@ public class AgentCommandService {
     @Autowired
     void setRuntimeStateExchange(AgentRuntimeStateExchange runtimeStateExchange) {
         this.runtimeStateExchange = runtimeStateExchange;
+    }
+
+    /**
+     * V1.7 M1-D &sect;8.4: inject the reconciliation service lazily so a freshly persisted runtime
+     * snapshot triggers desired/actual convergence. Lazy breaks the cycle
+     * (AgentCommandService &harr; AgentReconciliationService, which enqueues through this service).
+     */
+    @Autowired
+    void setAgentReconciliationService(@Lazy AgentReconciliationService agentReconciliationService) {
+        this.agentReconciliationService = agentReconciliationService;
     }
 
     @Autowired
@@ -195,6 +213,38 @@ public class AgentCommandService {
         return created;
     }
 
+    /**
+     * Enqueue one reconciliation-owned {@code REFRESH_RUNTIME_STATE} request for the current
+     * process unless an equivalent request is already non-terminal.
+     *
+     * <p>The stable {@code idempotencyKeyPrefix} identifies the agent/process, while each completed
+     * registration or post-convergence refresh receives a new generated suffix. A stable key alone
+     * would incorrectly return an old terminal command forever and prevent same-process reconnects
+     * from obtaining a fresh snapshot. The agent-row lock makes the lookup+insert atomic, so
+     * concurrent registrations still collapse to one in-flight request.</p>
+     */
+    @Transactional
+    public Map<String, Object> enqueueRuntimeStateRefreshIfIdle(
+            RequestContext context,
+            String agentId,
+            Map<String, Object> payload,
+            String idempotencyKeyPrefix,
+            long maxAttempts,
+            Instant availableAt) {
+        requireExistingAgent(agentId);
+        commandMapper.lockAgentForRuntimeStateRefresh(agentId);
+        String generatedPrefix = idempotencyKeyPrefix + ":request:";
+        for (Map<String, Object> row :
+                commandMapper.findNonTerminalCommandsByAgentAndType(agentId, "REFRESH_RUNTIME_STATE")) {
+            String key = String.valueOf(row.get("idempotency_key"));
+            if (key.startsWith(generatedPrefix)) {
+                return getById(String.valueOf(row.get("id")));
+            }
+        }
+        return enqueue(context, agentId, "REFRESH_RUNTIME_STATE", payload,
+                generatedPrefix + UUID.randomUUID(), maxAttempts, availableAt);
+    }
+
     @Transactional
     public Map<String, Object> pollNext(String agentId, RequestContext context, Map<String, Object> request) {
         requireAgentProtocolOrManager(agentId, context);
@@ -291,6 +341,15 @@ public class AgentCommandService {
                 && "ACKED".equals(resultStatus)
                 && runtimeStateExchange != null) {
             runtimeStateExchange.validateAndPersist(commandId, updated, result, now);
+            // V1.7 M1-D §8.4: a fresh actual snapshot was just persisted. Reconcile desired vs
+            // actual after this ACK transaction commits so convergence enqueues (APPLY_RULE /
+            // RESET_CLASS) run in their own transactions and never roll back the ACK. The ack
+            // already advanced to ACKED; a reconciliation failure is logged and retried by the
+            // scheduler rather than reverting the snapshot.
+            if (agentReconciliationService != null) {
+                String reconciledAgentId = String.valueOf(updated.get("agent_id"));
+                registerAfterCommitReconcile(reconciledAgentId);
+            }
         }
         if (bytecodeDiagnostic && bytecodeExchange != null) {
             if ("ACKED".equals(resultStatus)) bytecodeExchange.complete(commandId, result);
@@ -641,6 +700,36 @@ public class AgentCommandService {
             return number.longValue();
         }
         return Long.parseLong(String.valueOf(value));
+    }
+
+    /**
+     * V1.7 M1-D &sect;8.4: schedule a reconciliation pass after the current ACK transaction
+     * commits. If no transaction is active (e.g. a direct non-transactional call), reconcile
+     * immediately. Failures are swallowed and logged so a reconciliation error never propagates
+     * into the ACK path; the scheduler retries convergence.
+     */
+    private void registerAfterCommitReconcile(String agentId) {
+        Runnable reconcile = () -> {
+            try {
+                RequestContext systemContext = new RequestContext("system",
+                        "reconcile-" + java.util.UUID.randomUUID(), "127.0.0.1", "system", "ack");
+                agentReconciliationService.reconcileAgent(systemContext, agentId);
+            } catch (RuntimeException e) {
+                // A reconciliation failure must not surface through the ACK path, but it must
+                // remain observable; the periodic scheduler will retry it.
+                log.warn("Post-ACK reconciliation of agent {} failed: {}", agentId, e.getMessage(), e);
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    reconcile.run();
+                }
+            });
+        } else {
+            reconcile.run();
+        }
     }
 
     /**

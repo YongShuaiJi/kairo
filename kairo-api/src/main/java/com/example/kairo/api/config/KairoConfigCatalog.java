@@ -103,6 +103,10 @@ public final class KairoConfigCatalog {
         spring(out, "platform", "kairo.platform.rollout.scheduler.enabled", ValueType.BOOLEAN, "true");
         spring(out, "platform", "kairo.platform.rollout.scheduler.fixed-delay-ms", ValueType.LONG, "3000");
         spring(out, "platform", "kairo.platform.rollout.scheduler.command-lease-seconds", ValueType.LONG, "60");
+        spring(out, "platform", "kairo.platform.reconciliation.scheduler.enabled", ValueType.BOOLEAN, "true");
+        spring(out, "platform", "kairo.platform.reconciliation.scheduler.fixed-delay-ms", ValueType.LONG, "30000");
+        spring(out, "platform", "kairo.platform.reconciliation.scheduler.initial-delay-ms", ValueType.LONG, "30000");
+        spring(out, "platform", "kairo.platform.reconciliation.snapshot-request-delay-ms", ValueType.LONG, "5000");
         spring(out, "platform", "kairo.platform.attach.agent-jar", ValueType.STRING,
                 "/app/kairo-agent-bootstrap.jar");
         spring(out, "platform", "kairo.platform.attach.core-jar", ValueType.STRING,

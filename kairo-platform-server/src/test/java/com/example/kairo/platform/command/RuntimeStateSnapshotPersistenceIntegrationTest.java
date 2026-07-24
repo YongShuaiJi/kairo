@@ -88,6 +88,10 @@ class RuntimeStateSnapshotPersistenceIntegrationTest {
     @AfterEach
     void tearDown() {
         if (agentId != null) {
+            // V1.7 M1-D: a REFRESH ack now triggers desired/actual reconciliation, which may upsert a
+            // degraded_class marker for the snapshot's chain (no desired state in this M1-C test).
+            // Clear it before the agent_instance FK is dropped.
+            jdbc.update("delete from degraded_class where agent_id = ?", agentId);
             jdbc.update("delete from agent_runtime_state where agent_id = ?", agentId);
             jdbc.update("delete from agent_command where agent_id = ?", agentId);
             jdbc.update("delete from agent_instance where id = ?", agentId);
