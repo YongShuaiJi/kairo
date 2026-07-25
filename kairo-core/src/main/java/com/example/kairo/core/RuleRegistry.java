@@ -199,20 +199,26 @@ public final class RuleRegistry {
                 List<CompiledRule> filtered = chain.rules().stream()
                         .filter(r -> !r.rule().id().equals(ruleId))
                         .toList();
-                if (filtered.size() != chain.rules().size()) {
-                    changed = true;
-                    RuleChainSnapshot rebuilt = filtered.isEmpty()
-                            ? RuleChainSnapshot.empty()
-                            : buildSnapshot(filtered, target, chain);
-                    nextChains.put(target, rebuilt);
-                } else {
+                if (filtered.size() == chain.rules().size()) {
+                    // unchanged target: preserve exactly as-is
                     nextChains.put(target, chain);
+                    continue;
                 }
+                changed = true;
+                if (filtered.isEmpty()) {
+                    // The final rule for this target was removed: omit the target entirely
+                    // rather than retaining an empty chain. A lingering empty chain has no
+                    // chainId and would be emitted by RuntimeStateSnapshotBuilder (and
+                    // rejected by the Platform REFRESH validator), breaking the M1 recovery
+                    // invariant that a completed unload stays observable and reconcilable.
+                    continue;
+                }
+                nextChains.put(target, buildSnapshot(filtered, target, chain));
             }
             if (!changed) {
                 return current.toRuleSet();
             }
-            MethodChainSnapshot updated = rebuildBundle(current, nextChains);
+            MethodChainSnapshot updated = MethodChainSnapshot.of(nextChains);
             if (ref.compareAndSet(current, updated)) {
                 if (updated.isEmpty()) {
                     methods.remove(methodKey, ref);
@@ -283,17 +289,6 @@ public final class RuleRegistry {
         RuleChainRevision revision = new RuleChainRevision(localRevision.incrementAndGet(), "");
         return RuleChainSnapshot.of(RuleChainSnapshot.chainIdOf(target), revision, canonical, target,
                 previous.transformationRevision(), previous.transformationHash(), 0L);
-    }
-
-    private MethodChainSnapshot rebuildBundle(MethodChainSnapshot current,
-                                              Map<EnhancementTarget, RuleChainSnapshot> nextChains) {
-        Map<EnhancementTarget, RuleChainSnapshot> merged = new LinkedHashMap<>();
-        for (EnhancementTarget target : current.targets()) {
-            RuleChainSnapshot override = nextChains.get(target);
-            merged.put(target, override != null ? override
-                    : current.chain(target.location(), target.callSiteSelector()));
-        }
-        return MethodChainSnapshot.of(merged);
     }
 
     private static boolean sameChain(RuleChainSnapshot a, RuleChainSnapshot b) {

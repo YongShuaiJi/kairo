@@ -264,13 +264,26 @@ class M1ClosedLoopRecoveryIntegrationTest {
         assertThat(resetPayloads.get(0)).contains(TARGET_CLASS);
         assertThat(resetPayloads.get(0)).doesNotContain(TRIAL_TARGET_CLASS);
 
-        // Note: a *new* REFRESH immediately after this RESET_CLASS unload is intentionally NOT
-        // asserted here. The required M1 closed loop ends at "original method behavior restored"
-        // (proven above) plus terminal state; the M1-E reconnect flow (like
-        // RealJvmDisconnectUnload) does not issue a post-unload REFRESH. A post-unload REFRESH
-        // surfaces a separate, pre-existing latent defect (an empty chain lingers in the registry
-        // and is emitted with a blank chainId, which the Platform REFRESH validator rejects) that
-        // is out of scope for this acceptance harness and is recorded as a remaining risk.
+        // --- Phase 5: a fresh REFRESH after the completed unload must stay observable. ---
+        // The completed unload left no rule behind, so the real runtime snapshot carries no
+        // chains and no rules. A lingering empty chain (blank chainId) here would be rejected by
+        // the Platform REFRESH validator and break the M1 recovery invariant.
+        AgentRuntimeSnapshot postUnload = executeRefreshOnRealAgent();
+        assertThat(postUnload.chains())
+                .as("no chains linger after the final rule is unloaded").isEmpty();
+        assertThat(postUnload.rules())
+                .as("no rules linger after the final rule is unloaded").isEmpty();
+
+        // Re-running reconciliation against the empty actual + REMOVED desired state is a no-op:
+        // zero actions applied, zero degraded results, zero pending compensations progressed.
+        AgentReconciliationService.ReconciliationResult recon = reconciliation.reconcileAgent(admin, agentId);
+        assertThat(recon.applied())
+                .as("reconciliation applies nothing after a completed unload").isZero();
+        assertThat(recon.degraded())
+                .as("reconciliation reports no degraded results after a completed unload").isZero();
+        assertThat(recon.compensated())
+                .as("no pending unload compensation remains after a completed unload").isZero();
+        assertThat(recon.reset()).isZero();
     }
 
     private void executeNextOnRealAgent() throws Exception {
@@ -287,7 +300,7 @@ class M1ClosedLoopRecoveryIntegrationTest {
         commands.ack(String.valueOf(polled.get("id")), agentCtx, ack);
     }
 
-    private void executeRefreshOnRealAgent() throws Exception {
+    private AgentRuntimeSnapshot executeRefreshOnRealAgent() throws Exception {
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("commandType", "REFRESH_RUNTIME_STATE");
         request.put("maxAttempts", 5);
@@ -307,6 +320,7 @@ class M1ClosedLoopRecoveryIntegrationTest {
         ack.put("reason", "real refresh");
         ack.put("result", snapshot);
         commands.ack(commandId, agentCtx, ack);
+        return dto;
     }
 
     private void assertNoTrialRevived(String phase) {
