@@ -4,7 +4,21 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-mvn -pl kairo-platform-server,kairo-demo,kairo-sidecar,kairo-agent-bootstrap,kairo-agent-core-modern,kairo-bootstrap-api -am -DskipTests package
+# Modules required to build the attach-executor image and its runtime dependencies.
+# kairo-attach-cli now hosts the demo attach executor (merged from the former kairo-sidecar).
+ATTACH_MODULES="kairo-platform-server,kairo-demo,kairo-attach-cli,kairo-agent-bootstrap,kairo-agent-core-modern,kairo-bootstrap-api"
+
+if [[ "${1:-}" == "--verify-only" ]]; then
+  # Build the artifacts and validate the Compose topology, entrypoints and environment
+  # without starting long-running processes. The real attach closed loop is exercised by
+  # the M1 overall acceptance, not by this verification mode.
+  mvn -pl "$ATTACH_MODULES" -am -DskipTests package
+  docker compose -f docker-compose.yml -f docker-compose.attach.yml config >/dev/null
+  echo "Kairo demo attach: verify-only OK (build + compose config validated)"
+  exit 0
+fi
+
+mvn -pl "$ATTACH_MODULES" -am -DskipTests package
 docker compose -f docker-compose.yml -f docker-compose.attach.yml up -d --build --remove-orphans \
   platform platform-web demo-app demo-attach-executor
 

@@ -1,4 +1,4 @@
-package com.example.kairo.sidecar;
+package com.example.kairo.attach;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,7 +21,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 
-public final class AttachSidecarServer {
+/**
+ * Demo attach executor entrypoint hosted by {@code kairo-attach-cli}. It registers with the
+ * Platform, long-polls {@code ATTACH_AGENT}/{@code RELOAD_AGENT} commands, ACKs each one,
+ * and exposes a {@code /health} endpoint. Migrated verbatim from the former {@code kairo-sidecar}
+ * module; all environment variables, wire fields and behaviour are preserved.
+ */
+public class AttachExecutorServer {
 
     private static final ObjectMapper MAPPER = new ObjectMapper()
             .findAndRegisterModules()
@@ -31,7 +37,7 @@ public final class AttachSidecarServer {
     private static final TypeReference<List<Map<String, Object>>> LIST_MAP_TYPE = new TypeReference<>() {
     };
 
-    private final SidecarConfig config;
+    private final ExecutorConfig config;
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
             .build();
@@ -40,21 +46,21 @@ public final class AttachSidecarServer {
     private volatile String instanceId;
     private volatile String sidecarId;
 
-    private AttachSidecarServer(SidecarConfig config) {
+    AttachExecutorServer(ExecutorConfig config) {
         this.config = config;
     }
 
     public static void main(String[] args) throws Exception {
-        AttachSidecarServer sidecar = new AttachSidecarServer(SidecarConfig.fromEnvironment());
-        sidecar.registerWithPlatform();
-        sidecar.start();
-        sidecar.runCommandLoop();
+        AttachExecutorServer executor = new AttachExecutorServer(ExecutorConfig.fromEnvironment());
+        executor.registerWithPlatform();
+        executor.start();
+        executor.runCommandLoop();
     }
 
-    private void start() throws IOException {
+    void start() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(config.host(), config.port()), 64);
         server.setExecutor(Executors.newCachedThreadPool(runnable -> {
-            Thread thread = new Thread(runnable, "kairo-attach-sidecar-http");
+            Thread thread = new Thread(runnable, "kairo-attach-executor-http");
             thread.setDaemon(true);
             return thread;
         }));
@@ -88,7 +94,7 @@ public final class AttachSidecarServer {
         }
     }
 
-    private Map<String, Object> pollNextCommand() throws IOException, InterruptedException {
+    Map<String, Object> pollNextCommand() throws IOException, InterruptedException {
         Map<String, Object> request = Map.of(
                 "waitMillis", config.pollWaitMillis(),
                 "leaseSeconds", config.commandLeaseSeconds()
@@ -104,7 +110,7 @@ public final class AttachSidecarServer {
         return MAPPER.readValue(response.body(), MAP_TYPE);
     }
 
-    private void executeCommand(Map<String, Object> command) throws IOException, InterruptedException {
+    void executeCommand(Map<String, Object> command) throws IOException, InterruptedException {
         String commandId = String.valueOf(command.get("commandId"));
         String commandType = String.valueOf(command.get("commandType"));
         String processId = text(command, "processId", config.targets().isEmpty()
@@ -135,7 +141,7 @@ public final class AttachSidecarServer {
         }
     }
 
-    private void ack(String commandId, String status, String message, Map<String, Object> result)
+    void ack(String commandId, String status, String message, Map<String, Object> result)
             throws IOException, InterruptedException {
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("status", status);
@@ -151,7 +157,7 @@ public final class AttachSidecarServer {
         }
     }
 
-    private void registerWithPlatform() throws IOException, InterruptedException {
+    void registerWithPlatform() throws IOException, InterruptedException {
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("executorId", config.executorId());
         request.put("executorType", config.executorType());
@@ -205,7 +211,7 @@ public final class AttachSidecarServer {
         return builder;
     }
 
-    private void attach(String processId, String agentJar, String agentArgs) throws Exception {
+    void attach(String processId, String agentJar, String agentArgs) throws Exception {
         Class<?> vmType = Class.forName("com.sun.tools.attach.VirtualMachine");
         Object vm = vmType.getMethod("attach", String.class).invoke(null, processId);
         try {
@@ -248,7 +254,7 @@ public final class AttachSidecarServer {
         }
     }
 
-    private record SidecarConfig(
+    record ExecutorConfig(
             String host,
             int port,
             String platformUrl,
@@ -264,7 +270,7 @@ public final class AttachSidecarServer {
             long commandLeaseSeconds,
             List<TargetConfig> targets
     ) {
-        static SidecarConfig fromEnvironment() {
+        static ExecutorConfig fromEnvironment() {
             String applicationName = env("KAIRO_APPLICATION_NAME", "kairo-demo");
             String targetPid = env("KAIRO_TARGET_PID", "1");
             String hostname = env("HOSTNAME", "localhost");
@@ -274,7 +280,7 @@ public final class AttachSidecarServer {
             String executorId = env("KAIRO_EXECUTOR_ID", "executor-" + hostname);
             List<TargetConfig> targets = targetsFromEnvironment(applicationName, targetPid, hostname,
                     processStartId, agentJar);
-            return new SidecarConfig(
+            return new ExecutorConfig(
                     env("KAIRO_SIDECAR_HOST", "0.0.0.0"),
                     Integer.parseInt(env("KAIRO_SIDECAR_PORT", "18480")),
                     trimTrailingSlash(env("KAIRO_PLATFORM_URL", "http://platform:18280")),
@@ -329,7 +335,7 @@ public final class AttachSidecarServer {
         }
     }
 
-    private record TargetConfig(
+    record TargetConfig(
             String projectName,
             String applicationName,
             String environmentName,

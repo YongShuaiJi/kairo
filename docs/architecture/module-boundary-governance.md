@@ -31,25 +31,22 @@ Platform API 与 V1 调度器使用同一个模块和镜像。Kafka、MinIO、�
 | --- | --- |
 | `kairo-bootstrap-api` | Bootstrap ClassLoader 可见的最小 ABI |
 | `kairo-api` | 面向脚本和调用方的稳定公共模型 |
-| `kairo-object` | 对象构造、路径访问和 JSON 转换的内聚能力 |
 | `kairo-groovy` | Groovy 是可替换脚本后端，隔离重依赖和安全策略 |
-| `kairo-core` | 与 Instrumentation 无关的规则执行内核 |
+| `kairo-core` | 与 Instrumentation 无关的规则执行内核，含对象构造、路径访问和 JSON 转换（吸收原 `kairo-object`） |
 | `kairo-agent-core` | Byte Buddy 与类重转换边界 |
 | `kairo-agent-server` | Agent 生命周期、本地 API、控制台和 Platform 通信 |
 | `kairo-agent-core-modern` | shaded 发行包，不是微服务 |
 | `kairo-agent-bootstrap` | Java 8 thin agent 和隔离加载入口 |
-| `kairo-attach-cli` | 需要 JDK Attach 权限的安装工具 |
+| `kairo-attach-cli` | 需要 JDK Attach 权限的安装工具，同时承载 demo attach executor 入口（`exec`）|
 | `kairo-ops` | 低权限网络应急工具，与 Attach 权限模型不同 |
-| `kairo-sidecar` | attach executor 与运行时辅助边界，用于本地 demo attach 流程 |
-| `kairo-storage-spi` | 后续对象存储扩展契约，V1 不作为运行依赖 |
-| `kairo-storage-minio` | 后续 MinIO/S3 兼容实现，V1 不作为运行依赖 |
 | `kairo-platform-server` | 模块化控制面和 V1 调度器代码 |
 | `kairo-platform-web` | 独立前端技术栈、产品入口、构建、测试和发布边界 |
 | `kairo-demo` | 可运行验收目标，不进入生产部署 |
 | `kairo-integration-tests` | 跨模块 JVM/Agent 验收边界 |
 
-`kairo-sidecar` 保留是因为当前 attach demo 需要一个与被测 JVM 共享 PID 命名空间的
-executor，用于对目标 JVM 执行 attach 操作。它不是 V1 的独立生产存储、录制或回放服务。
+`kairo-attach-cli` 的 `exec` 入口承载 demo attach executor：与被测 JVM 共享 PID 命名空间，
+向 Platform 注册、轮询 `ATTACH_AGENT`/`RELOAD_AGENT`、ACK 并暴露 health。原 `kairo-sidecar`
+模块及其无生产消费者的录制/WAL/masking 代码已在 M1-G 收敛中删除，不再保留独立 module。
 
 ## 4. 本次淘汰的边界
 

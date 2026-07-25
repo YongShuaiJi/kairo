@@ -9,16 +9,14 @@ See [License](#license) and [LICENSE](./LICENSE).
 
 - `kairo-bootstrap-api`: bootstrap-safe bridge API used by instrumented business methods.
 - `kairo-api`: public domain model and script API.
-- `kairo-object`: JSON conversion, property path access, object and throwable creation.
 - `kairo-groovy`: save-time Groovy compilation, script class cache, and runtime script base class.
-- `kairo-core`: immutable rule sets, atomic rule registry, dispatcher, validation, sampling, hit limits, fail-open, and reentry guard.
+- `kairo-core`: immutable rule sets, atomic rule registry, dispatcher, validation, sampling, hit limits, fail-open, reentry guard, and object construction / property path / JSON conversion helpers (absorbed from the former `kairo-object` module).
 - `kairo-agent-core`: Byte Buddy transformer manager and value/void method advice.
 - `kairo-agent-server`: local JDK `HttpServer` API, embedded local console, runtime lifecycle, and optional platform command polling.
 - `kairo-agent-core-modern`: shaded modern core assembly loaded by the thin bootstrap agent on JDK 17/21.
 - `kairo-agent-bootstrap`: thin `premain` and `agentmain` entrypoints that reflectively load an isolated core jar.
-- `kairo-attach-cli`: dynamic attach command implemented through reflective JDK Attach API access.
+- `kairo-attach-cli`: dynamic attach command (reflective JDK Attach API) and the demo attach executor entrypoint (`exec`) that registers with the Platform, polls `ATTACH_AGENT`/`RELOAD_AGENT`, ACKs, and serves health.
 - `kairo-ops`: local emergency operations CLI.
-- `kairo-sidecar`: attach executor and runtime helper boundary used by the demo attach flow.
 - `kairo-platform-server`: Spring Boot 3 / Java 21 platform image backed by PostgreSQL and Redis.
 - `kairo-platform-web`: independent Next.js / React 19 central management UI with TypeScript,
   Tailwind CSS, shadcn/ui, Lucide icons, Monaco Editor, and Kairo domain components.
@@ -295,7 +293,7 @@ docs/copyright/kairo-software-copyright-application.md
 - Dynamic attach can emit JDK warnings on modern Java; prefer `-javaagent` for stable environments.
 - The former local `kairo-control-server` and single-consumer `kairo-web` modules were removed. The Agent serves its local console directly, and all persistent control-plane state lives in `kairo-platform-server`.
 - Platform authentication uses revocable opaque user/Agent Bearer Tokens. OIDC remains an optional future identity-provider adapter.
-- `kairo-sidecar` is used by the local attach demo flow; it is not a separate production storage or replay subsystem.
+- The local attach demo executor runs from `kairo-attach-cli` (`exec` entrypoint); the former `kairo-sidecar` module and its recording/WAL/masking code (no production consumers) were removed during module convergence.
 - Recording, dataset extraction, replay, approval workflow, outbox publishing, Kafka, and MinIO have been removed from the active product surface.
 - Kubernetes, enterprise SSO, performance certification, and multi-region operation are optional future integrations rather than dependencies of the current product.
 

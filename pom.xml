@@ -23,7 +23,6 @@
     <modules>
         <module>kairo-bootstrap-api</module>
         <module>kairo-api</module>
-        <module>kairo-object</module>
         <module>kairo-groovy</module>
         <module>kairo-core</module>
         <module>kairo-agent-core</module>
@@ -32,7 +31,6 @@
         <module>kairo-agent-bootstrap</module>
         <module>kairo-attach-cli</module>
         <module>kairo-ops</module>
-        <module>kairo-sidecar</module>
         <module>kairo-platform-server</module>
         <module>kairo-sdk</module>
         <module>kairo-cli</module>

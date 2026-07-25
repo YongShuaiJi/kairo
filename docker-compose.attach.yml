@@ -3,7 +3,7 @@ services:
     image: kairo-attach-executor:0.1.0-SNAPSHOT
     build:
       context: .
-      dockerfile: kairo-sidecar/Dockerfile
+      dockerfile: kairo-attach-cli/Dockerfile
     container_name: kairo-attach-executor
     pid: "service:demo-app"
     depends_on:

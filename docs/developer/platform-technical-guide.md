@@ -162,16 +162,14 @@ Agent 运行在被测 Java 进程内，负责：
 
 - `kairo-bootstrap-api`：被增强业务方法可访问的 bootstrap-safe 桥接 API。
 - `kairo-api`：规则脚本公共 API，包括 `MockApi`、`MockDecision`、`InvocationContext`。
-- `kairo-object`：JSON 转对象、属性路径读写、返回对象和异常对象构造。
 - `kairo-groovy`：Groovy 编译、脚本缓存、脚本安全策略和脚本基类。
-- `kairo-core`：规则注册表、规则调度、采样、命中限制、fail-open、重入保护。
+- `kairo-core`：规则注册表、规则调度、采样、命中限制、fail-open、重入保护，以及对象构造、路径访问和 JSON 转换（吸收原 `kairo-object`）。
 - `kairo-agent-core`：Byte Buddy transformer 和方法 Advice。
 - `kairo-agent-server`：Agent 本地 HTTP API、嵌入式本地控制台、Platform 命令轮询。
 - `kairo-agent-core-modern`：面向 JDK 17/21 的 shaded Agent Core 发行包。
 - `kairo-agent-bootstrap`：轻量 `premain` / `agentmain` 入口，隔离加载 core jar。
-- `kairo-attach-cli`：基于 JDK Attach API 的动态 attach 命令。
+- `kairo-attach-cli`：基于 JDK Attach API 的动态 attach 命令，并承载 demo attach executor 入口（`exec`：注册、轮询 `ATTACH_AGENT`/`RELOAD_AGENT`、ACK、health）。
 - `kairo-ops`：本地应急运维 CLI。
-- `kairo-sidecar`：attach executor 与运行时辅助边界。
 - `kairo-demo`：本地 Spring Boot demo。
 - `kairo-integration-tests`：JVM 动态 attach 集成测试。
 

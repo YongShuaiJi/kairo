@@ -42,7 +42,7 @@ class ConfigCatalogCoverageTest {
     static void assertEnvironmentCatalogMatches(Path root) throws Exception {
         Map<String, List<Path>> sources = Map.of(
                 "platform", List.of(root.resolve("kairo-platform-server/src/main/resources/application.yml")),
-                "sidecar", List.of(root.resolve("kairo-sidecar/src/main/java")),
+                "sidecar", List.of(root.resolve("kairo-attach-cli/src/main/java")),
                 "cli", List.of(root.resolve("kairo-cli/src/main/java")),
                 "mcp", List.of(root.resolve("kairo-mcp/src/main/java")),
                 "web", List.of(root.resolve("kairo-platform-web/.env.example"),
