@@ -258,7 +258,7 @@ class RuntimeStateSnapshotTest {
         return RuntimeStateSnapshotBuilder.build(
                 visitor -> chains.values().forEach(visitor),
                 visitor -> degraded.forEach(visitor),
-                "0.1.0-SNAPSHOT", false, "agent", PROCESS_START_ID);
+                "0.1.0-SNAPSHOT", false, false, "agent", PROCESS_START_ID);
     }
 
     private MockRule rule(String id, Method method) {

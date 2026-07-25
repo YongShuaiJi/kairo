@@ -129,6 +129,10 @@ public final class KairoConfigCatalog {
         spring(out, "platform", "kairo.platform.auth.bootstrap-ttl-days", ValueType.LONG, "365");
         spring(out, "platform", "management.endpoints.web.exposure.include", ValueType.STRING,
                 "health,info,metrics");
+        spring(out, "platform", "management.endpoint.health.probes.enabled", ValueType.BOOLEAN, "true");
+        spring(out, "platform", "management.endpoint.health.group.readiness.include", ValueType.STRING,
+                "db,redis");
+        spring(out, "platform", "management.health.redis.enabled", ValueType.BOOLEAN, "false");
 
         spring(out, "platform", "kairo.platform.automation.expiry.fixed-delay-ms", ValueType.LONG, "10000");
         spring(out, "platform", "kairo.platform.automation.expiry.initial-delay-ms", ValueType.LONG, "10000");
@@ -216,6 +220,7 @@ public final class KairoConfigCatalog {
         secretEnv(out, "cli", "KAIRO_TOKEN", false);
         env(out, "mcp", "KAIRO_PLATFORM_URL", ValueType.URL, "", false);
         secretEnv(out, "mcp", "KAIRO_TOKEN", false);
+        env(out, "ops", "KAIRO_OPS_AUDIT_PATH", ValueType.STRING, "", false);
 
         env(out, "web", "KAIRO_PLATFORM_API_URL", ValueType.URL,
                 "http://127.0.0.1:18280", true);

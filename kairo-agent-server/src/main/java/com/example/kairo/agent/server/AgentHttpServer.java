@@ -2,6 +2,7 @@ package com.example.kairo.agent.server;
 
 import com.example.kairo.agent.core.AgentRuntime;
 import com.example.kairo.agent.core.MethodInfo;
+import com.example.kairo.agent.core.ResetClassResult;
 import com.example.kairo.api.CallSiteSelector;
 import com.example.kairo.api.EnhancementLocation;
 import com.example.kairo.api.InvokeOpcode;
@@ -220,16 +221,22 @@ public final class AgentHttpServer implements AutoCloseable {
             return;
         }
         if ("POST".equals(method) && "/agent/disable-all".equals(path)) {
+            // V1.7 M1-F §8.6: a loopback emergency op marks the agent so Platform reconciliation
+            // does not blindly re-apply desired state over the operator's manual recovery. Mark
+            // first so a concurrent snapshot can never observe the mutation without the hold.
+            runtime.markEmergency(actor(exchange));
             runtime.disableAll(true);
             write(exchange, 200, runtime.metrics());
             return;
         }
         if ("POST".equals(method) && "/agent/enable-all".equals(path)) {
             runtime.disableAll(false);
+            runtime.clearEmergency(actor(exchange));
             write(exchange, 200, runtime.metrics());
             return;
         }
         if ("POST".equals(method) && "/agent/reset-all".equals(path)) {
+            runtime.markEmergency(actor(exchange));
             runtime.resetAll(actor(exchange));
             write(exchange, 200, runtime.metrics());
             return;
@@ -237,7 +244,9 @@ public final class AgentHttpServer implements AutoCloseable {
         if ("POST".equals(method) && "/agent/reset-class".equals(path)) {
             JsonNode body = readJson(exchange);
             String classId = text(body, "classId", text(body, "className", null));
-            write(exchange, 200, runtime.resetClass(classId, actor(exchange)));
+            runtime.markEmergency(actor(exchange));
+            ResetClassResult result = runtime.resetClass(classId, actor(exchange));
+            write(exchange, 200, result);
             return;
         }
         if ("POST".equals(method) && "/agent/shutdown".equals(path)) {

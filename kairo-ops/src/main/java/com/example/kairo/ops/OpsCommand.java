@@ -24,7 +24,7 @@ public final class OpsCommand {
         }
     }
 
-    static int execute(String[] args) {
+    public static int execute(String[] args) {
         try {
             OpsOptions options = OpsOptions.parse(args);
             HttpResponse<String> response = send(options);
@@ -69,6 +69,7 @@ public final class OpsCommand {
             case "disable-rule" -> new RequestSpec("POST", "/v1/rules/" + encode(options.ruleId()) + "/disable",
                     body(options));
             case "disable-all" -> new RequestSpec("POST", "/v1/agent/disable-all", body(options));
+            case "enable-all" -> new RequestSpec("POST", "/v1/agent/enable-all", body(options));
             case "remove-rule" -> new RequestSpec("DELETE", "/v1/rules/" + encode(options.ruleId()), body(options));
             case "reset-class" -> new RequestSpec("POST", "/v1/agent/reset-class",
                     "{\"classId\":\"" + escape(options.classId()) + "\",\"reason\":\""
@@ -96,14 +97,33 @@ public final class OpsCommand {
     }
 
     private static void appendAudit(OpsOptions options, int status, String response) throws IOException {
-        Path audit = Path.of(System.getProperty("user.home"), ".kairo", "ops-audit.jsonl");
-        Files.createDirectories(audit.getParent());
+        Path audit = auditPath();
+        Path parent = audit.toAbsolutePath().getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
         String line = "{\"timestamp\":\"" + Instant.now() + "\",\"command\":\""
                 + escape(options.command()) + "\",\"eventId\":\"" + escape(options.eventId())
                 + "\",\"reason\":\"" + escape(options.reason()) + "\",\"status\":" + status
                 + ",\"response\":\"" + escape(response) + "\"}" + System.lineSeparator();
         Files.writeString(audit, line, StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+    }
+
+    /**
+     * The local audit file. Defaults to {@code ~/.kairo/ops-audit.jsonl}; overridable with the
+     * {@code kairo.ops.audit.path} system property or {@code KAIRO_OPS_AUDIT_PATH} environment
+     * variable so deployments (and tests) can redirect the audit without changing the home dir.
+     */
+    static Path auditPath() {
+        String override = System.getProperty("kairo.ops.audit.path");
+        if (override == null || override.isBlank()) {
+            override = System.getenv("KAIRO_OPS_AUDIT_PATH");
+        }
+        if (override != null && !override.isBlank()) {
+            return Path.of(override);
+        }
+        return Path.of(System.getProperty("user.home"), ".kairo", "ops-audit.jsonl");
     }
 
     private record RequestSpec(String method, String path, String body) {

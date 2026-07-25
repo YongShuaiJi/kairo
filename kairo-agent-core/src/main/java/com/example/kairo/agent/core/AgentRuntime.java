@@ -103,6 +103,15 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     private final long startTimeMillis = System.currentTimeMillis();
     private volatile boolean globallyEnabled = true;
     private volatile String loadMode = "unknown";
+
+    /**
+     * V1.7 M1-F &sect;8.6 item 4: set by a local emergency op through the loopback Agent API
+     * ({@code disable-all}/{@code reset-all}/{@code reset-class}) so the Platform, once it reconnects
+     * and refreshes the runtime snapshot, can recognize the operator's manual recovery and refrain
+     * from blindly re-applying desired state that would undo it. Cleared by {@code enable-all} (the
+     * explicit resume), so reconciliation resumes only after the operator has reviewed and resumed.
+     */
+    private volatile boolean emergencyHeld = false;
     private final CallSiteScanner callSiteScanner = new CallSiteScanner();
 
     /**
@@ -411,6 +420,45 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
             disableAllLocked(disabled);
         } finally {
             snapshotLock.writeLock().unlock();
+        }
+    }
+
+    /**
+     * V1.7 M1-F &sect;8.6 item 4: mark the agent as locally emergency-operated through the loopback api
+     * ({@code disable-all}/{@code reset-all}/{@code reset-class}). The flag is reported in the runtime
+     * snapshot so Platform reconciliation defers re-application rather than blindly undoing the
+     * operator's manual recovery. Cleared by {@code enable-all} (the explicit resume).
+     */
+    public void markEmergency(String actor) {
+        snapshotLock.writeLock().lock();
+        try {
+            emergencyHeld = true;
+            eventBuffer.record("agent.emergency.hold", actor, null, null,
+                    "Local emergency operation; Platform reconciliation will defer re-application until cleared");
+        } finally {
+            snapshotLock.writeLock().unlock();
+        }
+    }
+
+    /** V1.7 M1-F &sect;8.6 item 4: clear the emergency hold (the explicit resume, {@code enable-all}). */
+    public void clearEmergency(String actor) {
+        snapshotLock.writeLock().lock();
+        try {
+            emergencyHeld = false;
+            eventBuffer.record("agent.emergency.cleared", actor, null, null,
+                    "Emergency hold cleared; Platform reconciliation may resume");
+        } finally {
+            snapshotLock.writeLock().unlock();
+        }
+    }
+
+    /** V1.7 M1-F: whether a local emergency op has marked the agent (reported in the snapshot). */
+    public boolean emergencyHeld() {
+        snapshotLock.readLock().lock();
+        try {
+            return emergencyHeld;
+        } finally {
+            snapshotLock.readLock().unlock();
         }
     }
 
@@ -1009,6 +1057,7 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                     cons -> degradedClasses.forEach(cons),
                     agentVersion(),
                     disabled(),
+                    emergencyHeld(),
                     agentId,
                     processStartId);
         } finally {

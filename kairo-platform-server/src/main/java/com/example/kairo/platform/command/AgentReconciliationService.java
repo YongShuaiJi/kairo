@@ -26,6 +26,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.sql.Timestamp;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -87,6 +88,7 @@ public class AgentReconciliationService {
     static final String RESET_CLASS = "RESET_CLASS";
     private static final int CONVERGE_MAX_ATTEMPTS = 10;
     private static final int REFRESH_MAX_ATTEMPTS = 5;
+    private static final Duration EMERGENCY_REFRESH_INTERVAL = Duration.ofSeconds(30);
 
     private final AgentRuntimeStateMapper stateMapper;
     private final AgentCommandService commandService;
@@ -413,6 +415,27 @@ public class AgentReconciliationService {
             if (actual.invalidReason() != null) {
                 return new ReconciliationResult(0, 0, 0, 0, List.of(actual.invalidReason()));
             }
+        }
+
+        // V1.7 M1-F §8.6 item 4: the agent reports a local emergency op (disable-all / reset-all /
+        // reset-class through the loopback api) performed while the Platform was unavailable. Do not
+        // blindly re-apply desired state that would undo the operator's manual recovery. Surface the
+        // hold, request a fresh snapshot, and skip convergence + compensation until the operator
+        // explicitly resumes with `enable-all` (loopback), which clears the emergency flag.
+        if (actual.emergency()) {
+            eventWriter.recordEvent(context, "reconciliation.emergency_hold", "agent_instance", agentId, 1,
+                    Map.of(), Map.of("emergency", true),
+                    "DEGRADED", "紧急保持：Agent 报告本地紧急操作，对账暂缓以避免撤销人工恢复（用 enable-all 清除）",
+                    Map.of("agentId", agentId));
+            // Do not enqueue a new REFRESH after every REFRESH ack: that would create a permanent
+            // command loop while an operator intentionally keeps the hold active. The scheduled
+            // reconciler samples at most once per interval so it can eventually observe enable-all.
+            if (snapshotReceivedAt == null
+                    || !snapshotReceivedAt.toInstant().plus(EMERGENCY_REFRESH_INTERVAL)
+                    .isAfter(clock.instant())) {
+                requestSnapshot(context, agentId);
+            }
+            return new ReconciliationResult(0, 0, 0, 0, List.of("emergency_hold"));
         }
 
         // V1.7 M1-E §8.5: complete any pending precise unloads for this instance BEFORE reading the
@@ -1095,13 +1118,15 @@ public class AgentReconciliationService {
         final List<ChainSnapshot> chains;
         final Map<String, Long> ruleVersions;
         private final String invalidReason;
+        private final boolean emergency;
         private final Map<String, ChainSnapshot> chainsByTarget;
 
         private ActualState(List<ChainSnapshot> chains, Map<String, Long> ruleVersions,
-                            String invalidReason) {
+                            String invalidReason, boolean emergency) {
             this.chains = chains;
             this.ruleVersions = ruleVersions;
             this.invalidReason = invalidReason;
+            this.emergency = emergency;
             this.chainsByTarget = new LinkedHashMap<>();
             for (ChainSnapshot chain : chains) {
                 chainsByTarget.putIfAbsent(targetKey(chain), chain);
@@ -1109,11 +1134,11 @@ public class AgentReconciliationService {
         }
 
         static ActualState empty() {
-            return new ActualState(List.of(), Map.of(), null);
+            return new ActualState(List.of(), Map.of(), null, false);
         }
 
         static ActualState invalid(String reason) {
-            return new ActualState(List.of(), Map.of(), reason);
+            return new ActualState(List.of(), Map.of(), reason, false);
         }
 
         static ActualState of(AgentRuntimeSnapshot snapshot) {
@@ -1124,11 +1149,16 @@ public class AgentReconciliationService {
                 }
             }
             List<ChainSnapshot> chains = snapshot.chains() == null ? List.of() : snapshot.chains();
-            return new ActualState(chains, ruleVersions, null);
+            return new ActualState(chains, ruleVersions, null, snapshot.emergency());
         }
 
         ChainSnapshot chainByTarget(String targetKey) {
             return chainsByTarget.get(targetKey);
+        }
+
+        /** V1.7 M1-F §8.6 item 4: the agent performed a local emergency op through the loopback api. */
+        boolean emergency() {
+            return emergency;
         }
 
         /** Classes whose actual chain still carries the formal rule (version suffix normalized). */

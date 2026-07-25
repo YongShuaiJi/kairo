@@ -71,7 +71,7 @@ final class RuntimeStateSnapshotBuilder {
      */
     static AgentRuntimeSnapshot build(Consumer<Consumer<RuleChainSnapshot>> chainSource,
                                        Consumer<BiConsumer<String, String>> degradedSource,
-                                       String agentVersion, boolean disabled,
+                                       String agentVersion, boolean disabled, boolean emergency,
                                        String agentId, String processStartId) {
         TopK<ChainSnapshot> chains = new TopK<>(SnapshotBounds.MAX_CHAINS,
                 Comparator.comparing((ChainSnapshot c) -> c.chainId()));
@@ -114,29 +114,29 @@ final class RuntimeStateSnapshotBuilder {
         int degradedCount = allDegraded.size();
         long measured = measureForCap(allRules, allChains, allDegraded, totalRules, totalChains,
                 totalDegraded, rulesBound, chainsBound, degradedBound, rulesCount, chainsCount, degradedCount,
-                agentVersion, disabled, agentId, processStartId);
+                agentVersion, disabled, emergency, agentId, processStartId);
         chainsCount = reduceToByteCap(1, rulesCount, chainsCount, degradedCount, measured,
                 allRules, allChains, allDegraded, totalRules, totalChains, totalDegraded,
-                rulesBound, chainsBound, degradedBound, agentVersion, disabled, agentId, processStartId);
+                rulesBound, chainsBound, degradedBound, agentVersion, disabled, emergency, agentId, processStartId);
         measured = measureForCap(allRules, allChains, allDegraded, totalRules, totalChains,
                 totalDegraded, rulesBound, chainsBound, degradedBound, rulesCount, chainsCount, degradedCount,
-                agentVersion, disabled, agentId, processStartId);
+                agentVersion, disabled, emergency, agentId, processStartId);
         rulesCount = reduceToByteCap(0, rulesCount, chainsCount, degradedCount, measured,
                 allRules, allChains, allDegraded, totalRules, totalChains, totalDegraded,
-                rulesBound, chainsBound, degradedBound, agentVersion, disabled, agentId, processStartId);
+                rulesBound, chainsBound, degradedBound, agentVersion, disabled, emergency, agentId, processStartId);
         measured = measureForCap(allRules, allChains, allDegraded, totalRules, totalChains,
                 totalDegraded, rulesBound, chainsBound, degradedBound, rulesCount, chainsCount, degradedCount,
-                agentVersion, disabled, agentId, processStartId);
+                agentVersion, disabled, emergency, agentId, processStartId);
         degradedCount = reduceToByteCap(2, rulesCount, chainsCount, degradedCount, measured,
                 allRules, allChains, allDegraded, totalRules, totalChains, totalDegraded,
-                rulesBound, chainsBound, degradedBound, agentVersion, disabled, agentId, processStartId);
+                rulesBound, chainsBound, degradedBound, agentVersion, disabled, emergency, agentId, processStartId);
 
         long finalBytes = resolveSerializedBytes(allRules, allChains, allDegraded, totalRules,
                 totalChains, totalDegraded, rulesBound, chainsBound, degradedBound,
-                rulesCount, chainsCount, degradedCount, agentVersion, disabled, agentId, processStartId);
+                rulesCount, chainsCount, degradedCount, agentVersion, disabled, emergency, agentId, processStartId);
         return assemble(allRules, allChains, allDegraded, totalRules, totalChains, totalDegraded,
                 rulesBound, chainsBound, degradedBound, rulesCount, chainsCount, degradedCount,
-                agentVersion, disabled, agentId, processStartId, finalBytes);
+                agentVersion, disabled, emergency, agentId, processStartId, finalBytes);
     }
 
     /**
@@ -183,7 +183,8 @@ final class RuntimeStateSnapshotBuilder {
                                        long current, List<RuleSnapshot> allRules, List<ChainSnapshot> allChains,
                                        List<String> allDegraded, int totalRules, int totalChains, int totalDegraded,
                                        int rulesBound, int chainsBound, int degradedBound,
-                                       String agentVersion, boolean disabled, String agentId, String processStartId) {
+                                       String agentVersion, boolean disabled, boolean emergency,
+                                       String agentId, String processStartId) {
         if (current <= SnapshotBounds.MAX_SERIALIZED_BYTES) {
             return countAt(idx, rulesCount, chainsCount, degradedCount);
         }
@@ -197,7 +198,7 @@ final class RuntimeStateSnapshotBuilder {
             int d = idx == 2 ? mid : degradedCount;
             long measured = measureForCap(allRules, allChains, allDegraded, totalRules, totalChains,
                     totalDegraded, rulesBound, chainsBound, degradedBound, r, c, d,
-                    agentVersion, disabled, agentId, processStartId);
+                    agentVersion, disabled, emergency, agentId, processStartId);
             if (measured <= SnapshotBounds.MAX_SERIALIZED_BYTES) {
                 best = mid;
                 lo = mid + 1;
@@ -226,10 +227,11 @@ final class RuntimeStateSnapshotBuilder {
                                       List<String> allDegraded, int totalRules, int totalChains, int totalDegraded,
                                       int rulesBound, int chainsBound, int degradedBound,
                                       int rulesCount, int chainsCount, int degradedCount,
-                                      String agentVersion, boolean disabled, String agentId, String processStartId) {
+                                      String agentVersion, boolean disabled, boolean emergency,
+                                      String agentId, String processStartId) {
         return serializedBytes(assemble(allRules, allChains, allDegraded, totalRules, totalChains,
                 totalDegraded, rulesBound, chainsBound, degradedBound, rulesCount, chainsCount, degradedCount,
-                agentVersion, disabled, agentId, processStartId, SnapshotBounds.MAX_SERIALIZED_BYTES));
+                agentVersion, disabled, emergency, agentId, processStartId, SnapshotBounds.MAX_SERIALIZED_BYTES));
     }
 
     /**
@@ -241,12 +243,13 @@ final class RuntimeStateSnapshotBuilder {
                                                 List<String> allDegraded, int totalRules, int totalChains, int totalDegraded,
                                                 int rulesBound, int chainsBound, int degradedBound,
                                                 int rulesCount, int chainsCount, int degradedCount,
-                                                String agentVersion, boolean disabled, String agentId, String processStartId) {
+                                                String agentVersion, boolean disabled, boolean emergency,
+                                                String agentId, String processStartId) {
         long reported = 0L;
         for (int i = 0; i < 4; i++) {
             long measured = serializedBytes(assemble(allRules, allChains, allDegraded, totalRules, totalChains,
                     totalDegraded, rulesBound, chainsBound, degradedBound, rulesCount, chainsCount, degradedCount,
-                    agentVersion, disabled, agentId, processStartId, reported));
+                    agentVersion, disabled, emergency, agentId, processStartId, reported));
             if (measured == reported) {
                 return reported;
             }
@@ -259,7 +262,7 @@ final class RuntimeStateSnapshotBuilder {
                                                   List<String> allDegraded, int totalRules, int totalChains, int totalDegraded,
                                                   int rulesBound, int chainsBound, int degradedBound,
                                                   int rulesCount, int chainsCount, int degradedCount,
-                                                  String agentVersion, boolean disabled, String agentId,
+                                                  String agentVersion, boolean disabled, boolean emergency, String agentId,
                                                   String processStartId, long serializedBytes) {
         List<RuleSnapshot> rules = List.copyOf(allRules.subList(0, Math.min(rulesCount, allRules.size())));
         List<ChainSnapshot> chains = List.copyOf(allChains.subList(0, Math.min(chainsCount, allChains.size())));
@@ -277,6 +280,7 @@ final class RuntimeStateSnapshotBuilder {
                 System.currentTimeMillis(),
                 agentVersion,
                 disabled,
+                emergency,
                 chains,
                 rules,
                 degraded,

@@ -26,6 +26,7 @@ public record AgentRuntimeSnapshot(
         @JsonProperty("observedAt") long observedAt,
         @JsonProperty("agentVersion") String agentVersion,
         @JsonProperty("disabled") boolean disabled,
+        @JsonProperty("emergency") boolean emergency,
         @JsonProperty("chains") List<ChainSnapshot> chains,
         @JsonProperty("rules") List<RuleSnapshot> rules,
         @JsonProperty("degradedClasses") List<String> degradedClasses,

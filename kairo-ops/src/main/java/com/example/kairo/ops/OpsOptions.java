@@ -83,7 +83,7 @@ public final class OpsOptions {
                 require("reason");
                 require("event");
             }
-            case "disable-all", "reset-all", "shutdown-agent" -> {
+            case "disable-all", "enable-all", "reset-all", "shutdown-agent" -> {
                 require("reason");
                 require("event");
             }
