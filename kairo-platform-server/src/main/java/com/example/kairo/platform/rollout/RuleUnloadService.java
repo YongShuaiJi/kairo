@@ -96,13 +96,13 @@ public class RuleUnloadService {
                     Map.of("operationPlanId", operationPlanId));
         }
 
-        List<Map<String, Object>> agents = activeAgentsForSuccessfulExecutions(operationPlanId);
-        if (agents.isEmpty()) {
-            throw PlatformException.conflict("NO_ACTIVE_ROLLOUT_AGENT",
-                    "没有找到该计划成功执行实例对应的在线 Agent，暂时无法卸载",
-                    Map.of("operationPlanId", operationPlanId));
-        }
-
+        // V1.7 M1-E §8.5 item 3: an unload submitted while no agent is reachable no longer fails
+        // with NO_ACTIVE_ROLLOUT_AGENT and no longer fabricates UNLOADED. The operation transitions
+        // to UNLOADING and a rollback_execution is created as the persistent compensation record;
+        // beginPreciseUnload records each instance's own outcome (UNLOADING for a reachable agent,
+        // OFFLINE_PENDING for an unreachable one) and the M1-E compensation sweep completes the
+        // pending instances from the real actual snapshot on reconnect. The fencing token is
+        // consumed because the unload is genuinely initiated.
         fencingTokenService.consume(context, "operation_plan", operationPlanId, fencingToken);
         Instant now = clock.instant();
         String rollbackId = businessIdService.nextId("rollback_execution",
@@ -116,35 +116,23 @@ public class RuleUnloadService {
                     Map.of("id", operationPlanId, "expectedVersion", currentVersion));
         }
         unloadMapper.insertRollbackExecution(rollbackId, operationPlanId, "RESET_CLASS", reason,
+                classId, className,
                 context.actor(), timestamp(now));
 
-        for (Map<String, Object> agent : agents) {
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("commandType", "RESET_CLASS");
-            payload.put("operationPlanId", operationPlanId);
-            payload.put("rollbackExecutionId", rollbackId);
-            payload.put("ruleId", operation.get("resource_id"));
-            payload.put("ruleVersion", operation.get("resource_version"));
-            payload.put("instanceId", agent.get("instance_id"));
-            payload.put("classId", classId);
-            payload.put("className", className);
-            commandService.enqueue(context, String.valueOf(agent.get("id")), "RESET_CLASS",
-                    payload, "unload:" + operationPlanId + ":" + agent.get("id"),
-                    10, now);
-        }
+        int commandCount = commandService.beginPreciseUnload(context, operation, rollbackId, classId, className);
 
         Map<String, Object> updatedOperation = operation(operationPlanId);
         eventWriter.recordEvent(context, "operation_plan.unload", "operation_plan",
                 operationPlanId, ((Number) updatedOperation.get("version")).longValue(),
                 operation, updatedOperation, "UNLOADING", reason,
-                Map.of("rollbackExecutionId", rollbackId, "commandCount", agents.size(),
+                Map.of("rollbackExecutionId", rollbackId, "commandCount", commandCount,
                         "classId", classId));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("operationPlan", updatedOperation);
         Map<String, Object> unloadExecution = unloadExecution(rollbackId);
         result.put("unloadExecution", unloadExecution);
         result.put("rollbackExecution", unloadExecution);
-        result.put("commandCount", agents.size());
+        result.put("commandCount", commandCount);
         result.put("classId", classId);
         return result;
     }
@@ -156,58 +144,49 @@ public class RuleUnloadService {
         List<Map<String, Object>> operations = normalize(unloadMapper.operationsForRule(ruleId, ruleVersion));
         Instant now = clock.instant();
         int commands = 0;
-        int markedRolledBack = 0;
+        int pendingCompensation = 0;
         List<String> affectedOperations = new ArrayList<>();
         for (Map<String, Object> operation : operations) {
             String operationPlanId = String.valueOf(operation.get("id"));
             affectedOperations.add(operationPlanId);
-            boolean dispatched = false;
-            if ("SUCCEEDED".equals(String.valueOf(operation.get("status")))) {
-                List<Map<String, Object>> agents = activeAgentsForSuccessfulExecutions(operationPlanId);
-                if (!agents.isEmpty()) {
-                    Map<String, Object> target = ruleTarget(operation);
-                    String className = String.valueOf(target.getOrDefault("class_name", ""));
-                    Map<String, Object> matcher = PlatformJson.readMap(String.valueOf(
-                            target.getOrDefault("matcher_json", "{}")));
-                    String classId = String.valueOf(matcher.getOrDefault("classId", className));
-                    String rollbackId = businessIdService.nextId("rollback_execution",
-                            eventWriter.rolloutBusinessName(String.valueOf(operation.get("resource_type")),
-                                    String.valueOf(operation.get("resource_id"))));
-                    unloadMapper.insertRollbackExecution(rollbackId, operationPlanId, "RESET_CLASS",
-                            "规则删除自动卸载", context.actor(), timestamp(now));
-                    unloadMapper.markDeletionUnloading(operationPlanId, context.actor(), timestamp(now));
-                    for (Map<String, Object> agent : agents) {
-                        Map<String, Object> payload = new LinkedHashMap<>();
-                        payload.put("commandType", "RESET_CLASS");
-                        payload.put("operationPlanId", operationPlanId);
-                        payload.put("rollbackExecutionId", rollbackId);
-                        payload.put("ruleId", operation.get("resource_id"));
-                        payload.put("ruleVersion", operation.get("resource_version"));
-                        payload.put("instanceId", agent.get("instance_id"));
-                        payload.put("classId", classId);
-                        payload.put("className", className);
-                        commandService.enqueue(context, String.valueOf(agent.get("id")), "RESET_CLASS",
-                                payload, "delete-rule-unload:" + operationPlanId + ":" + agent.get("id"),
-                                10, now);
-                        commands++;
-                    }
-                    dispatched = true;
-                }
+            // V1.7 M1-E §8.5: only a SUCCEEDED operation has applied bytecode to unload. For each
+            // such operation the unload transitions to UNLOADING + a rollback_execution (the
+            // persistent compensation record) and beginPreciseUnload records per-instance outcome
+            // (UNLOADING for a reachable agent, OFFLINE_PENDING for an unreachable one). The previous
+            // markDeletionUnloadedWithoutAgents / markExecutionsUnloaded short-cut that fabricated
+            // UNLOADED when no agent was reachable is removed: a non-SUCCEEDED operation has no
+            // successful execution to unload and is left untouched.
+            if (!"SUCCEEDED".equals(String.valueOf(operation.get("status")))) {
+                continue;
             }
-            if (!dispatched) {
-                unloadMapper.markDeletionUnloadedWithoutAgents(operationPlanId, context.actor(), timestamp(now));
-                unloadMapper.markExecutionsUnloaded(operationPlanId, timestamp(now), timestamp(now));
-                markedRolledBack++;
-            }
+            Map<String, Object> target = ruleTarget(operation);
+            String className = String.valueOf(target.getOrDefault("class_name", ""));
+            Map<String, Object> matcher = PlatformJson.readMap(String.valueOf(
+                    target.getOrDefault("matcher_json", "{}")));
+            String classId = String.valueOf(matcher.getOrDefault("classId", className));
+            String rollbackId = businessIdService.nextId("rollback_execution",
+                    eventWriter.rolloutBusinessName(String.valueOf(operation.get("resource_type")),
+                            String.valueOf(operation.get("resource_id"))));
+            unloadMapper.insertRollbackExecution(rollbackId, operationPlanId, "RESET_CLASS",
+                    "规则删除自动卸载", classId, className, context.actor(), timestamp(now));
+            unloadMapper.markDeletionUnloading(operationPlanId, context.actor(), timestamp(now));
+            int dispatched = commandService.beginPreciseUnload(context, operation, rollbackId,
+                    classId, className);
+            commands += dispatched;
+            pendingCompensation += countOfflinePending(operationPlanId);
         }
         return Map.of(
                 "ruleId", ruleId,
                 "ruleVersion", ruleVersion == null ? "" : ruleVersion,
                 "operationCount", operations.size(),
                 "commandsDispatched", commands,
-                "markedRolledBack", markedRolledBack,
+                "pendingCompensation", pendingCompensation,
                 "operationIds", affectedOperations
         );
+    }
+
+    private int countOfflinePending(String operationPlanId) {
+        return (int) commandService.offlinePendingCount(operationPlanId);
     }
 
     private Map<String, Object> ruleTarget(Map<String, Object> operation) {
@@ -220,10 +199,6 @@ public class RuleUnloadService {
                             "ruleVersion", operation.get("resource_version")));
         }
         return rows.get(0);
-    }
-
-    private List<Map<String, Object>> activeAgentsForSuccessfulExecutions(String operationPlanId) {
-        return normalize(unloadMapper.activeAgentsForSuccessfulExecutions(operationPlanId));
     }
 
     private Map<String, Object> operation(String id) {

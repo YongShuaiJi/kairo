@@ -21,6 +21,8 @@ public interface RuleUnloadMapper {
                                 @Param("operationPlanId") String operationPlanId,
                                 @Param("rollbackType") String rollbackType,
                                 @Param("reason") String reason,
+                                @Param("targetClassId") String targetClassId,
+                                @Param("targetClassName") String targetClassName,
                                 @Param("createdBy") String createdBy,
                                 @Param("createdAt") Timestamp createdAt);
 
@@ -31,18 +33,17 @@ public interface RuleUnloadMapper {
                               @Param("updatedBy") String updatedBy,
                               @Param("updatedAt") Timestamp updatedAt);
 
-    int markDeletionUnloadedWithoutAgents(@Param("id") String id,
-                                          @Param("updatedBy") String updatedBy,
-                                          @Param("updatedAt") Timestamp updatedAt);
-
-    int markExecutionsUnloaded(@Param("operationPlanId") String operationPlanId,
-                               @Param("finishedAt") Timestamp finishedAt,
-                               @Param("updatedAt") Timestamp updatedAt);
-
     List<Map<String, Object>> ruleTarget(@Param("ruleId") Object ruleId,
                                          @Param("ruleVersion") Object ruleVersion);
 
-    List<Map<String, Object>> activeAgentsForSuccessfulExecutions(@Param("operationPlanId") String operationPlanId);
+    /**
+     * V1.7 M1-E &sect;8.5: the single active agent for an instance (most recent heartbeat), or
+     * null when the instance's agent is offline. Used per-instance during an unload so each
+     * instance records its own outcome: a reachable agent gets a precise RESET_CLASS dispatched
+     * (execution &rarr; UNLOADING) while an unreachable one is recorded OFFLINE_PENDING for
+     * compensation on reconnect.
+     */
+    Map<String, Object> activeAgentForInstance(@Param("instanceId") String instanceId);
 
     Map<String, Object> rollbackExecution(@Param("id") String id);
 }

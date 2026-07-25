@@ -396,6 +396,11 @@ public class AgentCommandService {
         }
         advanceRolloutFromCommand(context, commandId, rolloutSuccess, rolloutError, result);
         advanceRollbackFromCommand(context, updated);
+        if ("RESET_CLASS".equals(commandType)
+                && updated.get("rollback_execution_id") != null
+                && agentReconciliationService != null) {
+            registerAfterCommitRuntimeStateRefresh(String.valueOf(updated.get("agent_id")));
+        }
         return updated;
     }
 
@@ -405,36 +410,122 @@ public class AgentCommandService {
             return;
         }
         String rollbackId = String.valueOf(rollbackValue);
-        List<Map<String, Object>> commands = normalizeRows(commandMapper.commandsByRollbackExecution(rollbackId));
-        if (commands.isEmpty() || commands.stream().anyMatch(row ->
-                !"ACKED".equals(String.valueOf(row.get("status")))
-                        && !"FAILED".equals(String.valueOf(row.get("status"))))) {
-            return;
-        }
-        boolean succeeded = commands.stream()
-                .allMatch(row -> "ACKED".equals(String.valueOf(row.get("status"))));
         Map<String, Object> rollback = normalizeRow(commandMapper.rollbackExecution(rollbackId));
         if (!"DISPATCHED".equals(String.valueOf(rollback.get("status")))) {
             return;
         }
+        String operationPlanId = String.valueOf(rollback.get("operation_plan_id"));
         Instant now = clock.instant();
-        String rollbackStatus = succeeded ? "SUCCEEDED" : "FAILED";
+        // V1.7 M1-E §8.5 item 5: record this acking instance's own outcome before deciding
+        // aggregate completion, so a multi-target unload never lets the operation status override a
+        // per-instance fact. The command's payload identifies the instance; its post-ack status
+        // (ACKED / FAILED) says whether the precise RESET_CLASS actually unloaded the class.
+        Map<String, Object> payload = PlatformJson.readMap(String.valueOf(command.get("payload_json")));
+        boolean acked = resetClassSucceeded(command);
+        String instanceId = String.valueOf(payload.get("instanceId"));
+        String ruleId = String.valueOf(payload.get("ruleId"));
+        long ruleVersion = asPayloadLong(payload.get("ruleVersion"));
+        String errorMessage = acked ? null : optionalCommandError(command,
+                "卸载命令失败、耗尽重试或 Agent 报告降级结果");
+        if (!instanceId.isBlank() && !"null".equals(instanceId)) {
+            commandMapper.updateExecutionStatus(operationPlanId, instanceId,
+                    acked ? "UNLOADED" : "FAILED", errorMessage, timestamp(now),
+                    context.actor(), timestamp(now));
+            if (acked) {
+                commandMapper.updateRuleRuntimeStatusRemoved(ruleId, ruleVersion, instanceId, timestamp(now));
+            }
+        }
+        // Aggregate completion: only when EVERY execution for the operation is terminal. An
+        // OFFLINE_PENDING instance (no command yet) or an in-flight UNLOADING one keeps the
+        // operation UNLOADING so the unload is never falsely reported complete.
+        tryCompleteUnload(context, rollbackId, operationPlanId);
+    }
+
+    /**
+     * V1.7 M1-E &sect;8.5: complete a precise unload's rollback + operation once every per-instance
+     * execution is terminal. Shared by the RESET_CLASS ack path (already in the ACK transaction) and
+     * the offline-unload compensation (called through the Spring proxy, so this transaction wraps the
+     * rollback + operation-status writes atomically) so the aggregate never overrides a per-instance
+     * fact: an OFFLINE_PENDING or in-flight UNLOADING instance leaves the operation UNLOADING.
+     * All-UNLOADED &rarr; rollback SUCCEEDED + operation UNLOADED; any FAILED &rarr; rollback FAILED +
+     * operation FAILED (diagnosable terminal, never a permanent UNLOADING).
+     */
+    @Transactional
+    void tryCompleteUnload(RequestContext context, String rollbackId, String operationPlanId) {
+        List<Map<String, Object>> executions = normalizeRows(commandMapper.executionsByOperation(operationPlanId));
+        if (executions.isEmpty()
+                || executions.stream().anyMatch(row -> !terminalUnloadStatus(String.valueOf(row.get("status"))))) {
+            return;
+        }
+        Map<String, Object> rollback = normalizeRow(commandMapper.rollbackExecution(rollbackId));
+        if (!"DISPATCHED".equals(String.valueOf(rollback.get("status")))) {
+            return;
+        }
+        boolean allUnloaded = executions.stream()
+                .allMatch(row -> "UNLOADED".equals(String.valueOf(row.get("status"))));
+        Instant now = clock.instant();
+        String rollbackStatus = allUnloaded ? "SUCCEEDED" : "FAILED";
         int rollbackUpdated = commandMapper.completeRollbackExecution(rollbackId, rollbackStatus, timestamp(now));
         if (rollbackUpdated == 0) {
             return;
         }
-        String operationPlanId = String.valueOf(rollback.get("operation_plan_id"));
-        String operationStatus = succeeded ? "UNLOADED" : "FAILED";
+        String operationStatus = allUnloaded ? "UNLOADED" : "FAILED";
         commandMapper.updateUnloadingOperationStatus(operationPlanId, operationStatus, context.actor(), timestamp(now));
-        if (succeeded) {
-            commandMapper.markRuntimeStatusesRemovedForOperation(operationPlanId, timestamp(now));
-        }
         Map<String, Object> updatedOperation = normalizeRow(commandMapper.operationPlan(operationPlanId));
         eventWriter.recordEvent(context, "operation_plan.unload_complete", "operation_plan",
                 operationPlanId, ((Number) updatedOperation.get("version")).longValue(),
                 rollback, updatedOperation, operationStatus,
-                succeeded ? "规则字节码卸载完成" : "规则字节码卸载失败",
-                Map.of("rollbackExecutionId", rollbackId, "commandCount", commands.size()));
+                allUnloaded ? "规则字节码卸载完成" : "规则字节码卸载失败",
+                Map.of("rollbackExecutionId", rollbackId, "executionCount", executions.size()));
+    }
+
+    /** V1.7 M1-E §8.5: a rollout_instance_execution status terminal for the unload phase. */
+    private static boolean terminalUnloadStatus(String status) {
+        return "UNLOADED".equals(status) || "FAILED".equals(status)
+                || "CANCELLED".equals(status) || "ABANDONED".equals(status);
+    }
+
+    /** V1.7 M1-E §8.5: count instances of an operation recorded OFFLINE_PENDING (compensation). */
+    public int offlinePendingCount(String operationPlanId) {
+        return (int) normalizeRows(commandMapper.executionsByOperation(operationPlanId)).stream()
+                .filter(row -> "OFFLINE_PENDING".equals(String.valueOf(row.get("status"))))
+                .count();
+    }
+
+    private static long asPayloadLong(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value == null) {
+            return 0L;
+        }
+        try {
+            return Long.parseLong(String.valueOf(value));
+        } catch (NumberFormatException ignored) {
+            return 0L;
+        }
+    }
+
+    private static String optionalCommandError(Map<String, Object> command, String fallback) {
+        Object error = command.get("error_message");
+        if (error == null || String.valueOf(error).isBlank()) {
+            return fallback;
+        }
+        return String.valueOf(error);
+    }
+
+    /** Command-level ACK only means RESET_CLASS was processed; degraded/failed rules are failure. */
+    private static boolean resetClassSucceeded(Map<String, Object> command) {
+        if (!"ACKED".equals(String.valueOf(command.get("status")))) {
+            return false;
+        }
+        Map<String, Object> result = PlatformJson.readMap(
+                String.valueOf(command.getOrDefault("result_json", "{}")));
+        if (Boolean.parseBoolean(String.valueOf(result.getOrDefault("degraded", false)))) {
+            return false;
+        }
+        Object failedRules = result.get("failedRules");
+        return !(failedRules instanceof Map<?, ?> failures) || failures.isEmpty();
     }
 
     /**
@@ -558,54 +649,101 @@ public class AgentCommandService {
         String rollbackId = businessIdService.nextId("rollback_execution",
                 eventWriter.rolloutBusinessName(String.valueOf(operation.get("resource_type")),
                         String.valueOf(operation.get("resource_id"))));
+        String[] targetClass = resolveUnloadTargetClass(operation);
         commandMapper.insertRollbackExecution(rollbackId, operationPlanId, "实例执行失败后自动卸载",
-                context.actor(), timestamp(now));
-        // V1.4: auto-unload is a precise per-class rollback, not a coarse RESET_ALL.
-        // Resolve the failed rule's target class and dispatch RESET_CLASS so only the
-        // affected class is retransformed with the remaining Kairo plan; other classes
-        // and other agents' advice are preserved.
-        String ruleId = String.valueOf(operation.get("resource_id"));
-        Object ruleVersion = operation.get("resource_version");
-        String classId = "";
-        String className = "";
-        if (ruleUnloadMapper != null) {
-            List<Map<String, Object>> targets = normalizeRows(
-                    ruleUnloadMapper.ruleTarget(ruleId, ruleVersion));
-            if (!targets.isEmpty()) {
-                Map<String, Object> target = targets.get(0);
-                className = String.valueOf(target.getOrDefault("class_name", ""));
-                Map<String, Object> matcher = PlatformJson.readMap(String.valueOf(
-                        target.getOrDefault("matcher_json", "{}")));
-                classId = String.valueOf(matcher.getOrDefault("classId", className));
-            }
-        }
-        List<Map<String, Object>> agents = normalizeRows(commandMapper.activeAgentsForOperation(operationPlanId));
-        for (Map<String, Object> agent : agents) {
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("commandType", "RESET_CLASS");
-            payload.put("operationPlanId", operationPlanId);
-            payload.put("rollbackExecutionId", rollbackId);
-            payload.put("ruleId", ruleId);
-            payload.put("ruleVersion", ruleVersion);
-            payload.put("instanceId", agent.get("instance_id"));
-            payload.put("classId", classId);
-            payload.put("className", className);
-            enqueue(context, String.valueOf(agent.get("id")), "RESET_CLASS",
-                    payload, "unload:" + operationPlanId + ":" + agent.get("id"), 10, now);
-        }
-        if (agents.isEmpty()) {
-            commandMapper.markRollbackSucceeded(rollbackId, timestamp(now));
-            commandMapper.markUnloadingOperationUnloadedWithoutAgents(operationPlanId, context.actor(), timestamp(now));
-        }
+                targetClass[0], targetClass[1], context.actor(), timestamp(now));
+        // V1.4 / V1.7 M1-E §8.5: auto-unload is a precise per-class rollback (never RESET_ALL).
+        // Each successful-execution instance records its own outcome: a reachable agent gets a
+        // RESET_CLASS (execution -> UNLOADING); an unreachable one is recorded OFFLINE_PENDING for
+        // compensation on reconnect. The previous "no agents -> fabricate UNLOADED" short-cut is
+        // removed: an unload that cannot reach its agents stays UNLOADING (a real, diagnosable
+        // non-terminal) and completes from the actual snapshot when an agent returns.
+        int dispatched = beginPreciseUnload(context, operation, rollbackId, targetClass[0], targetClass[1]);
         Map<String, Object> current = normalizeRow(commandMapper.operationPlan(operationPlanId));
         eventWriter.recordEvent(context, "operation_plan.auto_unload", "operation_plan",
                 operationPlanId, ((Number) current.get("version")).longValue(),
                 operation, current, "UNLOADING", "实例执行失败，已启动精确卸载",
                 Map.of("rollbackExecutionId", rollbackId,
                         "executionCount", executions.size(),
-                        "commandCount", agents.size(),
-                        "classId", classId,
+                        "commandCount", dispatched,
+                        "classId", targetClass[0],
                         "commandType", "RESET_CLASS"));
+    }
+
+    /**
+     * V1.7 M1-E &sect;8.5: resolve the precise target class for an unload operation from its
+     * authoritative {@code rule_target} (the same source a rollout uses). Returns
+     * {@code [classId, className]}; both empty when no target can be resolved (the compensation
+     * path then falls back to the actual snapshot's chain class).
+     */
+    private String[] resolveUnloadTargetClass(Map<String, Object> operation) {
+        String ruleId = String.valueOf(operation.get("resource_id"));
+        Object ruleVersion = operation.get("resource_version");
+        if (ruleUnloadMapper == null) {
+            return new String[]{"", ""};
+        }
+        List<Map<String, Object>> targets = normalizeRows(ruleUnloadMapper.ruleTarget(ruleId, ruleVersion));
+        if (targets.isEmpty()) {
+            return new String[]{"", ""};
+        }
+        Map<String, Object> target = targets.get(0);
+        String className = String.valueOf(target.getOrDefault("class_name", ""));
+        Map<String, Object> matcher = PlatformJson.readMap(String.valueOf(
+                target.getOrDefault("matcher_json", "{}")));
+        String classId = String.valueOf(matcher.getOrDefault("classId", className));
+        return new String[]{classId, className};
+    }
+
+    /**
+     * V1.7 M1-E &sect;8.5: dispatch a precise per-class {@code RESET_CLASS} for every successful
+     * execution of an unload operation, recording each instance's own outcome so the aggregate
+     * operation status can never override a per-instance fact.
+     *
+     * <p>A reachable agent receives a {@code RESET_CLASS} carrying the {@code rollbackExecutionId}
+     * (its ack completes the rollback/operation via {@link #advanceRollbackFromCommand}) and the
+     * execution moves to {@code UNLOADING}. An instance whose agent is unreachable is recorded
+     * {@code OFFLINE_PENDING}; the M1-E compensation sweep completes it from the real actual
+     * snapshot on reconnect. The idempotency key {@code unload:<operationPlanId>:<agentId>} is
+     * stable, so a retry or a later compensation pass never re-expands the target set or
+     * re-dispatches a command already in flight. Returns the number of commands dispatched.
+     */
+    public int beginPreciseUnload(RequestContext context, Map<String, Object> operation,
+                                  String rollbackId, String classId, String className) {
+        String operationPlanId = String.valueOf(operation.get("id"));
+        Object ruleId = operation.get("resource_id");
+        Object ruleVersion = operation.get("resource_version");
+        Instant now = clock.instant();
+        int dispatched = 0;
+        for (Map<String, Object> raw : normalizeRows(commandMapper.executionsByOperation(operationPlanId))) {
+            if (!"SUCCEEDED".equals(String.valueOf(raw.get("status")))) {
+                continue; // an instance already unloading / unloaded / failed keeps its own state
+            }
+            String instanceId = String.valueOf(raw.get("instance_id"));
+            Map<String, Object> agentRow = ruleUnloadMapper == null
+                    ? null : ruleUnloadMapper.activeAgentForInstance(instanceId);
+            Map<String, Object> agent = agentRow == null ? Map.of() : normalizeRow(agentRow);
+            if (agent == null || agent.get("id") == null) {
+                commandMapper.updateExecutionStatus(operationPlanId, instanceId, "OFFLINE_PENDING",
+                        "Agent 离线，卸载待补偿", null, context.actor(), timestamp(now));
+                continue;
+            }
+            String agentId = String.valueOf(agent.get("id"));
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("commandType", "RESET_CLASS");
+            payload.put("operationPlanId", operationPlanId);
+            payload.put("rollbackExecutionId", rollbackId);
+            payload.put("ruleId", ruleId);
+            payload.put("ruleVersion", ruleVersion);
+            payload.put("instanceId", instanceId);
+            payload.put("classId", classId);
+            payload.put("className", className);
+            enqueue(context, agentId, "RESET_CLASS", payload,
+                    "unload:" + operationPlanId + ":" + agentId, 10, now);
+            commandMapper.updateExecutionStatus(operationPlanId, instanceId, "UNLOADING",
+                    null, null, context.actor(), timestamp(now));
+            dispatched++;
+        }
+        return dispatched;
     }
 
     private String commandBusinessName(String commandType, Map<String, Object> payload) {
@@ -729,6 +867,35 @@ public class AgentCommandService {
             });
         } else {
             reconcile.run();
+        }
+    }
+
+    /**
+     * A precise runtime mutation invalidates the persisted actual snapshot. Request a fresh one
+     * after the ACK commits; reconciliation defers completed unloads while the old snapshot
+     * predates rollback completion, preventing a duplicate RESET_CLASS.
+     */
+    private void registerAfterCommitRuntimeStateRefresh(String agentId) {
+        Runnable refresh = () -> {
+            try {
+                RequestContext systemContext = new RequestContext("system",
+                        "refresh-after-unload-" + UUID.randomUUID(),
+                        "127.0.0.1", "system", "ack");
+                agentReconciliationService.requestSnapshot(systemContext, agentId);
+            } catch (RuntimeException e) {
+                log.warn("Post-unload runtime-state refresh for agent {} failed: {}",
+                        agentId, e.getMessage(), e);
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    refresh.run();
+                }
+            });
+        } else {
+            refresh.run();
         }
     }
 

@@ -105,6 +105,17 @@ public final class ReconciliationTestSupport {
                 status, ruleId, version, instanceId);
     }
 
+    /** V1.7 M1-E &sect;8.5: insert a rule_runtime_status row for an instance (rule already seeded). */
+    public static void seedRuleRuntimeStatus(JdbcTemplate jdbc, String ruleId, long version,
+                                             String instanceId, String status) {
+        jdbc.update("""
+                insert into rule_runtime_status(id, rule_id, rule_version, instance_id, status,
+                  hit_count, error_count, last_error, updated_at)
+                values (?, ?, ?, ?, ?, 0, 0, null, current_timestamp)
+                """, "rrs-" + ruleId + ":" + version + "#" + instanceId.hashCode(),
+                ruleId, version, instanceId, status);
+    }
+
     public static void seedInstance(JdbcTemplate jdbc, String agentId, String instanceId, String processStartId) {
         jdbc.update("""
                 insert into instance(id, application_id, environment_id, nickname, hostname, process_id, runtime,
@@ -117,6 +128,44 @@ public final class ReconciliationTestSupport {
                 values (?, ?, 'ACTIVE', 'test', 'test', '127.0.0.1', 1, 'hash-only', '[]',
                   current_timestamp, current_timestamp)
                 """, agentId, instanceId);
+    }
+
+    /**
+     * V1.7 M1-E &sect;8.5: seed a SUCCEEDED rule rollout operation_plan (version 2, matching the
+     * controller's create-&gt;RUNNING-&gt;SUCCEEDED lifecycle) so an unload can be submitted against it.
+     */
+    public static void seedSucceededOperation(JdbcTemplate jdbc, String operationId, String ruleId, long version) {
+        jdbc.update("""
+                insert into operation_plan(id, application_id, environment_id, plan_type, resource_type,
+                  resource_id, resource_version, status, version, strategy_json, created_by,
+                  created_at, updated_by, updated_at, terminal_source, terminal_reason)
+                values (?, ?, ?, 'RULE_ROLLOUT', 'rule', ?, ?, 'SUCCEEDED', 2, '{}', 'system',
+                  current_timestamp, 'system', current_timestamp, '', '')
+                """, operationId, DEFAULT_APPLICATION, DEFAULT_ENVIRONMENT, ruleId, version);
+    }
+
+    /** V1.7 M1-E &sect;8.5: seed a rollout_instance_execution in a given status (SUCCEEDED by default). */
+    public static void seedExecution(JdbcTemplate jdbc, String executionId, String operationId,
+                                     String instanceId, long ruleVersion, String status) {
+        jdbc.update("""
+                insert into rollout_instance_execution(id, rollout_batch_id, operation_plan_id, instance_id,
+                  status, expected_agent_version, expected_rule_version, command_id, error_message,
+                  started_at, finished_at, version, updated_by, updated_at)
+                values (?, null, ?, ?, ?, '0.1.0', ?, null, null, current_timestamp, current_timestamp, 1,
+                  'system', current_timestamp)
+                """, executionId, operationId, instanceId, status, ruleVersion);
+    }
+
+    /** V1.7 M1-E &sect;8.5: make an agent's lease expired so it is not reachable for an unload. */
+    public static void setAgentOffline(JdbcTemplate jdbc, String agentId) {
+        jdbc.update("update agent_instance set lease_expires_at = timestamp '2020-01-01 00:00:00' "
+                + "where id = ?", agentId);
+    }
+
+    /** V1.7 M1-E &sect;8.5: restore an agent's lease so it is reachable again (reconnect). */
+    public static void setAgentOnline(JdbcTemplate jdbc, String agentId) {
+        jdbc.update("update agent_instance set lease_expires_at = timestamp '2099-01-01 00:00:00' "
+                + "where id = ?", agentId);
     }
 
     // -------------------------------------------------------- snapshot persistence (REFRESH ack)
@@ -182,9 +231,16 @@ public final class ReconciliationTestSupport {
     /** A valid snapshot with one ACTIVE chain carrying {@code ruleIds}. */
     public static Map<String, Object> snapshot(String agentId, String processStartId, Map<String, Object> chain,
                                         List<String> ruleIds, List<Map<String, Object>> rules) {
+        return snapshot(agentId, processStartId, List.of(chain), rules);
+    }
+
+    /** A valid snapshot with multiple chains, used to prove target selection never picks blindly. */
+    public static Map<String, Object> snapshot(String agentId, String processStartId,
+                                              List<Map<String, Object>> chains,
+                                              List<Map<String, Object>> rules) {
         Map<String, Object> truncation = new LinkedHashMap<>();
         truncation.put("rules", truncationEntry(rules.size(), rules.size()));
-        truncation.put("chains", truncationEntry(1, 1));
+        truncation.put("chains", truncationEntry(chains.size(), chains.size()));
         truncation.put("degradedClasses", truncationEntry(0, 0));
         truncation.put("byteLimit", 1048576L);
         truncation.put("serializedBytes", 0L);
@@ -196,7 +252,7 @@ public final class ReconciliationTestSupport {
         snapshot.put("observedAt", System.currentTimeMillis());
         snapshot.put("agentVersion", "0.1.0-SNAPSHOT");
         snapshot.put("disabled", false);
-        snapshot.put("chains", new ArrayList<>(List.of(chain)));
+        snapshot.put("chains", new ArrayList<>(chains));
         snapshot.put("rules", new ArrayList<>(rules));
         snapshot.put("degradedClasses", new ArrayList<>());
         snapshot.put("truncation", truncation);

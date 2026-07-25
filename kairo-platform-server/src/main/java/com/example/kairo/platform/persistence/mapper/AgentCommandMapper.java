@@ -103,8 +103,6 @@ public interface AgentCommandMapper {
                           @Param("status") String status,
                           @Param("updatedAt") Timestamp updatedAt);
 
-    List<Map<String, Object>> commandsByRollbackExecution(@Param("rollbackExecutionId") String rollbackExecutionId);
-
     Map<String, Object> rollbackExecution(@Param("id") String id);
 
     int completeRollbackExecution(@Param("id") String id,
@@ -115,9 +113,6 @@ public interface AgentCommandMapper {
                                        @Param("status") String status,
                                        @Param("updatedBy") String updatedBy,
                                        @Param("updatedAt") Timestamp updatedAt);
-
-    int markRuntimeStatusesRemovedForOperation(@Param("operationPlanId") String operationPlanId,
-                                               @Param("updatedAt") Timestamp updatedAt);
 
     Map<String, Object> operationPlan(@Param("id") String id);
 
@@ -149,6 +144,16 @@ public interface AgentCommandMapper {
                                       @Param("instanceId") String instanceId,
                                       @Param("updatedAt") Timestamp updatedAt);
 
+    /**
+     * V1.7 M1-E &sect;8.5: mark one instance's rule_runtime_status REMOVED once its precise
+     * RESET_CLASS unload is confirmed (per-instance, so a multi-target unload records each
+     * instance's real outcome instead of bulk-marking on aggregate completion).
+     */
+    int updateRuleRuntimeStatusRemoved(@Param("ruleId") String ruleId,
+                                       @Param("ruleVersion") long ruleVersion,
+                                       @Param("instanceId") String instanceId,
+                                       @Param("updatedAt") Timestamp updatedAt);
+
     int insertRuleRuntimeStatus(@Param("id") String id,
                                 @Param("ruleId") String ruleId,
                                 @Param("ruleVersion") long ruleVersion,
@@ -163,16 +168,26 @@ public interface AgentCommandMapper {
     int insertRollbackExecution(@Param("id") String id,
                                 @Param("operationPlanId") String operationPlanId,
                                 @Param("reason") String reason,
+                                @Param("targetClassId") String targetClassId,
+                                @Param("targetClassName") String targetClassName,
                                 @Param("createdBy") String createdBy,
                                 @Param("createdAt") Timestamp createdAt);
 
-    List<Map<String, Object>> activeAgentsForOperation(@Param("operationPlanId") String operationPlanId);
-
-    int markRollbackSucceeded(@Param("id") String id, @Param("finishedAt") Timestamp finishedAt);
-
-    int markUnloadingOperationUnloadedWithoutAgents(@Param("id") String id,
-                                                   @Param("updatedBy") String updatedBy,
-                                                   @Param("updatedAt") Timestamp updatedAt);
+    /**
+     * V1.7 M1-E &sect;8.5: update the rollout_instance_execution for one (operation, instance)
+     * during an unload. Guarded on a non-terminal current status so a terminal instance
+     * (UNLOADED / FAILED / CANCELLED / ABANDONED) is never overwritten. Used to record per-instance
+     * unload state: {@code UNLOADING} (a RESET_CLASS is dispatched), {@code OFFLINE_PENDING} (the
+     * agent is offline; compensation will complete it on reconnect), {@code UNLOADED} (RESET_CLASS
+     * acked or confirmed gone on a new empty JVM) and {@code FAILED} (exhausted / failed unload).
+     */
+    int updateExecutionStatus(@Param("operationPlanId") String operationPlanId,
+                              @Param("instanceId") String instanceId,
+                              @Param("status") String status,
+                              @Param("errorMessage") String errorMessage,
+                              @Param("finishedAt") Timestamp finishedAt,
+                              @Param("updatedBy") String updatedBy,
+                              @Param("updatedAt") Timestamp updatedAt);
 
     Map<String, Object> operationResource(@Param("id") Object id);
 

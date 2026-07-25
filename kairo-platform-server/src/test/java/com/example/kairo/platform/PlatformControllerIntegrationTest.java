@@ -265,7 +265,7 @@ class PlatformControllerIntegrationTest {
     }
 
     @Test
-    void autoUnloadsPlanWhenAgentIsGoneAndRestoresItOnAgentRegistration() throws Exception {
+    void doesNotAutoUnloadWhenAgentIsGone() throws Exception {
         String instanceId = "instance-agent-gone-1";
         String agentId = "agent-agent-gone-1";
         registerInstanceAndAgent(instanceId, agentId);
@@ -275,11 +275,16 @@ class PlatformControllerIntegrationTest {
 
         testPlatformMapper.expireAgentLease(agentId);
         JsonNode maintenance = postJson("/api/v1/control/schedulers/run-once", Map.of(), "system");
-        assertThat(maintenance.at("/runtimeLeases/operationPlansAutoUnloaded").asInt()).isGreaterThanOrEqualTo(1);
+        // V1.7 M1-E §8.5: an agent going offline is NOT an unload. The platform must not fabricate
+        // operation_plan UNLOADED or rule_runtime_status REMOVED the moment a lease expires; the
+        // authoritative desired state stays ACTIVE and the operation keeps its real SUCCEEDED status
+        // until a real unload (or reconciliation on reconnect) acts on the actual snapshot.
+        assertThat(maintenance.at("/runtimeLeases/operationPlansAutoUnloaded").asInt())
+                .as("compatibility field remains but no unload is fabricated").isZero();
         assertThat(getJson("/api/v1/details/operation-plans/" + operationId).get("status").asText())
-                .isEqualTo("UNLOADED");
-        assertThat(testPlatformMapper.operationPlanTerminalSource(operationId)).isEqualTo("AGENT_GONE");
-        assertThat(testPlatformMapper.ruleRuntimeStatus(ruleId, instanceId)).isEqualTo("REMOVED");
+                .isEqualTo("SUCCEEDED");
+        assertThat(testPlatformMapper.operationPlanTerminalSource(operationId)).isEqualTo("");
+        assertThat(testPlatformMapper.ruleRuntimeStatus(ruleId, instanceId)).isEqualTo("ACTIVE");
 
         JsonNode registration = postJson("/api/v1/agent-registrations/self", Map.ofEntries(
                 Map.entry("instanceId", instanceId),
@@ -298,16 +303,10 @@ class PlatformControllerIntegrationTest {
                 Map.entry("listenPort", 19091),
                 Map.entry("capabilities", java.util.List.of("APPLY_RULE", "RESET_CLASS"))
         ), "system");
-        assertThat(registration.get("restoredOperationPlans").asInt()).isEqualTo(1);
-        assertThat(testPlatformMapper.operationPlanStatus(operationId)).isEqualTo("RUNNING");
-        assertThat(testPlatformMapper.rolloutExecutionStatusByOperation(operationId)).isEqualTo("PENDING");
-
-        postJson("/api/v1/control/schedulers/run-once", Map.of(), "system");
-        JsonNode command = postJson("/api/v1/agents/" + agentId + "/commands/next",
-                Map.of("leaseSeconds", 60), "system");
-        assertThat(command.get("id").asText()).matches(BUSINESS_ID_PATTERN);
-        assertThat(command.get("command_type").asText()).isEqualTo("APPLY_RULE");
-        assertThat(command.at("/payload/operationPlanId").asText()).isEqualTo(operationId);
+        // No false AGENT_GONE restore: re-apply after a JVM restart is driven by reconciliation
+        // against the real actual snapshot, not by rehydrating a fabricated UNLOADED plan.
+        assertThat(registration.get("restoredOperationPlans").asInt()).isZero();
+        assertThat(testPlatformMapper.operationPlanStatus(operationId)).isEqualTo("SUCCEEDED");
     }
 
     @Test

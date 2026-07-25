@@ -127,12 +127,6 @@
          where id = #{id}
     </update>
 
-    <select id="commandsByRollbackExecution" resultType="map">
-        select *
-          from agent_command
-         where rollback_execution_id = #{rollbackExecutionId}
-    </select>
-
     <select id="rollbackExecution" resultType="map">
         select *
           from rollback_execution
@@ -155,20 +149,6 @@
                updated_at = #{updatedAt}
          where id = #{id}
            and status = 'UNLOADING'
-    </update>
-
-    <update id="markRuntimeStatusesRemovedForOperation">
-        update rule_runtime_status
-           set status = 'REMOVED',
-               last_error = null,
-               updated_at = #{updatedAt}
-         where (rule_id, rule_version, instance_id) in (
-             select op.resource_id, op.resource_version, rie.instance_id
-               from operation_plan op
-               join rollout_instance_execution rie on rie.operation_plan_id = op.id
-              where op.id = #{operationPlanId}
-                and rie.status = 'SUCCEEDED'
-         )
     </update>
 
     <select id="operationPlan" resultType="map">
@@ -236,6 +216,22 @@
            and instance_id = #{instanceId}
     </update>
 
+    <!--
+      V1.7 M1-E sect 8.5: per-instance REMOVED marking. A multi-target unload records each
+      instance's real outcome; REMOVED is set only for the instance whose RESET_CLASS actually
+      unloaded the rule (or whose enhancement was confirmed gone on a new empty JVM), never in
+      bulk on aggregate completion.
+    -->
+    <update id="updateRuleRuntimeStatusRemoved">
+        update rule_runtime_status
+           set status = 'REMOVED',
+               last_error = null,
+               updated_at = #{updatedAt}
+         where rule_id = #{ruleId}
+           and rule_version = #{ruleVersion}
+           and instance_id = #{instanceId}
+    </update>
+
     <insert id="insertRuleRuntimeStatus">
         insert into rule_runtime_status(
             id, rule_id, rule_version, instance_id, status,
@@ -262,40 +258,38 @@
     <insert id="insertRollbackExecution">
         insert into rollback_execution(
             id, operation_plan_id, rollback_type, status, reason,
-            created_by, created_at, finished_at
+            target_class_id, target_class_name, created_by, created_at, finished_at
         ) values (
             #{id}, #{operationPlanId}, 'RESET_CLASS', 'DISPATCHED', #{reason},
-            #{createdBy}, #{createdAt}, null
+            #{targetClassId}, #{targetClassName}, #{createdBy}, #{createdAt}, null
         )
     </insert>
 
-    <select id="activeAgentsForOperation" resultType="map">
-        select distinct a.*
-          from rollout_instance_execution execution
-          join agent_instance a on a.instance_id = execution.instance_id
-         where execution.operation_plan_id = #{operationPlanId}
-           and a.status = 'ACTIVE'
-           and (a.lease_expires_at is null or a.lease_expires_at &gt; current_timestamp)
-         order by a.id
-    </select>
+    <!--
+      V1.7 M1-E sect 8.5: the previous activeAgentsForOperation / markRollbackSucceeded /
+      markUnloadingOperationUnloadedWithoutAgents statements are intentionally removed. The no-agent
+      short-cut fabricated operation_plan UNLOADED the moment no agent was reachable; an unload that
+      cannot reach its agents now stays UNLOADING and completes from the actual snapshot on
+      reconnect (M1-E compensation), and each instance records its own outcome via updateExecutionStatus.
+    -->
 
-    <update id="markRollbackSucceeded">
-        update rollback_execution
-           set status = 'SUCCEEDED',
-               finished_at = #{finishedAt}
-         where id = #{id}
-    </update>
-
-    <update id="markUnloadingOperationUnloadedWithoutAgents">
-        update operation_plan
-           set status = 'UNLOADED',
+    <!--
+      V1.7 M1-E sect 8.5: per-instance unload state, keyed by (operation, instance). Guarded on a
+      non-terminal current status so a terminal instance is never clobbered. UNLOADING = RESET_CLASS
+      dispatched; OFFLINE_PENDING = agent offline (compensation pending); UNLOADED = acked /
+      confirmed gone; FAILED = exhausted.
+    -->
+    <update id="updateExecutionStatus">
+        update rollout_instance_execution
+           set status = #{status},
+               error_message = #{errorMessage},
+               finished_at = coalesce(finished_at, #{finishedAt}),
                version = version + 1,
-               terminal_source = 'ROLLOUT_FAILURE',
-               terminal_reason = '实例执行失败且没有可达 Agent，直接标记已卸载',
                updated_by = #{updatedBy},
                updated_at = #{updatedAt}
-         where id = #{id}
-           and status = 'UNLOADING'
+         where operation_plan_id = #{operationPlanId}
+           and instance_id = #{instanceId}
+           and status not in ('UNLOADED', 'FAILED', 'CANCELLED', 'ABANDONED')
     </update>
 
     <select id="operationResource" resultType="map">

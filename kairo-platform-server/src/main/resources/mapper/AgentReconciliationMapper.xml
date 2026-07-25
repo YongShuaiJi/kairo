@@ -49,6 +49,63 @@
          where a.status = 'ACTIVE'
     </select>
 
+    <!--
+      V1.7 M1-E sect 8.5: pending precise unloads for an instance. An operation_plan in UNLOADING
+      with a DISPATCHED rollback_execution is a persistent compensation record: the unload was
+      requested (manually, on failure, or for rule deletion) but could not reach every instance's
+      agent, so the per-instance executions carry UNLOADING / OFFLINE_PENDING. The compensation sweep
+      reads the real actual snapshot on reconnect and completes each pending instance. Distinct on
+      the operation (one rollback per operation).
+    -->
+    <select id="findPendingUnloadsForInstance" resultType="map">
+        select op.id as operation_plan_id,
+               op.resource_id as resource_id,
+               op.resource_version as resource_version,
+               rb.id as rollback_id,
+               rb.target_class_id as target_class_id,
+               rb.target_class_name as target_class_name
+          from operation_plan op
+          join rollback_execution rb on rb.operation_plan_id = op.id and rb.status = 'DISPATCHED'
+         where op.status = 'UNLOADING'
+           and exists (
+               select 1
+                 from rollout_instance_execution rie
+                where rie.operation_plan_id = op.id
+                  and rie.instance_id = #{instanceId}
+           )
+         order by op.updated_at, op.id
+    </select>
+
+    <select id="hasCompletedUnloadAfterSnapshot" resultType="int">
+        select count(*)
+          from operation_plan op
+          join rollout_instance_execution rie on rie.operation_plan_id = op.id
+          join rollback_execution rb on rb.operation_plan_id = op.id
+         where op.status = 'UNLOADED'
+           and rb.status = 'SUCCEEDED'
+           and rie.status = 'UNLOADED'
+           and op.resource_id = #{ruleId}
+           and op.resource_version = #{ruleVersion}
+           and rie.instance_id = #{instanceId}
+           and rb.finished_at &gt; #{snapshotReceivedAt}
+    </select>
+
+    <!--
+      V1.7 M1-E sect 8.5: existence check for a pending precise unload of (rule, version, instance).
+      Lets the desired/actual reconciliation defer to the operation-owned unload so a rule being
+      unloaded is neither re-applied nor unloaded a second time by a reconcile-owned RESET_CLASS.
+    -->
+    <select id="hasPendingOperationUnload" resultType="int">
+        select count(*)
+          from operation_plan op
+          join rollout_instance_execution rie on rie.operation_plan_id = op.id
+          join rollback_execution rb on rb.operation_plan_id = op.id and rb.status = 'DISPATCHED'
+         where op.status = 'UNLOADING'
+           and op.resource_id = #{ruleId}
+           and op.resource_version = #{ruleVersion}
+           and rie.instance_id = #{instanceId}
+    </select>
+
     <!-- Portable update-then-insert upsert: the service retries update after a concurrent insert. -->
     <update id="updateDegradedClass">
         update degraded_class

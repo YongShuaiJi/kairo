@@ -46,10 +46,6 @@ public interface PlatformMaintenanceMapper {
 
     int archiveOfflineInstances(@Param("cutoff") Timestamp cutoff);
 
-    int markPlansUnloadedWhenAgentsGone(@Param("now") Timestamp now);
-
-    int markRuntimeStatusesRemovedForAgentGonePlans(@Param("now") Timestamp now);
-
     int markPlansAbandonedWhenInstancesGone(@Param("cutoff") Timestamp cutoff);
 
     int markExecutionsAbandonedWhenInstancesGone(@Param("cutoff") Timestamp cutoff);

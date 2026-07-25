@@ -203,50 +203,14 @@
            and coalesce(i.lease_expires_at, i.last_seen_at, i.updated_at, i.created_at) &lt;= #{cutoff}
     </update>
 
-    <update id="markPlansUnloadedWhenAgentsGone">
-        update operation_plan op
-           set status = 'UNLOADED',
-               version = version + 1,
-               terminal_source = 'AGENT_GONE',
-               terminal_reason = '成功执行实例已没有可达 Agent，规则运行时能力自动失效',
-               updated_by = 'runtime-maintenance',
-               updated_at = #{now}
-         where op.status in ('SUCCEEDED', 'RUNNING', 'FAILED')
-           and op.resource_type = 'rule'
-           and exists (
-               select 1
-                 from rollout_instance_execution rie
-                where rie.operation_plan_id = op.id
-                  and rie.status = 'SUCCEEDED'
-           )
-           and not exists (
-               select 1
-                 from rollout_instance_execution rie
-                 join agent_instance a on a.instance_id = rie.instance_id
-                where rie.operation_plan_id = op.id
-                  and rie.status = 'SUCCEEDED'
-                  and a.status in ('ACTIVE', 'ONLINE')
-                  and (a.lease_expires_at is null or a.lease_expires_at &gt; #{now})
-           )
-    </update>
-
-    <update id="markRuntimeStatusesRemovedForAgentGonePlans">
-        update rule_runtime_status r
-           set status = 'REMOVED',
-               last_error = null,
-               updated_at = #{now}
-         where exists (
-             select 1
-               from operation_plan op
-               join rollout_instance_execution rie on rie.operation_plan_id = op.id
-              where op.status = 'UNLOADED'
-                and op.terminal_source = 'AGENT_GONE'
-                and rie.status = 'SUCCEEDED'
-                and rie.instance_id = r.instance_id
-                and op.resource_id = r.rule_id
-                and op.resource_version = r.rule_version
-         )
-    </update>
+    <!--
+      V1.7 M1-E §8.5: the previous markPlansUnloadedWhenAgentsGone /
+      markRuntimeStatusesRemovedForAgentGonePlans updates are intentionally removed. An agent lease
+      expiring never means the rule was unloaded from the (still-alive) JVM, so the Platform must
+      not fabricate operation_plan UNLOADED or rule_runtime_status REMOVED. Reconnect convergence is
+      driven by the M1-D reconciliation and the M1-E offline-unload compensation, both of which read
+      the real actual snapshot before acting.
+    -->
 
     <update id="markPlansAbandonedWhenInstancesGone">
         update operation_plan op

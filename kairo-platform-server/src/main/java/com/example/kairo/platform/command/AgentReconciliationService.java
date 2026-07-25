@@ -4,11 +4,10 @@ import com.example.kairo.api.EnhancementLocation;
 import com.example.kairo.api.snapshot.AgentRuntimeSnapshot;
 import com.example.kairo.api.snapshot.CallSiteSnapshot;
 import com.example.kairo.api.snapshot.ChainSnapshot;
+import com.example.kairo.api.snapshot.CollectionTruncation;
 import com.example.kairo.platform.persistence.mapper.AgentCommandMapper;
 import com.example.kairo.platform.persistence.mapper.AgentReconciliationMapper;
 import com.example.kairo.platform.persistence.mapper.AgentRuntimeStateMapper;
-import com.example.kairo.platform.persistence.mapper.RuleUnloadMapper;
-import com.example.kairo.platform.persistence.mapper.RolloutExecutionMapper;
 import com.example.kairo.platform.service.BusinessIdService;
 import com.example.kairo.platform.service.PlatformCoreService;
 import com.example.kairo.platform.service.PlatformException;
@@ -29,10 +28,12 @@ import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -90,8 +91,6 @@ public class AgentReconciliationService {
     private final AgentRuntimeStateMapper stateMapper;
     private final AgentCommandService commandService;
     private final AgentCommandMapper commandMapper;
-    private final RolloutExecutionMapper rolloutMapper;
-    private final RuleUnloadMapper unloadMapper;
     private final AgentReconciliationMapper reconciliationMapper;
     private final PlatformCoreService eventWriter;
     private final BusinessIdService businessIdService;
@@ -110,28 +109,22 @@ public class AgentReconciliationService {
     public AgentReconciliationService(AgentRuntimeStateMapper stateMapper,
                                      AgentCommandService commandService,
                                      AgentCommandMapper commandMapper,
-                                     RolloutExecutionMapper rolloutMapper,
-                                     RuleUnloadMapper unloadMapper,
                                      AgentReconciliationMapper reconciliationMapper,
                                      PlatformCoreService eventWriter,
                                      BusinessIdService businessIdService) {
-        this(stateMapper, commandService, commandMapper, rolloutMapper, unloadMapper,
+        this(stateMapper, commandService, commandMapper,
                 reconciliationMapper, eventWriter, businessIdService, Clock.systemUTC());
     }
 
     AgentReconciliationService(AgentRuntimeStateMapper stateMapper,
                                AgentCommandService commandService,
                                AgentCommandMapper commandMapper,
-                               RolloutExecutionMapper rolloutMapper,
-                               RuleUnloadMapper unloadMapper,
                                AgentReconciliationMapper reconciliationMapper,
                                PlatformCoreService eventWriter,
                                BusinessIdService businessIdService, Clock clock) {
         this.stateMapper = stateMapper;
         this.commandService = commandService;
         this.commandMapper = commandMapper;
-        this.rolloutMapper = rolloutMapper;
-        this.unloadMapper = unloadMapper;
         this.reconciliationMapper = reconciliationMapper;
         this.eventWriter = eventWriter;
         this.businessIdService = businessIdService;
@@ -233,6 +226,151 @@ public class AgentReconciliationService {
     }
 
     /**
+     * V1.7 M1-E &sect;8.5 item 3: complete pending precise unloads for an instance from the real
+     * actual snapshot. A pending unload is an UNLOADING {@code operation_plan} with a DISPATCHED
+     * {@code rollback_execution} (the persistent compensation record created when an unload was
+     * requested while the agent was unreachable). For this instance's execution in that operation:
+     * <ul>
+     *   <li>{@code OFFLINE_PENDING} + actual still carries the chain &rarr; dispatch the precise
+     *       {@code RESET_CLASS} (carrying {@code rollbackExecutionId}, stable idempotency key
+     *       {@code unload:<op>:<agent>}, original target class &mdash; no re-expansion); its ack
+     *       completes the rollback/operation via {@link AgentCommandService#tryCompleteUnload};</li>
+     *   <li>{@code OFFLINE_PENDING} + actual empty (a new JVM, &sect;8.5 item 4) &rarr; the old
+     *       enhancement is confirmed gone; mark the execution UNLOADED and rule_runtime_status
+     *       REMOVED without a command;</li>
+     *   <li>{@code UNLOADING} whose dispatched command exhausted max_attempts (&sect;8.5 item 7)
+     *       &rarr; mark the execution FAILED (diagnosable terminal, never a permanent UNLOADING).</li>
+     * </ul>
+     * Returns the number of instances progressed. Idempotent: re-running finds the in-flight
+     * command (skip) or the now-terminal execution (skip), so retries never re-dispatch or
+     * re-expand the target set.
+     */
+    private int compensatePendingUnloads(RequestContext context, String agentId, String instanceId,
+                                         ActualState actual) {
+        List<Map<String, Object>> pending = reconciliationMapper.findPendingUnloadsForInstance(instanceId);
+        if (pending.isEmpty()) {
+            return 0;
+        }
+        int progressed = 0;
+        for (Map<String, Object> raw : pending) {
+            Map<String, Object> row = lowerKeys(raw);
+            String operationPlanId = String.valueOf(row.get("operation_plan_id"));
+            String ruleId = String.valueOf(row.get("resource_id"));
+            long ruleVersion = asLong(row.get("resource_version"));
+            String rollbackId = String.valueOf(row.get("rollback_id"));
+            CompensationTarget target = resolveCompensationTarget(ruleId,
+                    nullableText(row.get("target_class_id")),
+                    nullableText(row.get("target_class_name")), actual);
+            String idempotencyKey = "unload:" + operationPlanId + ":" + agentId;
+            Timestamp now = Timestamp.from(clock.instant());
+            for (Map<String, Object> exec : commandMapper.executionsByOperation(operationPlanId)) {
+                Map<String, Object> execution = lowerKeys(exec);
+                if (!instanceId.equals(String.valueOf(execution.get("instance_id")))) {
+                    continue; // another instance's execution; its own agent's sweep owns it
+                }
+                String status = String.valueOf(execution.get("status"));
+                if ("OFFLINE_PENDING".equals(status)) {
+                    if (target.unsafeReason() != null) {
+                        commandMapper.updateExecutionStatus(operationPlanId, instanceId, "FAILED",
+                                target.unsafeReason(), now, context.actor(), now);
+                    } else if (target.present()) {
+                        Map<String, Object> payload = buildCompensationResetPayload(agentId, instanceId,
+                                operationPlanId, rollbackId, ruleId, ruleVersion,
+                                target.classId(), target.className());
+                        commandService.enqueue(context, agentId, RESET_CLASS, payload,
+                                idempotencyKey, CONVERGE_MAX_ATTEMPTS, clock.instant());
+                        commandMapper.updateExecutionStatus(operationPlanId, instanceId, "UNLOADING",
+                                null, null, context.actor(), now);
+                    } else {
+                        commandMapper.updateExecutionStatus(operationPlanId, instanceId, "UNLOADED",
+                                null, now, context.actor(), now);
+                        commandMapper.updateRuleRuntimeStatusRemoved(ruleId, ruleVersion, instanceId, now);
+                    }
+                    progressed++;
+                } else if ("UNLOADING".equals(status)) {
+                    Map<String, Object> command = commandMapper.commandByIdempotencyKey(idempotencyKey);
+                    String commandStatus = command == null ? null
+                            : String.valueOf(lowerKeys(command).get("status"));
+                    if ("FAILED".equals(commandStatus)) {
+                        commandMapper.updateExecutionStatus(operationPlanId, instanceId, "FAILED",
+                                "卸载命令达到最大尝试次数", now, context.actor(), now);
+                        progressed++;
+                    }
+                }
+            }
+            commandService.tryCompleteUnload(context, rollbackId, operationPlanId);
+        }
+        return progressed;
+    }
+
+    /**
+     * V1.7 M1-E &sect;8.5: resolve a compensation target from the immutable class snapshot stored
+     * on rollback creation and verify it against actual rule identity. Missing means the rule is
+     * already gone; target drift or multiple matching classes fails closed instead of resetting an
+     * arbitrary class.
+     */
+    private CompensationTarget resolveCompensationTarget(String ruleId, String capturedClassId,
+                                                         String capturedClassName, ActualState actual) {
+        Set<String> actualClasses = actual.classesForRule(ruleId);
+        if (actualClasses.isEmpty()) {
+            return CompensationTarget.absent();
+        }
+        if (actualClasses.size() > 1) {
+            return CompensationTarget.unsafe(
+                    "UNLOAD_TARGET_AMBIGUOUS: rule is present on multiple actual classes; refusing blind reset");
+        }
+        String actualClass = actualClasses.iterator().next();
+        if (!capturedClassName.isBlank() && !capturedClassName.equals(actualClass)) {
+            return CompensationTarget.unsafe(
+                    "UNLOAD_TARGET_DRIFTED: captured class " + capturedClassName
+                            + " differs from actual class " + actualClass);
+        }
+        String className = capturedClassName.isBlank() ? actualClass : capturedClassName;
+        String classId = capturedClassId.isBlank() ? className : capturedClassId;
+        return CompensationTarget.present(classId, className);
+    }
+
+    private Map<String, Object> buildCompensationResetPayload(String agentId, String instanceId,
+            String operationPlanId, String rollbackId, String ruleId, long ruleVersion,
+            String classId, String className) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("commandType", RESET_CLASS);
+        payload.put("operationPlanId", operationPlanId);
+        payload.put("rollbackExecutionId", rollbackId);
+        payload.put("ruleId", ruleId);
+        payload.put("ruleVersion", ruleVersion);
+        payload.put("instanceId", instanceId);
+        payload.put("classId", classId);
+        payload.put("className", className);
+        return payload;
+    }
+
+    /**
+     * V1.7 M1-E &sect;8.5: does an actual chain belong to a rule/instance with a pending
+     * operation-owned unload? Used so the desired/actual convergence defers to the compensation
+     * sweep instead of enqueuing a duplicate reconcile-owned RESET_CLASS.
+     */
+    private boolean shouldDeferOperationUnloadForChain(ChainSnapshot actualChain, ActualState actual,
+                                                       String instanceId, Timestamp snapshotReceivedAt) {
+        if (actualChain == null || actualChain.ruleIds() == null || actualChain.ruleIds().isEmpty()) {
+            return false;
+        }
+        for (String ruleId : actualChain.ruleIds()) {
+            String normalized = normalizeRuleId(ruleId);
+            long version = actual.ruleVersions.getOrDefault(ruleId, 0L);
+            if (reconciliationMapper.hasPendingOperationUnload(normalized, version, instanceId) > 0) {
+                return true;
+            }
+            if (snapshotReceivedAt != null
+                    && reconciliationMapper.hasCompletedUnloadAfterSnapshot(
+                    normalized, version, instanceId, snapshotReceivedAt) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Reconcile one agent: compare desired vs the persisted actual snapshot and converge. Safe to
      * call repeatedly (idempotent per &sect;8.4 item 8): in-flight convergence commands are skipped,
      * IN_SYNC targets are no-ops, and a fresh snapshot that still shows drift after a terminal
@@ -258,7 +396,7 @@ public class AgentReconciliationService {
                 log.debug("Cannot request runtime snapshot for agent {} ({}); skipping convergence",
                         agentId, e.getMessage());
             }
-            return new ReconciliationResult(0, 0, 0, List.of("snapshot_pending"));
+            return new ReconciliationResult(0, 0, 0, 0, List.of("snapshot_pending"));
         }
 
         String snapshotProcessStartId = String.valueOf(snapshotRow.get("process_start_id"));
@@ -273,9 +411,16 @@ public class AgentReconciliationService {
         } else {
             actual = parseActual(snapshotRow);
             if (actual.invalidReason() != null) {
-                return new ReconciliationResult(0, 0, 0, List.of(actual.invalidReason()));
+                return new ReconciliationResult(0, 0, 0, 0, List.of(actual.invalidReason()));
             }
         }
+
+        // V1.7 M1-E §8.5: complete any pending precise unloads for this instance BEFORE reading the
+        // desired state, so a rule being unloaded is never re-applied and an unload confirmed gone
+        // on a new empty JVM is recorded REMOVED before desired is computed. The operation-owned
+        // RESET_CLASS (carrying rollbackExecutionId) is the single owner of an in-flight unload;
+        // the convergence loop below defers to it via hasPendingOperationUnload.
+        int compensated = compensatePendingUnloads(context, agentId, instanceId, actual);
 
         DesiredState desired = computeDesired(instanceId);
 
@@ -332,6 +477,16 @@ public class AgentReconciliationService {
                 continue; // handled above
             }
             if (desired.isRemoved(targetKey)) {
+                // V1.7 M1-E §8.5: if an operation-owned precise unload is already pending for this
+                // rule/instance (a manual unload, an auto-unload, or a rule-deletion unload whose
+                // rollback_execution is still DISPATCHED), defer to it: the compensation sweep is
+                // the single owner and dispatches the RESET_CLASS that completes the operation. Do
+                // not enqueue a reconcile-owned duplicate RESET_CLASS here.
+                if (shouldDeferOperationUnloadForChain(
+                        actualChain, actual, instanceId, snapshotReceivedAt)) {
+                    requestSnapshot(context, agentId);
+                    continue;
+                }
                 // §8.4 item 5: desired EMPTY/REMOVED + actual present -> precise unload.
                 EnqueueOutcome outcome = enqueueConvergence(context, agentId, currentProcessStartId,
                         RESET_CLASS, targetKey, snapshotReceivedAt,
@@ -352,7 +507,7 @@ public class AgentReconciliationService {
             }
         }
 
-        return new ReconciliationResult(applied, reset, degraded, notes);
+        return new ReconciliationResult(applied, reset, degraded, compensated, notes);
     }
 
     // -------------------------------------------------------- desired vs actual decision
@@ -636,9 +791,17 @@ public class AgentReconciliationService {
             AgentRuntimeSnapshot snapshot = MAPPER.readValue(json, AgentRuntimeSnapshot.class);
             if (snapshot == null || snapshot.agentId() == null || snapshot.agentId().isBlank()
                     || snapshot.processStartId() == null || snapshot.processStartId().isBlank()
-                    || snapshot.chains() == null || snapshot.rules() == null) {
+                    || snapshot.chains() == null || snapshot.rules() == null
+                    || snapshot.truncation() == null
+                    || snapshot.truncation().rules() == null
+                    || snapshot.truncation().chains() == null) {
                 return ActualState.invalid(
                         "INVALID_ACTUAL_SNAPSHOT: persisted runtime snapshot is incomplete; reconciliation skipped");
+            }
+            if (isTruncated(snapshot.truncation().rules())
+                    || isTruncated(snapshot.truncation().chains())) {
+                return ActualState.invalid(
+                        "INCOMPLETE_ACTUAL_SNAPSHOT: rules or chains were truncated; reconciliation skipped");
             }
             return ActualState.of(snapshot);
         } catch (RuntimeException e) {
@@ -786,6 +949,10 @@ public class AgentReconciliationService {
         return value == null ? "" : String.valueOf(value);
     }
 
+    private static boolean isTruncated(CollectionTruncation truncation) {
+        return truncation.included() < truncation.total();
+    }
+
     /** Parse a matcher/call-site JSON string that may be null, "null", blank or malformed. */
     private static Map<String, Object> readMapSafe(String json) {
         if (json == null || json.isBlank() || "null".equals(json)) {
@@ -809,13 +976,29 @@ public class AgentReconciliationService {
     // -------------------------------------------------------- inner types
 
     /** Summary of one reconciliation pass for an agent. */
-    public record ReconciliationResult(int applied, int reset, int degraded, List<String> notes) {
+    public record ReconciliationResult(int applied, int reset, int degraded, int compensated,
+                                       List<String> notes) {
         static ReconciliationResult empty() {
-            return new ReconciliationResult(0, 0, 0, List.of());
+            return new ReconciliationResult(0, 0, 0, 0, List.of());
         }
     }
 
     private enum ConvergenceAction { APPLY, DEGRADED, IN_SYNC }
+
+    private record CompensationTarget(boolean present, String classId, String className,
+                                      String unsafeReason) {
+        static CompensationTarget absent() {
+            return new CompensationTarget(false, "", "", null);
+        }
+
+        static CompensationTarget present(String classId, String className) {
+            return new CompensationTarget(true, classId, className, null);
+        }
+
+        static CompensationTarget unsafe(String reason) {
+            return new CompensationTarget(false, "", "", reason);
+        }
+    }
 
     private record Decision(ConvergenceAction action, List<DesiredRule> applyRules, String reason) {
         static Decision apply(List<DesiredRule> applyRules, String reason) {
@@ -946,6 +1129,23 @@ public class AgentReconciliationService {
 
         ChainSnapshot chainByTarget(String targetKey) {
             return chainsByTarget.get(targetKey);
+        }
+
+        /** Classes whose actual chain still carries the formal rule (version suffix normalized). */
+        Set<String> classesForRule(String ruleId) {
+            Set<String> classes = new LinkedHashSet<>();
+            for (ChainSnapshot chain : chains) {
+                if (chain.ruleIds() == null) {
+                    continue;
+                }
+                for (String actualRuleId : chain.ruleIds()) {
+                    if (ruleId.equals(normalizeRuleId(actualRuleId))) {
+                        classes.add(chain.className());
+                        break;
+                    }
+                }
+            }
+            return classes;
         }
 
         String invalidReason() {

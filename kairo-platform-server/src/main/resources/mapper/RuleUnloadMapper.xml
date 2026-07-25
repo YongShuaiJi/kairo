@@ -26,10 +26,10 @@
     <insert id="insertRollbackExecution">
         insert into rollback_execution(
             id, operation_plan_id, rollback_type, status, reason,
-            created_by, created_at, finished_at
+            target_class_id, target_class_name, created_by, created_at, finished_at
         ) values (
             #{id}, #{operationPlanId}, #{rollbackType}, 'DISPATCHED', #{reason},
-            #{createdBy}, #{createdAt}, null
+            #{targetClassId}, #{targetClassName}, #{createdBy}, #{createdAt}, null
         )
     </insert>
 
@@ -56,25 +56,14 @@
          where id = #{id}
     </update>
 
-    <update id="markDeletionUnloadedWithoutAgents">
-        update operation_plan
-           set status = 'UNLOADED',
-               version = version + 1,
-               terminal_source = 'RULE_DELETION',
-               terminal_reason = '规则删除时没有可达 Agent，直接标记已卸载',
-               updated_by = #{updatedBy},
-               updated_at = #{updatedAt}
-         where id = #{id}
-    </update>
-
-    <update id="markExecutionsUnloaded">
-        update rollout_instance_execution
-           set status = 'UNLOADED',
-               finished_at = coalesce(finished_at, #{finishedAt}),
-               updated_at = #{updatedAt}
-         where operation_plan_id = #{operationPlanId}
-           and status &lt;&gt; 'UNLOADED'
-    </update>
+    <!--
+      V1.7 M1-E sect 8.5: the previous markDeletionUnloadedWithoutAgents / markExecutionsUnloaded
+      updates and the bulk activeAgentsForSuccessfulExecutions query are intentionally removed.
+      A rule deletion no longer fabricates UNLOADED when an agent is unreachable: each SUCCEEDED
+      operation transitions to UNLOADING + a rollback_execution (the persistent compensation) and
+      beginPreciseUnload records per-instance outcome, completed from the actual snapshot on
+      reconnect.
+    -->
 
     <select id="ruleTarget" resultType="map">
         select rt.*
@@ -86,15 +75,14 @@
          limit 1
     </select>
 
-    <select id="activeAgentsForSuccessfulExecutions" resultType="map">
-        select distinct a.*
-          from rollout_instance_execution rie
-          join agent_instance a on a.instance_id = rie.instance_id
-         where rie.operation_plan_id = #{operationPlanId}
-           and rie.status = 'SUCCEEDED'
+    <select id="activeAgentForInstance" resultType="map">
+        select a.*
+          from agent_instance a
+         where a.instance_id = #{instanceId}
            and a.status = 'ACTIVE'
            and (a.lease_expires_at is null or a.lease_expires_at &gt; current_timestamp)
-         order by a.id
+         order by a.last_heartbeat_at desc nulls last, a.updated_at desc, a.id
+         limit 1
     </select>
 
     <select id="rollbackExecution" resultType="map">

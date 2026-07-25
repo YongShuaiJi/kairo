@@ -39,6 +39,34 @@ public interface AgentReconciliationMapper {
     List<Map<String, Object>> findOnlineAgentsForReconciliation();
 
     /**
+     * V1.7 M1-E &sect;8.5: the pending precise unloads for an instance &mdash; operation_plans in
+     * UNLOADING with a DISPATCHED rollback_execution (the persistent compensation record). One row
+     * per operation: the operation id, the rule id/version being unloaded and the rollback id. The
+     * compensation sweep completes these from the real actual snapshot on reconnect.
+     */
+    List<Map<String, Object>> findPendingUnloadsForInstance(@Param("instanceId") String instanceId);
+
+    /**
+     * V1.7 M1-E &sect;8.5: does this (rule, version, instance) have a pending precise unload &mdash;
+     * an UNLOADING operation_plan with a DISPATCHED rollback? Used so the desired/actual
+     * reconciliation defers to the operation-owned unload (no duplicate RESET_CLASS, and no re-apply
+     * of a rule the user is unloading).
+     */
+    int hasPendingOperationUnload(@Param("ruleId") String ruleId,
+                                 @Param("ruleVersion") long ruleVersion,
+                                 @Param("instanceId") String instanceId);
+
+    /**
+     * A completed operation-owned unload whose completion is newer than the actual snapshot.
+     * Reconciliation must request a fresh snapshot instead of issuing a duplicate RESET_CLASS
+     * against stale actual state.
+     */
+    int hasCompletedUnloadAfterSnapshot(@Param("ruleId") String ruleId,
+                                        @Param("ruleVersion") long ruleVersion,
+                                        @Param("instanceId") String instanceId,
+                                        @Param("snapshotReceivedAt") Timestamp snapshotReceivedAt);
+
+    /**
      * Mark a class degraded for an agent (AHEAD/DIVERGED/TARGET_DRIFTED). Upserts the existing
      * {@code degraded_class} row; a subsequent pass clears the marker via
      * {@link #deleteDegradedForAgent} when the target recovers.

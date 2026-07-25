@@ -120,14 +120,24 @@ public class PlatformMaintenanceService {
         int targetsOffline = maintenanceMapper.expireExecutorTargets(current);
         int sidecarsOffline = maintenanceMapper.expireSidecars(current);
         int instancesOffline = maintenanceMapper.expireInstances(current);
-        int operationPlansAutoUnloaded = markPlansUnloadedWhenAgentsGone(current);
+        // V1.7 M1-E §8.5 items 1, 2: an agent going offline is NOT an unload. The previous
+        // markPlansUnloadedWhenAgentsGone fabricated operation_plan UNLOADED + rule_runtime_status
+        // REMOVED the moment an agent lease expired, claiming the rule was removed from a JVM that
+        // was merely unreachable. That false success is removed: the authoritative desired state
+        // (rule_runtime_status ACTIVE) and the operation's real status are left intact, and the
+        // agent_instance OFFLINE row records "pending re-verification". Reconnect convergence
+        // (re-apply on a new empty JVM, or precise unload of a submitted unload) is driven by the
+        // M1-D reconciliation + the M1-E offline-unload compensation, both reading the real actual
+        // snapshot. The instance-gone abandon sweep (cleanupOfflineRuntime) still archives plans
+        // whose instance is permanently gone, which is a different, true terminal.
         return Map.of(
                 "agentsOffline", agentsOffline,
                 "executorsOffline", executorsOffline,
                 "targetsOffline", targetsOffline,
                 "sidecarsOffline", sidecarsOffline,
                 "instancesOffline", instancesOffline,
-                "operationPlansAutoUnloaded", operationPlansAutoUnloaded
+                // V1.6 response compatibility: retain the field, but false auto-unload is gone.
+                "operationPlansAutoUnloaded", 0
         );
     }
 
@@ -173,14 +183,6 @@ public class PlatformMaintenanceService {
                 Map.entry("assetClaimsDeleted", assetClaimsDeleted),
                 Map.entry("instancesDeleted", instancesDeleted)
         );
-    }
-
-    private int markPlansUnloadedWhenAgentsGone(Timestamp now) {
-        int plans = maintenanceMapper.markPlansUnloadedWhenAgentsGone(now);
-        if (plans > 0) {
-            maintenanceMapper.markRuntimeStatusesRemovedForAgentGonePlans(now);
-        }
-        return plans;
     }
 
     private int markPlansAbandonedWhenInstancesGone(Timestamp cutoffTimestamp) {
