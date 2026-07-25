@@ -68,6 +68,10 @@ iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # record <step> <command> <exitCode> <startedAt> <endedAt>
 record() {
+  # The focused-test step runs Maven clean, which removes the repository-level
+  # target directory after this runner initializes it. Recreate the evidence
+  # directory immediately before every append so the real outcome is never lost.
+  mkdir -p "$OUT_DIR"
   python3 - "$1" "$2" "$3" "$4" "$5" >> "$OUTCOMES" <<'PY'
 import json, sys
 print(json.dumps({
@@ -172,6 +176,6 @@ if [ "$SKIP_WEB" -eq 0 ]; then
   fi
 fi
 
-echo ">> all M1 PR acceptance steps passed; generating evidence."
+echo ">> all requested M1 acceptance steps passed; generating evidence."
 generate_evidence
 echo ">> done: $OUT_DIR/recovery-result.json"
