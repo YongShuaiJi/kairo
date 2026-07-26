@@ -62,7 +62,8 @@ class AcceptanceManifestSchemaTest {
         assertThat(ids).contains("V17-CONTRACT", "V17-RECOVERY", "V17-UPGRADE", "V17-SOAK",
                 "V17-PERF", "V17-COMPAT", "V17-OPS", "V17-SUPPLY", "V17-LTS", "V17-REGRESSION");
 
-        // --- M0 PASSED gates survived the migration; Recovery may join after Codex certifies M1. ---
+        // --- M0 PASSED gates survived the migration; later PR gates may join only
+        // after Codex certifies their milestone evidence. ---
         List<String> passedPr = new ArrayList<>();
         for (JsonNode req : requirements) {
             JsonNode pr = req.get("gates").get("PR");
@@ -72,7 +73,8 @@ class AcceptanceManifestSchemaTest {
         }
         assertThat(passedPr).contains("V17-CONTRACT", "V17-UPGRADE", "V17-REGRESSION");
         assertThat(passedPr).allMatch(id -> Set.of(
-                "V17-CONTRACT", "V17-UPGRADE", "V17-REGRESSION", "V17-RECOVERY").contains(id));
+                "V17-CONTRACT", "V17-UPGRADE", "V17-REGRESSION",
+                "V17-RECOVERY", "V17-PERF").contains(id));
 
         for (String id : List.of("V17-CONTRACT", "V17-UPGRADE", "V17-REGRESSION")) {
             JsonNode gate = findRequirement(requirements, id).get("gates").get("PR");
