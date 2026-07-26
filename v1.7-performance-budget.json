@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "1.0",
+  "direction": "regression-vs-baseline",
+  "units": "ns-per-op",
+  "metricDirection": "lower-is-better",
+  "description": "V1.7 performance budget. Compares the HEAD candidate against the V1.6.0 baseline on the same machine/JDK/JVM args. A regression is the candidate metric being HIGHER (worse) than the baseline. The runner reads this file and never rewrites or relaxes it; threshold changes require documented review. The initial 20% median/P95 budget applies only to KEY hit/miss paths (gated=true); the four observation-only scenarios (no-agent-baseline, agent-loaded-not-enhanced, inventory-query, event-buffer-full-drop) are mandatory and schema-validated but NOT budget-gated, because their absolute timings are inherently noisy or non-dispatch-dominated.",
+  "defaultThreshold": {
+    "medianRegressionPct": 20,
+    "p95RegressionPct": 20
+  },
+  "scenarios": [
+    { "id": "no-agent-baseline", "gated": false },
+    { "id": "agent-loaded-not-enhanced", "gated": false },
+    { "id": "enhanced-rule-not-matched", "gated": true },
+    { "id": "before-hit", "gated": true },
+    { "id": "return-hit", "gated": true },
+    { "id": "throws-hit", "gated": true },
+    { "id": "groovy-noop", "gated": true },
+    { "id": "groovy-arg-read", "gated": true },
+    { "id": "groovy-return-replace", "gated": true },
+    { "id": "chain-1", "gated": true },
+    { "id": "chain-5", "gated": true },
+    { "id": "chain-20", "gated": true },
+    { "id": "inventory-query", "gated": false },
+    { "id": "event-buffer-full-drop", "gated": false }
+  ]
+}
