@@ -136,8 +136,10 @@ OUTPUT_DIR="$(cd "$REPO_ROOT" && mkdir -p "$OUTPUT" && cd "$OUTPUT" && pwd)"
 # Contamination guard: clear ONLY this runner's prior result, then recreate.
 rm -f "$OUTPUT_DIR/state-cycle-result.json"
 
-EXACT_CMD="$(printf '%q' "$0") --cycles $CYCLES --output $OUTPUT$(
-  [[ "$ALLOW_DIRTY" == "true" ]] && printf ' --allow-dirty')"
+EXACT_CMD="$(printf '%q' "$0") --cycles $CYCLES --output $OUTPUT"
+if [[ "$ALLOW_DIRTY" == "true" ]]; then
+  EXACT_CMD="$EXACT_CMD --allow-dirty"
+fi
 
 echo "==> cycles=$CYCLES mode=$MODE working-tree-dirty=$DIRTY"
 echo "==> head=$HEAD_ID"
