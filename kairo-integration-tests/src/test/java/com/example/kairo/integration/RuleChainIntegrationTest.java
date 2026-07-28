@@ -97,6 +97,31 @@ class RuleChainIntegrationTest {
     }
 
     @Test
+    void contentOnlyChangeThenUnloadRestoresBaselineBytecode() throws Exception {
+        Method method = OrderService.class.getMethod("calculateScore", int.class);
+        EnhancementTarget target = targetOf(method, EnhancementLocation.METHOD_RETURN);
+        String baselineHash = runtime.captureService().capture(OrderService.class).appliedHash();
+        MockRule r1 = rule("chain-a", method, EnhancementLocation.METHOD_RETURN, 10,
+                "return mock.returnValue(77)");
+
+        ApplyChainResult first = runtime.applyRuleChain(request("cmd-1", "key-1",
+                RuleChainRevision.initial(), 1L, target, List.of(r1), ChainDesiredState.ACTIVE));
+        MockRule r2 = rule("chain-a", method, EnhancementLocation.METHOD_RETURN, 10,
+                "return mock.returnValue(88)");
+        ApplyChainResult second = runtime.applyRuleChain(request("cmd-2", "key-2",
+                first.applied(), 2L, target, List.of(r2), ChainDesiredState.ACTIVE));
+
+        ApplyChainResult unloaded = runtime.applyRuleChain(request("cmd-3", "key-3",
+                second.applied(), 3L, target, List.of(), ChainDesiredState.EMPTY));
+
+        assertThat(unloaded.status()).isEqualTo(ApplyChainStatus.APPLIED);
+        assertThat(new OrderService().calculateScore(5)).isEqualTo(10);
+        assertThat(runtime.instrumentationRegistry()
+                .targetsOf(OrderService.class.getName(), OrderService.class.getClassLoader())).isEmpty();
+        assertThat(runtime.captureService().capture(OrderService.class).appliedHash()).isEqualTo(baselineHash);
+    }
+
+    @Test
     void unloadRemovesRuleAndRestoresBehaviour() throws Exception {
         Method method = OrderService.class.getMethod("calculateScore", int.class);
         EnhancementTarget target = targetOf(method, EnhancementLocation.METHOD_RETURN);

@@ -2,7 +2,6 @@ package com.example.kairo.perf.statecycle;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -35,7 +34,6 @@ class StateCycleShortLifecycleTest {
      * correct behaviour: every scenario restores its bytecode hash after full
      * unload and the harness exits zero.
      */
-    @Disabled("M2-B failing-before evidence: enable on bugfix/v1.7-rulechain-bytecode-restore")
     @Test
     void sixCycleRunCoversAllScenariosAndPasses() throws Exception {
         String cmd = "./scripts/v1.7/run-state-cycle.sh --cycles 6 --output " + outputDir;

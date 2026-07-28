@@ -169,7 +169,9 @@ public final class RuleChainApplier {
         long newTransformationRevision = current.transformationRevision();
         String newTransformationHash = current.transformationHash();
         boolean retransformed = false;
-        boolean footprintChanged = applyPlanAndMeasure(declaringClass, target, desired.desiredState());
+        PlanChange planChange = applyPlanAndMeasure(
+                declaringClass, target, current.isEmpty(), desired.desiredState());
+        boolean footprintChanged = planChange.footprintChanged();
         if (footprintChanged) {
             try {
                 List<TransformationResult> results = transformerManager.retransform(declaringClass);
@@ -179,7 +181,7 @@ public final class RuleChainApplier {
                 // a successful removal of Kairo advice, not a verification failure. Only an
                 // explicit FAILED result (or a thrown exception) rolls back.
                 if (result != null && result.status() != TransformationStatus.SUCCEEDED) {
-                    rollbackPlan(declaringClass, target, desired.desiredState());
+                    rollbackPlan(target, planChange.mutation());
                     transformerManager.retransform(declaringClass);
                     String msg = result.toString();
                     return finish(request, ApplyChainResult.failed(request.commandId(),
@@ -190,7 +192,7 @@ public final class RuleChainApplier {
                         ? result.outputHash() : "";
                 retransformed = true;
             } catch (RuntimeException e) {
-                rollbackPlan(declaringClass, target, desired.desiredState());
+                rollbackPlan(target, planChange.mutation());
                 transformerManager.retransform(declaringClass);
                 return finish(request, ApplyChainResult.failed(request.commandId(),
                         ApplyChainStatus.TRANSFORM_FAILED, current.revision(), e.getMessage()));
@@ -211,9 +213,10 @@ public final class RuleChainApplier {
                         System.currentTimeMillis(), null);
         boolean swapped = ruleRegistry.casReplace(methodKey, target, current, next);
         if (!swapped) {
-            // Lost a concurrent apply; rollback any retransform and report stale.
-            if (retransformed) {
-                rollbackPlan(declaringClass, target, desired.desiredState());
+            // Lost a concurrent apply: always roll back this command's registry
+            // ownership, even when another owner kept the weave footprint unchanged.
+            rollbackPlan(target, planChange.mutation());
+            if (footprintChanged) {
                 transformerManager.retransform(declaringClass);
             }
             RuleChainSnapshot now = ruleRegistry.chain(methodKey, location, target.callSiteSelector());
@@ -338,11 +341,12 @@ public final class RuleChainApplier {
     /**
      * Apply the desired plan change (register for ACTIVE, unregister for EMPTY)
      * and report whether the method's weave footprint changed. The new plan
-     * state is kept; callers rollback only on retransform failure. A content-only
-     * re-apply (target already registered) is a no-op register and yields no
-     * footprint change, so no retransformation is triggered.
+     * state is kept; callers roll it back on retransform or CAS failure. A
+     * content-only ACTIVE-to-ACTIVE update does not mutate the ref-counted
+     * registry and therefore does not trigger retransformation.
      */
-    private boolean applyPlanAndMeasure(Class<?> declaringClass, EnhancementTarget target, ChainDesiredState state) {
+    private PlanChange applyPlanAndMeasure(Class<?> declaringClass, EnhancementTarget target,
+                                           boolean currentEmpty, ChainDesiredState desiredState) {
         String className = declaringClass.getName();
         String classLoaderId = ClassLoaderIdentity.idOf(declaringClass.getClassLoader());
         String memberName = target.location().isConstructorLocation()
@@ -350,23 +354,39 @@ public final class RuleChainApplier {
         String descriptor = target.method().methodDescriptor();
         DefaultInstrumentationRegistry.WeaveFootprint before =
                 instrumentationRegistry.footprintOf(className, classLoaderId, memberName, descriptor);
-        if (state == ChainDesiredState.EMPTY) {
+
+        // The registry is ref-counted by owner. A chain owns exactly one reference
+        // while its snapshot is ACTIVE. Content-only ACTIVE -> ACTIVE updates must
+        // not register again, otherwise the final EMPTY unload decrements only one
+        // of the leaked references and leaves Kairo Advice woven into the class.
+        PlanMutation mutation = PlanMutation.NONE;
+        if (!currentEmpty && desiredState == ChainDesiredState.EMPTY) {
             instrumentationRegistry.unregister(target);
-        } else {
+            mutation = PlanMutation.UNREGISTERED;
+        } else if (currentEmpty && desiredState == ChainDesiredState.ACTIVE) {
             instrumentationRegistry.register(target);
+            mutation = PlanMutation.REGISTERED;
         }
         DefaultInstrumentationRegistry.WeaveFootprint after =
                 instrumentationRegistry.footprintOf(className, classLoaderId, memberName, descriptor);
-        return !before.equals(after);
+        return new PlanChange(mutation, !before.equals(after));
     }
 
-    private void rollbackPlan(Class<?> declaringClass, EnhancementTarget target, ChainDesiredState attempted) {
-        // Undo the plan change so the Kairo plan matches the prior snapshot.
-        if (attempted == ChainDesiredState.EMPTY) {
+    private void rollbackPlan(EnhancementTarget target, PlanMutation mutation) {
+        if (mutation == PlanMutation.UNREGISTERED) {
             instrumentationRegistry.register(target);
-        } else {
+        } else if (mutation == PlanMutation.REGISTERED) {
             instrumentationRegistry.unregister(target);
         }
+    }
+
+    private enum PlanMutation {
+        NONE,
+        REGISTERED,
+        UNREGISTERED
+    }
+
+    private record PlanChange(PlanMutation mutation, boolean footprintChanged) {
     }
 
     private TransformationResult findResult(List<TransformationResult> results, Class<?> clazz) {
