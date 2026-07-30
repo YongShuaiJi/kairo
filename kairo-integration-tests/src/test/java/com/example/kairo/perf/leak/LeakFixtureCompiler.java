@@ -118,7 +118,8 @@ public final class LeakFixtureCompiler implements AutoCloseable {
     private static final List<Fixture> FIXTURES = List.of(
             new Fixture(LEAK_SERVICE, """
                     package com.example.leakfixture;
-                    public class LeakService implements com.example.leakfixture.LeakInterface {
+                    public class LeakService implements com.example.leakfixture.LeakInterface,
+                            com.example.kairo.perf.leak.LeakEchoContract {
                         public String echo(String value) { return "echo:" + value; }
                         public int compute(int x) { return x * 2; }
                     }
@@ -132,13 +133,15 @@ public final class LeakFixtureCompiler implements AutoCloseable {
             new Fixture(LAMBDA_HOLDER, """
                     package com.example.leakfixture;
                     import java.util.function.IntUnaryOperator;
-                    public class LambdaHolder {
+                    public class LambdaHolder implements IntUnaryOperator {
                         // A lambda captured here generates a synthetic hidden class defined
                         // by this loader, exercising the Lambda/synthetic classification path.
                         public int transform(int x) {
                             IntUnaryOperator op = v -> v * 3 + 1;
                             return op.applyAsInt(x);
                         }
+                        @Override
+                        public int applyAsInt(int x) { return transform(x); }
                         public String label() { return "lambda-holder"; }
                     }
                     """),
@@ -150,7 +153,8 @@ public final class LeakFixtureCompiler implements AutoCloseable {
                     """),
             new Fixture(GENERIC_SUB, """
                     package com.example.leakfixture;
-                    public class GenericSub extends GenericBase<String> {
+                    public class GenericSub extends GenericBase<String>
+                            implements com.example.kairo.perf.leak.LeakStringProcessor {
                         @Override
                         public String process(String input) { return "sub:" + input; }
                         // javac generates a bridge process(Object) delegating to process(String),
@@ -161,7 +165,8 @@ public final class LeakFixtureCompiler implements AutoCloseable {
                     package com.example.leakfixture;
                     // The $$EnhancerByCGLIB$$ marker in the binary name is what the product's
                     // name-based ProxyTargetAnalyzer matches to classify a class as CGLIB.
-                    public class LeakCglib$$EnhancerByCGLIB$$1 {
+                    public class LeakCglib$$EnhancerByCGLIB$$1
+                            implements com.example.kairo.perf.leak.LeakEchoContract {
                         public String echo(String value) { return "cglib:" + value; }
                     }
                     """));

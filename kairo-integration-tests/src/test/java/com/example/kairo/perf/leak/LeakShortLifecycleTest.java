@@ -16,21 +16,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * minimum cycle count (6 = one cycle per scenario, including the Byte Buddy generated
  * class) against a real ByteBuddyAgent +
  * AgentRuntime, then asserts the evidence is schema-valid and that the harness
- * <b>correctly detects and fails on the known production leak</b>
- * ({@code bugfix/v1.7-groovy-invoke-classloader-leak}).
+ * passes every documented M2-C leak budget.
  *
  * <p>The harness strictly enforces the documented &sect;9.3 budgets (no weakening).
- * Because invoking a Groovy rule permanently pins the business ClassLoader across
- * remove + close + bounded GC (see {@link LeakDefectReproTest}), every cycle leaves a
- * residual loader, so the {@code residual-classloaders} gate fails (6 > 2) and the
- * {@code metaspace-growth} gate fails (> 10%). The harness therefore exits 4 and
- * records {@code firstFailure} = {@code residual-classloaders}.
- *
- * <p>This test PASSES by confirming the harness detects the leak and produces valid
- * evidence; it is the in-JVM counterpart of
- * {@code ./scripts/v1.7/run-leak-check.sh --cycles 500 --output target/v1.7}. When the
- * bugfix lands and the M2-C gate goes green, flip the expectations to exit 0 /
- * overall PASSED.
+ * This is the in-JVM counterpart of
+ * {@code ./scripts/v1.7/run-leak-check.sh --cycles 500 --output target/v1.7}.
  */
 class LeakShortLifecycleTest {
 
@@ -41,7 +31,7 @@ class LeakShortLifecycleTest {
     Path outputDir;
 
     @Test
-    void harnessDetectsLeakAndFailsGateWithValidEvidence() throws Exception {
+    void harnessPassesLeakGateWithValidEvidence() throws Exception {
         String cmd = "./scripts/v1.7/run-leak-check.sh --cycles 6 --output " + outputDir;
         int rc = LeakCheckHarness.runInProcess(new String[]{
                 "--cycles", "6",
@@ -72,27 +62,20 @@ class LeakShortLifecycleTest {
             assertThat(s.path("cyclesFailed").asInt()).as(id + " cyclesFailed").isZero();
         }
 
-        // KNOWN DEFECT: the harness detects the ClassLoader leak and fails the gate.
-        assertThat(rc).as("harness must exit 4 (gate failure) until the leak is fixed").isEqualTo(4);
-        assertThat(result.path("overall").asText()).isEqualTo("FAILED");
-
+        assertThat(rc).as("all leak gates must pass").isZero();
+        assertThat(result.path("overall").asText()).isEqualTo("PASSED");
         JsonNode firstFailure = result.path("firstFailure");
-        assertThat(firstFailure.isObject()).isTrue();
-        assertThat(firstFailure.path("phase").asText())
-                .as("the first failing gate must be residual-classloaders")
-                .isEqualTo("residual-classloaders");
+        assertThat(firstFailure.isMissingNode() || firstFailure.isNull())
+                .as("a passing run must not report firstFailure")
+                .isTrue();
 
         JsonNode residual = findGate(result, "residual-classloaders");
         assertThat(residual.path("passed").asBoolean())
-                .as("residual-classloaders gate must fail (known leak)").isFalse();
+                .as("residual-classloaders gate").isTrue();
         int residualObserved = Integer.parseInt(residual.path("observed").asText());
         assertThat(residualObserved)
-                .as("residual unloadable ClassLoaders exceed the <= 2 budget (known leak)")
-                .isGreaterThan(LeakBudget.DOCUMENTED.maxResidualClassLoaders());
-
-        System.out.println("[leak-check] KNOWN DEFECT reproduced: residual-classloaders observed="
-                + residualObserved + " (budget <= " + LeakBudget.DOCUMENTED.maxResidualClassLoaders()
-                + "); see bugfix/v1.7-groovy-invoke-classloader-leak");
+                .as("residual unloadable ClassLoaders stay within the documented budget")
+                .isLessThanOrEqualTo(LeakBudget.DOCUMENTED.maxResidualClassLoaders());
 
         // Warm-up evidence contract (§9.3): an explicit warm-up phase ran every measured path
         // before the baseline, asserted the registries reset, and is accounted separately from
@@ -132,7 +115,7 @@ class LeakShortLifecycleTest {
                 .as("residual-classloaders reconciles to measured + warm-up business live")
                 .isEqualTo(measuredBizLive + warmupBizLive)
                 .as("warm-up loaders are included in the residual budget, never omitted")
-                .isGreaterThan(measuredBizLive);
+                .isLessThanOrEqualTo(LeakBudget.DOCUMENTED.maxResidualClassLoaders());
 
         // The Groovy generation high-water is a real, run-scoped measurement (not a fabricated
         // zero): warm-up + measured cycles compiled Groovy rules, so the high-water is strictly

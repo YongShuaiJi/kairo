@@ -10,6 +10,7 @@ import java.lang.ref.WeakReference;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -95,6 +96,77 @@ class GroovyScriptCompilerCacheTest {
             CompiledMockScript second = compiler.compile("reclaim-rule", 1, "return mock.proceed()", ctx);
             assertThat(second).isNotSameAs(firstRef.get());
             assertThat(second.execute(fakeContext()).type()).isEqualTo(MockDecision.Type.PROCEED);
+        }
+    }
+
+    @Test
+    void closeReleasesTargetClassLoaderAfterScriptExecution() throws Exception {
+        URLClassLoader target = new URLClassLoader(
+                new URL[0], GroovyScriptCompiler.class.getClassLoader());
+        WeakReference<ClassLoader> targetRef = new WeakReference<>(target);
+
+        GroovyScriptCompiler compiler = new GroovyScriptCompiler(
+                GroovyScriptCompiler.class.getClassLoader());
+        ScriptCompilationContext context = ScriptCompilationContext.builder()
+                .profile(CapabilityProfile.SAFE)
+                .policyRevision(REVISION)
+                .targetClassLoader(target)
+                .build();
+        CompiledMockScript script = compiler.compile(
+                "invoked-leak-rule", 1, "return mock.proceed()", context);
+
+        assertThat(script.execute(fakeContext()).type()).isEqualTo(MockDecision.Type.PROCEED);
+
+        compiler.close();
+        target.close();
+        script = null;
+        context = null;
+        compiler = null;
+        target = null;
+
+        assertThat(forceGc(targetRef))
+                .as("closing an invoked script generation must release its target ClassLoader")
+                .isTrue();
+    }
+
+    @Test
+    void generatedRuleNamesDoNotReachTheTargetParentChain() {
+        TrackingClassLoader target = new TrackingClassLoader(
+                GroovyScriptCompiler.class.getClassLoader());
+        ScriptCompilationContext context = ScriptCompilationContext.builder()
+                .profile(CapabilityProfile.SAFE)
+                .policyRevision(REVISION)
+                .targetClassLoader(target)
+                .build();
+
+        try (GroovyScriptCompiler compiler = new GroovyScriptCompiler(target)) {
+            CompiledMockScript script = compiler.compile(
+                    "parent-lock-map", 1, "return mock.proceed()", context);
+            assertThat(script.execute(fakeContext()).type()).isEqualTo(MockDecision.Type.PROCEED);
+        }
+
+        assertThat(target.requestedGeneratedNames())
+                .as("generated rule misses must not pollute long-lived parent ClassLoader lock maps")
+                .isEmpty();
+    }
+
+    @Test
+    void generatedRuleClassNamesUseBoundedGenerationSlots() {
+        ClassLoader target = GroovyScriptCompiler.class.getClassLoader();
+        ScriptCompilationContext context = ScriptCompilationContext.builder()
+                .profile(CapabilityProfile.SAFE)
+                .policyRevision(REVISION)
+                .targetClassLoader(target)
+                .build();
+
+        try (GroovyScriptCompiler compiler = new GroovyScriptCompiler(target)) {
+            GroovyCompiledMockScript first = (GroovyCompiledMockScript) compiler.compile(
+                    "unbounded-user-rule-id-a", 1, "return mock.proceed()", context);
+            GroovyCompiledMockScript second = (GroovyCompiledMockScript) compiler.compile(
+                    "unbounded-user-rule-id-b", 1, "return mock.returnValue('b')", context);
+
+            assertThat(first.scriptType().getName()).isEqualTo("KairoRule_0");
+            assertThat(second.scriptType().getName()).isEqualTo("KairoRule_1");
         }
     }
 
@@ -225,5 +297,25 @@ class GroovyScriptCompilerCacheTest {
         @Override public Object get(Object target, String propertyPath) { return null; }
         @Override public void set(Object target, String propertyPath, Object value) { }
         @Override public boolean isType(Object target, String className) { return false; }
+    }
+
+    private static final class TrackingClassLoader extends ClassLoader {
+        private final Set<String> requestedGeneratedNames = ConcurrentHashMap.newKeySet();
+
+        private TrackingClassLoader(ClassLoader parent) {
+            super(parent);
+        }
+
+        @Override
+        protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            if (name.startsWith("KairoRule_")) {
+                requestedGeneratedNames.add(name);
+            }
+            return super.loadClass(name, resolve);
+        }
+
+        private Set<String> requestedGeneratedNames() {
+            return Set.copyOf(requestedGeneratedNames);
+        }
     }
 }

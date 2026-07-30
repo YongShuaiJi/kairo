@@ -28,11 +28,14 @@ class RuleRegistryEmptyChainTest {
 
     @Test
     void removingFinalRuleRemovesMethodEntryAndForEachChainEmitsNoEmptyChain() {
-        register("only-rule", method(), EnhancementLocation.METHOD_ENTER);
+        CompiledRule removed = register("only-rule", method(), EnhancementLocation.METHOD_ENTER);
         assertThat(registry.snapshot()).containsKey(methodKey());
 
         registry.removeRule(methodKey(), "only-rule");
 
+        assertThat(((NoopScript) removed.script()).released)
+                .as("unloaded rule releases generated-class caches")
+                .isTrue();
         // The method entry is gone entirely (no empty bundle retained).
         assertThat(registry.snapshot()).doesNotContainKey(methodKey());
         assertThat(registry.methodChains(methodKey())).isSameAs(MethodChainSnapshot.EMPTY);
@@ -45,11 +48,15 @@ class RuleRegistryEmptyChainTest {
 
     @Test
     void removingFinalRuleForOneTargetPreservesAnotherNonEmptyTarget() {
-        register("enter-rule", method(), EnhancementLocation.METHOD_ENTER);
-        register("return-rule", method(), EnhancementLocation.METHOD_RETURN);
+        CompiledRule removed = register("enter-rule", method(), EnhancementLocation.METHOD_ENTER);
+        CompiledRule survivorRule = register("return-rule", method(), EnhancementLocation.METHOD_RETURN);
 
         registry.removeRule(methodKey(), "enter-rule");
 
+        assertThat(((NoopScript) removed.script()).released).isTrue();
+        assertThat(((NoopScript) survivorRule.script()).released)
+                .as("a surviving rule must not be released")
+                .isFalse();
         MethodChainSnapshot bundle = registry.methodChains(methodKey());
         // The METHOD_ENTER target was the only rule for that target: it is omitted entirely.
         assertThat(bundle.chain(EnhancementLocation.METHOD_ENTER, null))
@@ -101,6 +108,7 @@ class RuleRegistryEmptyChainTest {
 
     private static final class NoopScript implements CompiledMockScript {
         private final String id;
+        private boolean released;
 
         NoopScript(String id) {
             this.id = id;
@@ -113,6 +121,11 @@ class RuleRegistryEmptyChainTest {
         @Override
         public MockDecision execute(InvocationContext context) {
             return MockDecision.proceed();
+        }
+
+        @Override
+        public void releaseClassLoaderCaches() {
+            released = true;
         }
     }
 

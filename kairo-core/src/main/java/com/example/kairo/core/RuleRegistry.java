@@ -5,12 +5,16 @@ import com.example.kairo.api.EnhancementLocation;
 import com.example.kairo.api.EnhancementTarget;
 import com.example.kairo.api.MethodSelector;
 import com.example.kairo.api.RuleChainRevision;
+import com.example.kairo.groovy.CompiledMockScript;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -73,6 +77,7 @@ public final class RuleRegistry {
                 if (updated.isEmpty()) {
                     methods.remove(methodKey, ref);
                 }
+                releaseRemovedScripts(current, updated);
                 return true;
             }
         }
@@ -88,10 +93,11 @@ public final class RuleRegistry {
         AtomicReference<MethodChainSnapshot> ref = methods.computeIfAbsent(methodKey,
                 ignored -> new AtomicReference<>(MethodChainSnapshot.EMPTY));
         MethodChainSnapshot next = snapshot == null ? MethodChainSnapshot.EMPTY : snapshot;
-        ref.set(next);
+        MethodChainSnapshot previous = ref.getAndSet(next);
         if (next.isEmpty()) {
             methods.remove(methodKey, ref);
         }
+        releaseRemovedScripts(previous, next);
     }
 
     /** All method bundles, for reconciliation and diagnostics. */
@@ -124,7 +130,11 @@ public final class RuleRegistry {
     }
 
     public void clear() {
+        List<MethodChainSnapshot> removed = methods.values().stream()
+                .map(AtomicReference::get)
+                .toList();
         methods.clear();
+        removed.forEach(snapshot -> releaseRemovedScripts(snapshot, MethodChainSnapshot.EMPTY));
     }
 
     /**
@@ -147,7 +157,9 @@ public final class RuleRegistry {
         while (it.hasNext()) {
             var entry = it.next();
             if (classLoaderId.equals(entry.getKey().classLoaderId())) {
+                MethodChainSnapshot removedSnapshot = entry.getValue().get();
                 it.remove();
+                releaseRemovedScripts(removedSnapshot, MethodChainSnapshot.EMPTY);
                 removed++;
             }
         }
@@ -180,6 +192,7 @@ public final class RuleRegistry {
             RuleChainSnapshot next = buildSnapshot(rules, target, currentChain);
             MethodChainSnapshot updated = current.with(target, next);
             if (ref.compareAndSet(current, updated)) {
+                releaseRemovedScripts(current, updated);
                 return updated.toRuleSet();
             }
         }
@@ -223,6 +236,7 @@ public final class RuleRegistry {
                 if (updated.isEmpty()) {
                     methods.remove(methodKey, ref);
                 }
+                releaseRemovedScripts(current, updated);
                 return updated.toRuleSet();
             }
         }
@@ -245,6 +259,7 @@ public final class RuleRegistry {
             RuleChainSnapshot next = buildSnapshot(rules, target, currentChain);
             MethodChainSnapshot updated = current.with(target, next);
             if (ref.compareAndSet(current, updated)) {
+                releaseRemovedScripts(current, updated);
                 return updated.toRuleSet();
             }
         }
@@ -255,8 +270,9 @@ public final class RuleRegistry {
         if (ruleSet == null || ruleSet.isEmpty()) {
             AtomicReference<MethodChainSnapshot> ref = methods.get(methodKey);
             if (ref != null) {
-                ref.set(MethodChainSnapshot.EMPTY);
+                MethodChainSnapshot previous = ref.getAndSet(MethodChainSnapshot.EMPTY);
                 methods.remove(methodKey, ref);
+                releaseRemovedScripts(previous, MethodChainSnapshot.EMPTY);
             }
             return;
         }
@@ -299,6 +315,22 @@ public final class RuleRegistry {
             return false;
         }
         return a.revision().equals(b.revision());
+    }
+
+    private static void releaseRemovedScripts(MethodChainSnapshot previous,
+                                              MethodChainSnapshot next) {
+        if (previous == null || previous.isEmpty()) {
+            return;
+        }
+        Set<CompiledMockScript> retained = Collections.newSetFromMap(new IdentityHashMap<>());
+        if (next != null) {
+            next.allRules().forEach(rule -> retained.add(rule.script()));
+        }
+        for (CompiledRule rule : previous.allRules()) {
+            if (!retained.contains(rule.script())) {
+                rule.script().releaseClassLoaderCaches();
+            }
+        }
     }
 
     private static List<CompiledRule> canonicalize(List<CompiledRule> rules) {

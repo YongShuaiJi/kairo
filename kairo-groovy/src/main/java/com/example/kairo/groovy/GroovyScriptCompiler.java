@@ -68,6 +68,7 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
                 context.policyRevision(), GroovySystem.getVersion());
         evictStaleCacheEntries();
         if (cache.size() >= MAX_CACHE_ENTRIES && !cache.containsKey(key)) {
+            cache.values().forEach(CompiledScriptReference::releaseClassLoaderCaches);
             cache.clear();
         }
         CompiledMockScript[] resultHolder = new CompiledMockScript[1];
@@ -86,12 +87,10 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
 
     private CompiledMockScript compileNew(String ruleId, long version, String scriptHash, String script,
                                           ScriptCompilationContext context, ScriptSecurityPolicy policy) {
-        String className = "KairoRule_" + sanitize(ruleId) + "_" + version
-                + "_" + policy.profile() + "_" + scriptHash.substring(0, 12);
         GenerationHolder holder = generationFor(context, policy);
         ClassAndBytes compiled;
         try {
-            compiled = holder.parseClass(script, className + ".groovy");
+            compiled = holder.parseClass(script);
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("Invalid or forbidden Groovy script: " + rootMessage(e), e);
         }
@@ -133,7 +132,9 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
     private void evictStaleCacheEntries() {
         CompiledScriptReference ref;
         while ((ref = (CompiledScriptReference) cacheReferenceQueue.poll()) != null) {
-            cache.remove(ref.key(), ref);
+            if (cache.remove(ref.key(), ref)) {
+                ref.releaseClassLoaderCaches();
+            }
         }
     }
 
@@ -153,19 +154,18 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
     private static CompilerConfiguration buildConfiguration(ScriptSecurityPolicy policy) {
         CompilerConfiguration configuration = new CompilerConfiguration();
         configuration.setScriptBaseClass(KairoScript.class.getName());
+        /*
+         * Groovy's invokedynamic backend adapts method handles to the generated
+         * script class. The JDK caches some of those adapted handles in
+         * MethodHandleImpl static state, which retains the script loader and its
+         * target application ClassLoader until soft-reference pressure occurs.
+         * Kairo requires deterministic rule unload, so use Groovy's classic call
+         * sites whose per-loader state is cleared by GroovyClassLoader.close().
+         */
+        configuration.getOptimizationOptions().put("indy", false);
         policy.applyTo(configuration);
+        configuration.addCompilationCustomizers(new ClassicCallSiteCompatibilityCustomizer());
         return configuration;
-    }
-
-    private static String sanitize(String ruleId) {
-        String sanitized = ruleId.replaceAll("[^A-Za-z0-9_]", "_");
-        if (sanitized.isBlank()) {
-            return "rule";
-        }
-        if (Character.isDigit(sanitized.charAt(0))) {
-            return "rule_" + sanitized;
-        }
-        return sanitized;
     }
 
     private static String rootMessage(Throwable throwable) {
@@ -195,6 +195,7 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
             }
         });
         generations.clear();
+        cache.values().forEach(CompiledScriptReference::releaseClassLoaderCaches);
         cache.clear();
     }
 
@@ -217,7 +218,9 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
         int removed = 0;
         var cacheIt = cache.entrySet().iterator();
         while (cacheIt.hasNext()) {
-            if (classLoaderId.equals(cacheIt.next().getKey().targetClassLoaderId())) {
+            var entry = cacheIt.next();
+            if (classLoaderId.equals(entry.getKey().targetClassLoaderId())) {
+                entry.getValue().releaseClassLoaderCaches();
                 cacheIt.remove();
                 removed++;
             }
@@ -254,15 +257,32 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
      */
     private static final class CompiledScriptReference extends WeakReference<CompiledMockScript> {
         private final ScriptCacheKey key;
+        private final WeakReference<Class<?>> scriptType;
 
         CompiledScriptReference(CompiledMockScript referent, ScriptCacheKey key,
                                 ReferenceQueue<CompiledMockScript> queue) {
             super(referent, queue);
             this.key = key;
+            this.scriptType = referent instanceof GroovyCompiledMockScript groovy
+                    ? new WeakReference<>(groovy.scriptType())
+                    : new WeakReference<>(null);
         }
 
         ScriptCacheKey key() {
             return key;
+        }
+
+        void releaseClassLoaderCaches() {
+            CompiledMockScript script = get();
+            if (script != null) {
+                script.releaseClassLoaderCaches();
+            } else {
+                Class<?> type = scriptType.get();
+                if (type != null) {
+                    java.beans.Introspector.flushFromCaches(type);
+                }
+            }
+            scriptType.clear();
         }
     }
 
@@ -301,12 +321,21 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
             this.generation = new ScriptLoaderGeneration(parent, configuration);
         }
 
-        synchronized ClassAndBytes parseClass(String script, String fileName) {
+        synchronized ClassAndBytes parseClass(String script) {
             rotateIfNeeded();
             KairoGroovyClassLoader loader = generation.groovyClassLoader();
             Class<?> type;
             try {
-                type = loader.parseClass(script, fileName);
+                /*
+                 * Groovy derives the generated class name from this file name. Keep the
+                 * name space bounded to the generation's 0..255 slots instead of embedding
+                 * a rule id/hash. JDK parallel-capable parent ClassLoaders permanently retain
+                 * a lock entry for each distinct delegated class name, including JavaBeans
+                 * BeanInfo/Customizer probes that bypass the Groovy loader. A bounded slot
+                 * name therefore makes repeated rule/loader churn memory-stable; a rotated
+                 * generation has a new defining loader and can safely reuse the same slots.
+                 */
+                type = loader.parseClass(script, "KairoRule_" + classesInGeneration + ".groovy");
             } catch (RuntimeException e) {
                 loader.consumeArtifactBytes();
                 throw e;

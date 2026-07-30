@@ -3,12 +3,16 @@ package com.example.kairo.groovy;
 import com.example.kairo.api.InvocationContext;
 import com.example.kairo.api.MockDecision;
 
+import java.beans.Introspector;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 final class GroovyCompiledMockScript implements CompiledMockScript {
 
     private final String ruleId;
     private final long version;
     private final GroovyCompilationMetadata metadata;
     private final Class<? extends KairoScript> scriptType;
+    private final AtomicBoolean released = new AtomicBoolean();
 
     GroovyCompiledMockScript(String ruleId, long version,
                              GroovyCompilationMetadata metadata,
@@ -57,6 +61,26 @@ final class GroovyCompiledMockScript implements CompiledMockScript {
             throw e;
         } catch (Exception e) {
             throw new IllegalStateException("Cannot execute Groovy script " + ruleId + ":" + version, e);
+        } finally {
+            /*
+             * A rule can be removed after the dispatcher captured its immutable snapshot
+             * but before this invocation finishes. releaseClassLoaderCaches() flushes
+             * immediately; this second flush closes the race if Groovy repopulated the
+             * JavaBeans cache later in the in-flight execution.
+             */
+            if (released.get()) {
+                Introspector.flushFromCaches(scriptType);
+            }
         }
+    }
+
+    @Override
+    public void releaseClassLoaderCaches() {
+        released.set(true);
+        Introspector.flushFromCaches(scriptType);
+    }
+
+    Class<? extends KairoScript> scriptType() {
+        return scriptType;
     }
 }

@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.IntUnaryOperator;
 
 /**
  * M2-C ClassLoader/Groovy leak-check harness (&sect;9.3). Runs real create / enhance /
@@ -329,15 +330,15 @@ public final class LeakCheckHarness {
         try {
             Class<?> clazz = Class.forName(fixtures.binaryName(LeakFixtureCompiler.LEAK_SERVICE), true, loader);
             Method echo = clazz.getMethod("echo", String.class);
-            Object inst = clazz.getDeclaredConstructor().newInstance();
-            verify("baseline", "echo:x", echo.invoke(inst, "x"));
+            LeakEchoContract inst = (LeakEchoContract) clazz.getDeclaredConstructor().newInstance();
+            verify("baseline", "echo:x", inst.echo("x"));
             String ruleId = "biz-" + t + cycle;
             runtime.publish(echo, rule(ruleId, echo, EnhancementLocation.METHOD_RETURN,
                     "return mock.returnValue('BIZ-" + cycle + "')"), "leak");
-            String enhanced = (String) echo.invoke(inst, "x");
+            String enhanced = inst.echo("x");
             verify("enhanced", "BIZ-" + cycle, enhanced);
             runtime.remove(ruleId, "leak");
-            String restored = (String) echo.invoke(inst, "x");
+            String restored = inst.echo("x");
             verify("restored", "echo:x", restored);
             return new CycleOutcome(enhanced, restored);
         } finally {
@@ -356,24 +357,24 @@ public final class LeakCheckHarness {
         try {
             Class<?> iface = Class.forName(fixtures.binaryName(LeakFixtureCompiler.LEAK_INTERFACE), true, loader);
             Class<?> impl = Class.forName(fixtures.binaryName(LeakFixtureCompiler.LEAK_SERVICE), true, loader);
-            Object implInstance = impl.getDeclaredConstructor().newInstance();
+            LeakEchoContract implInstance =
+                    (LeakEchoContract) impl.getDeclaredConstructor().newInstance();
             Method echo = impl.getMethod("echo", String.class);
-            Object proxy = Proxy.newProxyInstance(loader, new Class<?>[]{iface},
-                    (p, method, args) -> echo.invoke(implInstance, args));
+            Object proxy = Proxy.newProxyInstance(loader, new Class<?>[]{iface, LeakEchoContract.class},
+                    (p, method, args) -> implInstance.echo((String) args[0]));
             // The JDK proxy class is defined in the business loader (a generated class
             // that must be reclaimable with the loader).
             verify("proxy-class-in-loader", "true",
                     String.valueOf(proxy.getClass().getClassLoader() == loader));
-            verify("baseline", "echo:x", echo.invoke(implInstance, "x"));
+            verify("baseline", "echo:x", implInstance.echo("x"));
             String ruleId = "proxy-" + t + cycle;
             runtime.publish(echo, rule(ruleId, echo, EnhancementLocation.METHOD_RETURN,
                     "return mock.returnValue('PROXY-" + cycle + "')"), "leak");
             // Invoke THROUGH the proxy: it delegates to the enhanced impl method.
-            Method proxyEcho = proxy.getClass().getMethod("echo", String.class);
-            String enhanced = (String) proxyEcho.invoke(proxy, "x");
+            String enhanced = ((LeakEchoContract) proxy).echo("x");
             verify("enhanced-through-proxy", "PROXY-" + cycle, enhanced);
             runtime.remove(ruleId, "leak");
-            String restored = (String) proxyEcho.invoke(proxy, "x");
+            String restored = ((LeakEchoContract) proxy).echo("x");
             verify("restored", "echo:x", restored);
             return new CycleOutcome(enhanced, restored);
         } finally {
@@ -393,9 +394,9 @@ public final class LeakCheckHarness {
             // Exercise the lambda/synthetic hidden class: invoking transform() forces the
             // JVM to define the lambda form in this loader.
             Class<?> lambdaHolder = Class.forName(fixtures.binaryName(LeakFixtureCompiler.LAMBDA_HOLDER), true, loader);
-            Object lambdaInst = lambdaHolder.getDeclaredConstructor().newInstance();
-            Method transform = lambdaHolder.getMethod("transform", int.class);
-            verify("lambda-transform", String.valueOf(5 * 3 + 1), transform.invoke(lambdaInst, 5));
+            IntUnaryOperator lambdaInst =
+                    (IntUnaryOperator) lambdaHolder.getDeclaredConstructor().newInstance();
+            verify("lambda-transform", String.valueOf(5 * 3 + 1), lambdaInst.applyAsInt(5));
 
             // Exercise the bridge/synthetic policy path: publishing on the generated
             // bridge method must be rejected by the agent's SyntheticBridgePolicy.
@@ -413,15 +414,16 @@ public final class LeakCheckHarness {
 
             // Enhance the real (non-bridge) method; the bridge delegates to it.
             Method real = genericSub.getMethod("process", String.class);
-            Object subInst = genericSub.getDeclaredConstructor().newInstance();
-            verify("baseline", "sub:x", real.invoke(subInst, "x"));
+            LeakStringProcessor subInst =
+                    (LeakStringProcessor) genericSub.getDeclaredConstructor().newInstance();
+            verify("baseline", "sub:x", subInst.process("x"));
             String ruleId = "syn-" + t + cycle;
             runtime.publish(real, rule(ruleId, real, EnhancementLocation.METHOD_RETURN,
                     "return mock.returnValue('SYN-" + cycle + "')"), "leak");
-            String enhanced = (String) real.invoke(subInst, "x");
+            String enhanced = subInst.process("x");
             verify("enhanced", "SYN-" + cycle, enhanced);
             runtime.remove(ruleId, "leak");
-            String restored = (String) real.invoke(subInst, "x");
+            String restored = subInst.process("x");
             verify("restored", "sub:x", restored);
             return new CycleOutcome(enhanced, restored);
         } finally {
@@ -440,13 +442,13 @@ public final class LeakCheckHarness {
         try {
             Class<?> clazz = Class.forName(fixtures.binaryName(LeakFixtureCompiler.LEAK_SERVICE), true, loader);
             Method echo = clazz.getMethod("echo", String.class);
-            Object inst = clazz.getDeclaredConstructor().newInstance();
+            LeakEchoContract inst = (LeakEchoContract) clazz.getDeclaredConstructor().newInstance();
             // A batch of distinct scripts (cache miss) against this loader.
             for (int i = 0; i < COMPILE_BATCH; i++) {
                 String ruleId = "gc-" + t + cycle + "-" + i;
                 runtime.publish(echo, rule(ruleId, echo, EnhancementLocation.METHOD_RETURN,
                         "return mock.returnValue('GC" + i + "')"), "leak");
-                verify("cache-miss-" + i, "GC" + i, echo.invoke(inst, "x"));
+                verify("cache-miss-" + i, "GC" + i, inst.echo("x"));
                 runtime.remove(ruleId, "leak");
             }
             // Repeats of the first script (cache hit: same ruleId/version/script/loader).
@@ -454,10 +456,10 @@ public final class LeakCheckHarness {
                 String ruleId = "gc-" + t + cycle + "-0";
                 runtime.publish(echo, rule(ruleId, echo, EnhancementLocation.METHOD_RETURN,
                         "return mock.returnValue('GC0')"), "leak");
-                verify("cache-hit-" + j, "GC0", echo.invoke(inst, "x"));
+                verify("cache-hit-" + j, "GC0", inst.echo("x"));
                 runtime.remove(ruleId, "leak");
             }
-            String restored = (String) echo.invoke(inst, "x");
+            String restored = inst.echo("x");
             verify("restored", "echo:x", restored);
             return new CycleOutcome("GC0", restored);
         } finally {
@@ -480,15 +482,15 @@ public final class LeakCheckHarness {
             ProxyAnalysis analysis = new DefaultProxyTargetAnalyzer().analyze(clazz);
             verify("cglib-classified", ProxyType.CGLIB.name(), analysis.proxyType().name());
             Method echo = clazz.getMethod("echo", String.class);
-            Object inst = clazz.getDeclaredConstructor().newInstance();
-            verify("baseline", "cglib:x", echo.invoke(inst, "x"));
+            LeakEchoContract inst = (LeakEchoContract) clazz.getDeclaredConstructor().newInstance();
+            verify("baseline", "cglib:x", inst.echo("x"));
             String ruleId = "cgb-" + t + cycle;
             runtime.publish(echo, rule(ruleId, echo, EnhancementLocation.METHOD_RETURN,
                     "return mock.returnValue('CGLIB-" + cycle + "')"), "leak");
-            String enhanced = (String) echo.invoke(inst, "x");
+            String enhanced = inst.echo("x");
             verify("enhanced", "CGLIB-" + cycle, enhanced);
             runtime.remove(ruleId, "leak");
-            String restored = (String) echo.invoke(inst, "x");
+            String restored = inst.echo("x");
             verify("restored", "cglib:x", restored);
             return new CycleOutcome(enhanced, restored);
         } finally {
@@ -533,15 +535,16 @@ public final class LeakCheckHarness {
             ProxyAnalysis analysis = new DefaultProxyTargetAnalyzer().analyze(generated);
             verify("bytebuddy-classified", ProxyType.BYTE_BUDDY.name(), analysis.proxyType().name());
             Method echo = generated.getMethod("echo", String.class);
-            Object inst = generated.getDeclaredConstructor().newInstance();
-            verify("baseline", "echo:x", echo.invoke(inst, "x"));
+            LeakEchoContract inst =
+                    (LeakEchoContract) generated.getDeclaredConstructor().newInstance();
+            verify("baseline", "echo:x", inst.echo("x"));
             String ruleId = "bb-" + t + cycle;
             runtime.publish(echo, rule(ruleId, echo, EnhancementLocation.METHOD_RETURN,
                     "return mock.returnValue('BB-" + cycle + "')"), "leak");
-            String enhanced = (String) echo.invoke(inst, "x");
+            String enhanced = inst.echo("x");
             verify("enhanced", "BB-" + cycle, enhanced);
             runtime.remove(ruleId, "leak");
-            String restored = (String) echo.invoke(inst, "x");
+            String restored = inst.echo("x");
             verify("restored", "echo:x", restored);
             return new CycleOutcome(enhanced, restored);
         } finally {

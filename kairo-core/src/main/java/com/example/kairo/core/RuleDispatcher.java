@@ -12,6 +12,8 @@ import com.example.kairo.bridge.ExitResult;
 import com.example.kairo.object.RuntimeObjectFactory;
 
 import java.time.Clock;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
@@ -92,12 +94,26 @@ public final class RuleDispatcher implements AutoCloseable {
                 config.executorKeepAliveSeconds(),
                 TimeUnit.SECONDS,
                 queue,
-                runnable -> {
-                    Thread thread = new Thread(runnable, config.threadNamePrefix());
-                    thread.setDaemon(true);
-                    return thread;
-                },
+                runnable -> newScriptThread(runnable, config.threadNamePrefix()),
                 new ThreadPoolExecutor.AbortPolicy());
+    }
+
+    @SuppressWarnings("removal")
+    private static Thread newScriptThread(Runnable runnable, String name) {
+        /*
+         * ThreadPoolExecutor creates cached workers lazily on the submitting
+         * business thread. A normal Thread constructor inherits that thread's
+         * AccessControlContext and context ClassLoader, which can retain an
+         * otherwise unloadable application ClassLoader for the worker keep-alive
+         * period. Truncate the inherited security context at Kairo's stable
+         * protection domain and explicitly install Kairo's own context loader.
+         */
+        return AccessController.doPrivileged((PrivilegedAction<Thread>) () -> {
+            Thread thread = new Thread(null, runnable, name, 0L, false);
+            thread.setDaemon(true);
+            thread.setContextClassLoader(RuleDispatcher.class.getClassLoader());
+            return thread;
+        });
     }
 
     // -------------------------------------------------------- V1 method path (BEFORE/RETURN/THROWS + FINALLY)
