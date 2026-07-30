@@ -23,22 +23,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * exact trigger so the defect is reproducible on a tiny budget without the 10k-cycle
  * RC soak.
  *
- * <p><b>Defect summary:</b> invoking an enhanced business method that runs a Groovy
- * script rule permanently pins the business {@link ClassLoader} (and the Groovy
- * script {@code ClassLoader}). The loader is NOT reclaimable after
- * {@code runtime.remove(rule)} + {@code runtime.close()} + a bounded full-GC sequence,
- * even after clearing Groovy's {@code MetaClassRegistry} and {@code ClassInfo}. A loader
- * that is loaded/closed without an invoked rule, and a direct {@code GroovyScriptCompiler}
- * compile/close, ARE reclaimable. The leak therefore originates in the agent's
- * invoke/dispatch path (bridge + Groovy script execution), not in the Groovy compiler
- * alone and not in the publish/remove weaving path alone.
+ * <p><b>Defect summary:</b> before the fix, invoking an enhanced business method that
+ * ran a Groovy rule could pin both the business {@link ClassLoader} and the Groovy script
+ * loader after {@code runtime.remove(rule)}. Heap-root analysis found three independent
+ * lifecycle roots: the JDK JavaBeans introspection cache, Groovy indy method handles
+ * adapted to generated script types, and lazily-created dispatcher workers inheriting
+ * the submitting business thread's security context/ClassLoader. The fix flushes
+ * generated script types from JavaBeans caches, uses Groovy's unload-safe classic call
+ * sites, and creates workers with Kairo's stable security context and context loader.
  *
- * <p>This is a <b>known production defect</b> to be fixed under
+ * <p>This regression test covers the production defect fixed under
  * {@code bugfix/v1.7-groovy-invoke-classloader-leak}. The M2-C harness
- * ({@link LeakCheckHarness}) strictly enforces the documented &sect;9.3 budgets and
- * FAILS (exit 4) because of this leak; these tests characterize the trigger so the fix
- * can be verified. When the fix lands, {@code invokedGroovyRulePinsClassLoader} should
- * flip to assert the loader IS reclaimable.
+ * ({@link LeakCheckHarness}) strictly enforces the documented &sect;9.3 budgets.
  */
 class LeakDefectReproTest {
 
@@ -67,26 +63,24 @@ class LeakDefectReproTest {
     }
 
     @Test
-    void invokedGroovyRulePinsClassLoader() throws Exception {
-        // Variant C/D: publish + INVOKE + remove + close. The invoked rule permanently
-        // pins the business ClassLoader (and the Groovy script ClassLoader).
+    void invokedGroovyRuleReleasesClassLoaderWhileRuntimeRemainsOpen() throws Exception {
+        // Variant C/D: publish + INVOKE + remove while the Agent remains open. The
+        // generated script class must not keep the business ClassLoader alive after
+        // the rule leaves the immutable registry snapshot.
         try (LeakFixtureCompiler fixtures = LeakFixtureCompiler.compile()) {
             AgentRuntime runtime = new AgentRuntime(ByteBuddyAgent.install());
             runtime.start();
-            WeakReference<ClassLoader> ref;
             try {
-                ref = publishInvokeRemove(fixtures, runtime, "invoke");
+                WeakReference<ClassLoader> ref =
+                        publishInvokeRemove(fixtures, runtime, "invoke");
+                gcLoop(10);
+                assertThat(ref.get())
+                        .as("invoking then removing a Groovy rule must not pin the business"
+                                + " ClassLoader while the Agent remains open")
+                        .isNull();
             } finally {
                 runtime.close();
             }
-            gcLoop(10);
-            // KNOWN DEFECT: the loader is NOT reclaimed. This assertion documents the
-            // defect; flip to .isNull() once bugfix/v1.7-groovy-invoke-classloader-leak
-            // lands and the M2-C gate goes green.
-            assertThat(ref.get())
-                    .as("KNOWN DEFECT: invoking a Groovy rule pins the business ClassLoader"
-                            + " across remove + close + bounded GC")
-                    .isNotNull();
         }
     }
 

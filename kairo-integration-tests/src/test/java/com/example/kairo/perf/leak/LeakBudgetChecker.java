@@ -20,15 +20,11 @@ import java.util.List;
  * window (agent closed, final bounded GC). The cache-budget gates check that every window
  * stays at or below the product's bounded-cache limits.
  *
- * <p><b>Defect signal preserved.</b> {@code residual-classloaders} is evaluated first. Per
- * &sect;9.3 the residual budget includes <em>every</em> explicitly created unloadable
- * ClassLoader of that kind, so it counts the measured business loaders <em>plus</em> the
- * warm-up business loaders (both pinned by the known Groovy-invoke leak); the known leak
- * makes it fail until {@code bugfix/v1.7-groovy-invoke-classloader-leak} lands. The Groovy
- * gates are additional evidence (the cache/generation bounds hold and clear on close even
- * though the loaders themselves stay pinned); {@code residual-groovy-loaders} is the
- * Groovy-loader counterpart of the residual signal (measured + warm-up Groovy loaders). No
- * documented threshold is weakened - gates are only added.
+ * <p>{@code residual-classloaders} is evaluated first. Per &sect;9.3 the residual
+ * budget includes <em>every</em> explicitly created unloadable ClassLoader of that kind,
+ * so it counts the measured business loaders <em>plus</em> the warm-up business loaders.
+ * {@code residual-groovy-loaders} is the Groovy-loader counterpart of that signal.
+ * No documented threshold is weakened.
  */
 public final class LeakBudgetChecker {
 
@@ -53,8 +49,8 @@ public final class LeakBudgetChecker {
     public Verdict evaluate(LeakObservation baseline, LeakObservation postCycles,
                             LeakObservation postClose, List<LeakObservation> all) {
         List<GateResult> gates = new ArrayList<>();
-        // Residual signals first: residual-classloaders must remain firstFailure for the
-        // known leak so the short gate keeps exiting non-zero until the bugfix lands.
+        // Residual signals first so a loader regression is reported before secondary
+        // growth or bounded-cache symptoms.
         gates.add(residualClassLoaders(postClose));
         gates.add(residualGroovyLoaders(postClose));
         gates.add(threadDelta(baseline, postCycles));

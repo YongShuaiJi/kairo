@@ -33,6 +33,22 @@ class GroovyScriptCompilerTest {
     }
 
     @Test
+    void classicCallSitePreservesReplacementArgumentArray() throws Exception {
+        try (GroovyScriptCompiler compiler = new GroovyScriptCompiler()) {
+            CompiledMockScript script = compiler.compile("replace-args", 1, """
+                    def newArgs = args.clone()
+                    newArgs[0] = 'changed'
+                    return mock.proceed(newArgs)
+                    """);
+
+            MockDecision decision = script.execute(
+                    new FakeInvocationContext(new Object[]{"original"}));
+
+            assertThat(decision.arguments()).containsExactly("changed");
+        }
+    }
+
+    @Test
     void rejectsClearlyDangerousScriptOnSave() {
         try (GroovyScriptCompiler compiler = new GroovyScriptCompiler()) {
             assertThatThrownBy(() -> compiler.compile("rule-1", 1, "java.lang.System.exit(0)"))
