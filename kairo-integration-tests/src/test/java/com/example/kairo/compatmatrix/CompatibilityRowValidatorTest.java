@@ -107,6 +107,63 @@ class CompatibilityRowValidatorTest {
         assertThat(validate(row)).anyMatch(e -> e.contains("must match the catalog runner arch"));
     }
 
+    // --- M3-B real process evidence (launchCommand/attachCommand/stdout/stderr) ---
+
+    @Test
+    void fakePassedMissingLaunchCommandRejected() {
+        ObjectNode row = FX.passedRow("C01");
+        ((ObjectNode) row.path("targetJvm")).put("launchCommand", "");
+        assertThat(validate(row)).anyMatch(e -> e.contains("launchCommand must be a non-blank string"));
+    }
+
+    @Test
+    void fakePassedMissingStdoutArtifactRejected() {
+        ObjectNode row = FX.passedRow("C02");
+        ((ObjectNode) row.path("targetJvm")).put("stdoutArtifact", "");
+        assertThat(validate(row)).anyMatch(e -> e.contains("stdoutArtifact must be a non-blank string"));
+    }
+
+    @Test
+    void fakePassedMissingStderrArtifactRejected() {
+        ObjectNode row = FX.passedRow("C09");
+        ((ObjectNode) row.path("targetJvm")).put("stderrArtifact", "");
+        assertThat(validate(row)).anyMatch(e -> e.contains("stderrArtifact must be a non-blank string"));
+    }
+
+    @Test
+    void fakePassedAttachScenarioMissingAttachCommandRejected() {
+        // C02 is an attach scenario: attachCommand must be present.
+        ObjectNode row = FX.passedRow("C02");
+        ((ObjectNode) row.path("targetJvm")).put("attachCommand", "");
+        assertThat(validate(row)).anyMatch(e -> e.contains("attachCommand must be a non-blank string"));
+    }
+
+    @Test
+    void fakePassedAgentmainScenarioMissingAttachCommandRejected() {
+        // C09 (agentmain) is also attach-based: attachCommand required.
+        ObjectNode row = FX.passedRow("C09");
+        ((ObjectNode) row.path("targetJvm")).put("attachCommand", "");
+        assertThat(validate(row)).anyMatch(e -> e.contains("attachCommand must be a non-blank string"));
+    }
+
+    @Test
+    void premainScenarioBlankAttachCommandAccepted() {
+        // C01 (premain) never attaches: a blank attachCommand is valid.
+        ObjectNode row = FX.passedRow("C01");
+        ((ObjectNode) row.path("targetJvm")).put("attachCommand", "");
+        assertThat(validate(row)).isEmpty();
+    }
+
+    @Test
+    void failedRowRequiresProcessEvidence() {
+        ObjectNode row = FX.passedRow("C01");
+        row.put("status", "FAILED");
+        row.put("failureReason", "assertion failed");
+        ((ObjectNode) ((ArrayNode) row.path("assertions")).get(0)).put("passed", false);
+        ((ObjectNode) row.path("targetJvm")).put("launchCommand", "");
+        assertThat(validate(row)).anyMatch(e -> e.contains("launchCommand must be a non-blank string"));
+    }
+
     // --- wrong build id / platform / load metadata ---
 
     @Test

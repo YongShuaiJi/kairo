@@ -2,12 +2,10 @@
 #
 # scripts/v1.7/run-compatibility.sh
 #
-# V1.7 M3-A compatibility row-evidence runner (section 10.3 / 10.4.1). Produces one
-# row-evidence JSON file for a fixed C01-C10 scenario. The row runner is contract /
-# dispatch foundation only: it validates the environment and dispatches to a scenario
-# implementation. Because real fixtures land in M3-B through M3-E, in M3-A every formal
-# scenario fails closed with truthful NOT_RUN evidence (exit 4) and the experimental
-# C09 emits truthful EXPERIMENTAL evidence (exit 0). It NEVER fabricates PASSED.
+# V1.7 compatibility row-evidence runner (section 10.3). Produces one row-evidence
+# JSON file for a fixed C01-C10 scenario. M3-B implements C01/C02/C09; later work
+# packages add the remaining fixtures. Unavailable formal rows fail closed and C09
+# may be EXPERIMENTAL only when no truthful macOS runner/JDK is available.
 #
 # Fixed interface (section 10.3):
 #   ./scripts/v1.7/run-compatibility.sh \
@@ -73,8 +71,9 @@ Behavior:
     --allow-dirty only for local development (mode=dev).
   - Cleans only this runner's prior output file before running.
   - Runs the runner in a fresh JVM; the exact exit code is preserved.
-  - In M3-A: formal scenarios (C01-C08, C10) emit NOT_RUN (exit 4); C09 emits
-    EXPERIMENTAL (exit 0). No scenario is marked PASSED.
+  - C01/C02/C09 run their M3-B real independent-JVM fixtures when the catalog
+    platform and target JDK are available. Other rows remain fail-closed until
+    their bounded M3 work package lands.
   - Never modifies the workflow, the acceptance manifest, or support conclusions.
 EOF
 }
@@ -143,6 +142,91 @@ if ! (cd "$REPO_ROOT" && $MVN -B -ntp -pl kairo-integration-tests -am test-compi
 fi
 
 # -----------------------------------------------------------------------------
+# M3-B: for the implemented scenarios (C01/C02/C09) provision the real-execution
+# environment - build the existing agent/bootstrap/core/attach artifacts in place
+# and resolve the target JDK homes without any network download. Non-implemented
+# scenarios are left unprovisioned so the runner fails closed per M3-A.
+# -----------------------------------------------------------------------------
+REAL_PROPS=()
+case "$SCENARIO" in
+  C01|C02|C09)
+    BOOTSTRAP_JAR="$REPO_ROOT/kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar"
+    CORE_JAR="$REPO_ROOT/kairo-agent-core-modern/target/kairo-agent-core-modern.jar"
+    ATTACH_JAR="$REPO_ROOT/kairo-attach-cli/target/kairo-attach.jar"
+    # Always package from the current worktree. Reusing any merely-existing jar
+    # could attach stale bytecode while the row claims the current HEAD buildId.
+    echo "==> building agent artifacts (bootstrap/core-modern/attach) at $REPO_ROOT"
+    if ! (cd "$REPO_ROOT" && $MVN -B -ntp \
+          -pl kairo-agent-bootstrap,kairo-agent-core-modern,kairo-attach-cli \
+          -am package -DskipTests -q); then
+      echo "error: agent artifact build failed" >&2
+      exit 2
+    fi
+    BOOTSTRAP_API_JAR="$(find "$REPO_ROOT/kairo-bootstrap-api/target" -maxdepth 1 -type f \
+      -name 'kairo-bootstrap-api-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' \
+      -print -quit 2>/dev/null || true)"
+    if [[ ! -f "$BOOTSTRAP_JAR" || ! -f "$BOOTSTRAP_API_JAR" \
+          || ! -f "$CORE_JAR" || ! -f "$ATTACH_JAR" ]]; then
+      echo "error: agent artifacts still missing after build" >&2
+      exit 2
+    fi
+    # Keep stdout/stderr and auxiliary evidence beside the requested row output.
+    # A /tmp directory inside an ephemeral CI container would disappear as soon as
+    # the row completes and leave a formally PASSED row pointing at dead evidence.
+    WORK_DIR="$(mktemp -d "${PARENT_DIR}/${SCENARIO}-artifacts.XXXXXX")"
+    # Resolve a target JDK home for a wanted major. Precedence: explicit
+    # KAIRO_JDK<major>_HOME env var, macOS /usr/libexec/java_home -v <major>,
+    # then the current JAVA_HOME only if its major matches. The actual major is
+    # verified with `java -version` because macOS java_home -v 17 can return a
+    # JDK 21 home when no JDK 17 is installed. Never downloads.
+    jdk_major_of() {
+      local home="$1"
+      [[ -x "$home/bin/java" ]] || { printf ''; return; }
+      local ver quoted major
+      ver="$("$home/bin/java" -version 2>&1 | head -1 || true)"
+      quoted="${ver#*\"}"
+      quoted="${quoted%%\"*}"
+      if [[ "$quoted" == 1.* ]]; then
+        major="${quoted#1.}"
+        major="${major%%.*}"
+      else
+        major="${quoted%%.*}"
+      fi
+      printf '%s' "$major"
+    }
+    resolve_jdk() {
+      local want="$1" home
+      local envname="KAIRO_JDK${want}_HOME"
+      home="${!envname:-}"
+      if [[ -n "$home" && "$(jdk_major_of "$home")" == "$want" ]]; then printf '%s' "$home"; return; fi
+      if [[ -x /usr/libexec/java_home ]]; then
+        home="$(/usr/libexec/java_home -v "$want" 2>/dev/null || true)"
+        if [[ -n "$home" && "$(jdk_major_of "$home")" == "$want" ]]; then printf '%s' "$home"; return; fi
+      fi
+      if [[ -n "${JAVA_HOME:-}" && "$(jdk_major_of "$JAVA_HOME")" == "$want" ]]; then printf '%s' "$JAVA_HOME"; return; fi
+      printf ''
+    }
+    JDK17_HOME_RESOLVED="$(resolve_jdk 17)"
+    JDK21_HOME_RESOLVED="$(resolve_jdk 21)"
+    REAL_PROPS+=(
+      "-Dkairo.compat.real.exec=true"
+      "-Dkairo.compat.repo.root=$REPO_ROOT"
+      "-Dkairo.compat.work.dir=$WORK_DIR"
+      "-Dkairo.compat.artifacts.bootstrapJar=$BOOTSTRAP_JAR"
+      "-Dkairo.compat.artifacts.bootstrapApiJar=$BOOTSTRAP_API_JAR"
+      "-Dkairo.compat.artifacts.coreJar=$CORE_JAR"
+      "-Dkairo.compat.artifacts.attachJar=$ATTACH_JAR"
+      "-Dkairo.compat.timeout.startupMillis=60000"
+      "-Dkairo.compat.timeout.operationMillis=30000"
+    )
+    [[ -n "$JDK17_HOME_RESOLVED" ]] && REAL_PROPS+=("-Dkairo.compat.target.jdk.17=$JDK17_HOME_RESOLVED")
+    [[ -n "$JDK21_HOME_RESOLVED" ]] && REAL_PROPS+=("-Dkairo.compat.target.jdk.21=$JDK21_HOME_RESOLVED")
+    echo "==> real-exec provisioned: jdk17=${JDK17_HOME_RESOLVED:-<none>} jdk21=${JDK21_HOME_RESOLVED:-<none>}"
+    ;;
+esac
+
+
+# -----------------------------------------------------------------------------
 # Assemble the classpath: runner test-classes + reactor target/classes + ext deps.
 # -----------------------------------------------------------------------------
 reactor_classes() {
@@ -170,7 +254,8 @@ echo "==> running row runner (scenario=$SCENARIO)"
 # exit with the EXACT code. The row file is always written (best effort).
 RUNNER_STATUS=0
 set +e
-"$JAVA_BIN" -cp "$CP" "$RUNNER_MAIN" \
+# ${REAL_PROPS[@]+...} is the bash-3.2-safe empty-array expansion under `set -u`.
+"$JAVA_BIN" -cp "$CP" ${REAL_PROPS[@]+"${REAL_PROPS[@]}"} "$RUNNER_MAIN" \
   --scenario "$SCENARIO" \
   --output "$OUTPUT" \
   --build-id "$HEAD_ID" \

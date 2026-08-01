@@ -145,10 +145,31 @@ public final class CompatibilityRowValidator {
         // carry real independent child evidence; a FAILED row must have actually run.
         if ("PASSED".equals(status)) {
             validatePassedEvidence(errors, root, scenario);
+            validateProcessEvidence(errors, root, scenario);
         } else if ("FAILED".equals(status)) {
             validateFailedEvidence(errors, root, scenario);
+            validateProcessEvidence(errors, root, scenario);
         }
         return errors;
+    }
+
+    /**
+     * M3-B: a PASSED/FAILED row must carry the real independent-process evidence -
+     * the exact target launch command, the stdout/stderr artifact paths, and (for
+     * attach-based load modes) the exact attach command. A row without these cannot
+     * have executed a real target and is rejected as fabricated evidence.
+     */
+    private void validateProcessEvidence(List<String> errors, JsonNode root, CompatibilityScenario scenario) {
+        JsonNode t = root.path("targetJvm");
+        requireNonBlankText(errors, t, "launchCommand");
+        requireNonBlankText(errors, t, "stdoutArtifact");
+        requireNonBlankText(errors, t, "stderrArtifact");
+        LoadMode mode = scenario.loadMode();
+        if (mode == LoadMode.EXTERNAL_ATTACH_AGENTMAIN
+                || mode == LoadMode.EXTERNAL_ATTACH
+                || mode == LoadMode.AGENTMAIN) {
+            requireNonBlankText(errors, t, "attachCommand");
+        }
     }
 
     private void validateCatalogBlock(List<String> errors, JsonNode cat, CompatibilityScenario scenario) {

@@ -38,15 +38,37 @@ final class CompatibilityRowFixtures {
         env.put("osArch", envArchFor(s.runnerArch()));
         env.put("jdkVersion", s.targetJdks().get(0) + ".0.11");
         env.put("runnerPid", RUNNER_PID);
-        row.putObject("targetJvm")
-                .put("pid", CHILD_PID)
-                .put("independent", true)
-                .put("jdkVersion", s.targetJdks().get(0) + ".0.11");
+        ObjectNode tvm = row.putObject("targetJvm");
+        tvm.put("pid", CHILD_PID);
+        tvm.put("independent", true);
+        tvm.put("jdkVersion", s.targetJdks().get(0) + ".0.11");
+        // M3-B real independent-process evidence (required by the validator for PASSED).
+        tvm.put("launchCommand", launchCommandFor(s));
+        tvm.put("attachCommand", attachCommandFor(s));
+        tvm.put("stdoutArtifact", "/tmp/kairo-compat/" + s.id() + "/target.stdout");
+        tvm.put("stderrArtifact", "/tmp/kairo-compat/" + s.id() + "/target.stderr");
         ArrayNode assertions = row.putArray("assertions");
         for (String b : s.requiredBehaviors()) {
             assertions.addObject().put("name", b).put("passed", true).put("detail", "ok");
         }
         return row;
+    }
+
+    private static String launchCommandFor(CompatibilityScenario s) {
+        if (s.loadMode() == LoadMode.PREMAIN) {
+            return "/usr/lib/jvm/jdk-" + s.targetJdks().get(0)
+                    + "/bin/java -javaagent:kairo-agent-bootstrap.jar=coreJar=... -cp classes PlainJavaTarget";
+        }
+        return "/usr/lib/jvm/jdk-" + s.targetJdks().get(0) + "/bin/java -cp classes PlainJavaTarget";
+    }
+
+    private static String attachCommandFor(CompatibilityScenario s) {
+        return switch (s.loadMode()) {
+            case PREMAIN -> "";
+            case EXTERNAL_ATTACH_AGENTMAIN, EXTERNAL_ATTACH, AGENTMAIN ->
+                    "java -jar kairo-attach.jar --pid " + CHILD_PID
+                            + " --agent kairo-agent-bootstrap.jar --core-jar kairo-agent-core-modern.jar";
+        };
     }
 
     /** A valid NOT_RUN row (no child ran). */

@@ -106,10 +106,13 @@ class CompatibilityRowRunnerTest {
     }
 
     @Test
-    void noFixtureImplementedInM3A() {
+    void fixturesImplementedForM3BOnly() {
+        // M3-B: C01 (premain), C02 (external attach/agentmain) and C09 (agentmain on
+        // macOS arm64) are implemented; M3-C..M3-E scenarios are still not implemented.
         for (CompatibilityScenario s : CompatibilityScenarioCatalog.all()) {
+            boolean expected = "C01".equals(s.id()) || "C02".equals(s.id()) || "C09".equals(s.id());
             assertThat(CompatibilityRowRunner.fixtureImplemented(s.id()))
-                    .as(s.id() + " fixtureImplemented").isFalse();
+                    .as(s.id() + " fixtureImplemented").isEqualTo(expected);
         }
     }
 

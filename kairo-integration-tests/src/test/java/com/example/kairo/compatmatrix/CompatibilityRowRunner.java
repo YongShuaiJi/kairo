@@ -10,7 +10,7 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * The M3-A row-evidence runner (entry point of {@code run-compatibility.sh}).
+ * The V1.7 row-evidence runner (entry point of {@code run-compatibility.sh}).
  *
  * <p>Contract/dispatch foundation only (section 10.4.1): it validates the environment,
  * looks up the frozen catalog scenario, and dispatches to a scenario implementation.
@@ -20,9 +20,9 @@ import java.util.List;
  * emits truthful {@code EXPERIMENTAL} evidence (exit 0, non-blocking). It
  * <strong>never</strong> fabricates {@code PASSED}.
  *
- * <p>The dispatch seam is {@link #dispatch(CompatibilityScenario)}: M3-B..M3-E plug
- * real fixture execution in there. Until then {@link #fixtureImplemented(String)}
- * returns {@code false} for every scenario.
+ * <p>The dispatch seam is {@link #dispatch(CompatibilityScenario)}. M3-B provides
+ * real independent-JVM execution for C01/C02/C09; later bounded work packages plug
+ * in the remaining scenarios. Unimplemented or unavailable formal rows fail closed.
  */
 public final class CompatibilityRowRunner {
 
@@ -106,13 +106,24 @@ public final class CompatibilityRowRunner {
 
     /**
      * Builds a truthful row for the scenario under the M3-A contract. Pure: no I/O,
-     * no clock beyond the supplied timestamps.
+     * no clock beyond the supplied timestamps. Dispatches via {@link #dispatch} (which
+     * is process-free unless the real-exec env is provisioned).
      */
     static ObjectNode buildRow(CompatibilityCli.RunOptions opts, String osName, String osArch,
                                String runnerJdk, int runnerPid, String startedAt, String endedAt) {
         CompatibilityScenario scenario = CompatibilityScenarioCatalog.scenario(opts.scenario());
-        DispatchResult d = dispatch(scenario);
+        return buildRowForResult(opts, scenario, osName, osArch, runnerJdk, runnerPid,
+                startedAt, endedAt, dispatch(scenario));
+    }
 
+    /**
+     * Builds a row from an explicit {@link DispatchResult}. Lets deterministic tests
+     * drive a fake executor through {@link PlainJavaScenarioDispatch}, then verify the
+     * produced row self-validates - without spawning a real target.
+     */
+    static ObjectNode buildRowForResult(CompatibilityCli.RunOptions opts, CompatibilityScenario scenario,
+                                        String osName, String osArch, String runnerJdk, int runnerPid,
+                                        String startedAt, String endedAt, DispatchResult d) {
         ObjectNode root = MAPPER.createObjectNode();
         root.put("schemaVersion", CompatibilityScenarioCatalog.SCHEMA_VERSION);
         root.put("catalogVersion", CompatibilityScenarioCatalog.CATALOG_VERSION);
@@ -147,6 +158,11 @@ public final class CompatibilityRowRunner {
         tvm.put("pid", d.childPid);
         tvm.put("independent", d.childIndependent);
         tvm.put("jdkVersion", d.targetJdkVersion == null ? "" : d.targetJdkVersion);
+        // M3-B real independent-process evidence (blank for fail-closed NOT_RUN/EXPERIMENTAL).
+        tvm.put("launchCommand", d.launchCommand);
+        tvm.put("attachCommand", d.attachCommand);
+        tvm.put("stdoutArtifact", d.stdoutArtifact);
+        tvm.put("stderrArtifact", d.stderrArtifact);
 
         root.put("loadingMode", scenario.loadModeRaw());
         root.put("fixture", scenario.fixture());
@@ -173,32 +189,49 @@ public final class CompatibilityRowRunner {
     }
 
     /**
-     * The dispatch seam. In M3-A no fixture is implemented, so every formal scenario
-     * fails closed with NOT_RUN and the experimental C09 emits EXPERIMENTAL. M3-B..M3-E
-     * override {@link #fixtureImplemented(String)} and plug real execution in here.
+     * The dispatch seam. M3-B plugs real plain-Java execution in here for C01
+     * (premain), C02 (external attach/agentmain) and C09 (agentmain on macOS
+     * arm64). When the shell runner provisions the real-execution environment
+     * (system properties), the implemented scenarios launch a genuinely
+     * independent target JVM; otherwise they fail closed truthfully without
+     * spawning a process, so deterministic tests stay process-free. Scenarios
+     * whose fixture has not landed (M3-C..M3-E) keep the M3-A fail-closed
+     * behaviour. It never fabricates PASSED.
      */
     static DispatchResult dispatch(CompatibilityScenario scenario) {
         if (fixtureImplemented(scenario.id())) {
-            // Future M3-B..M3-E real fixture execution goes here. Unreachable in M3-A.
-            throw new IllegalStateException("fixture implemented but no dispatch path: " + scenario.id());
+            RealExecEnv env = RealExecEnv.current();
+            if (env == null) {
+                // Unprovisioned (unit test / no real-exec env): truthful fail-closed.
+                if (!scenario.isFormal()) {
+                    return new DispatchResult("EXPERIMENTAL",
+                            "real-execution environment not provisioned; no real macOS arm64/JDK 21 "
+                                    + "runner available; emitted EXPERIMENTAL per section 10.1/10.4.2 (C09 is non-blocking)",
+                            List.of(), 0, false, "", "", "", "", "");
+                }
+                return new DispatchResult("NOT_RUN",
+                        "real-execution environment not provisioned; fail-closed per M3-A (section 10.4.1)",
+                        List.of(), 0, false, "", "", "", "", "");
+            }
+            return PlainJavaScenarioDispatch.run(scenario, env);
         }
         if (!scenario.isFormal()) {
             // C09 without a real macOS runner: truthful EXPERIMENTAL, non-blocking.
             return new DispatchResult("EXPERIMENTAL",
                     "no real macOS runner available; emitted EXPERIMENTAL per section 10.1/10.4.2",
-                    List.of(), 0, false, "");
+                    List.of(), 0, false, "", "", "", "", "");
         }
         return new DispatchResult("NOT_RUN",
                 "no fixture implemented for " + scenario.workPackage() + "; fail-closed per M3-A (section 10.4.1)",
-                List.of(), 0, false, "");
+                List.of(), 0, false, "", "", "", "", "");
     }
 
     /**
-     * Whether a real fixture implementation exists for the scenario. M3-A: always
-     * false. M3-B..M3-E flip specific scenarios to true as their fixtures land.
+     * Whether a real fixture implementation exists for the scenario. M3-B flips
+     * C01/C02/C09 to true; M3-C..M3-E flip the rest as their fixtures land.
      */
     static boolean fixtureImplemented(String scenarioId) {
-        return false;
+        return "C01".equals(scenarioId) || "C02".equals(scenarioId) || "C09".equals(scenarioId);
     }
 
     private static void printUsage() {
@@ -207,9 +240,9 @@ public final class CompatibilityRowRunner {
                         --build-id <40-hex> --command <text> --mode <pr|dev>
                         --working-tree-dirty <true|false> [--help]
 
-                Produces one V1.7 compatibility row-evidence JSON file. In M3-A every
-                formal scenario fails closed with NOT_RUN (exit 4) and C09 emits
-                EXPERIMENTAL (exit 0). It never fabricates PASSED.
+                Produces one V1.7 compatibility row-evidence JSON file. M3-B implements
+                real independent-JVM execution for C01/C02/C09; unavailable or later-package
+                scenarios fail closed. It never fabricates PASSED.
 
                 Exit codes:
                   0  row produced non-blocking truthful evidence (PASSED or EXPERIMENTAL)
@@ -222,9 +255,23 @@ public final class CompatibilityRowRunner {
                 """);
     }
 
-    /** The result of dispatching one scenario. */
+    /**
+     * The result of dispatching one scenario. {@code launchCommand}/{@code attachCommand}
+     * and {@code stdoutArtifact}/{@code stderrArtifact} carry the real independent-process
+     * evidence produced by M3-B plain-Java execution (blank for M3-A fail-closed rows).
+     */
     record DispatchResult(String status, String failureReason, List<Assertion> assertions,
-                          int childPid, boolean childIndependent, String targetJdkVersion) {
+                          int childPid, boolean childIndependent, String targetJdkVersion,
+                          String launchCommand, String attachCommand,
+                          String stdoutArtifact, String stderrArtifact) {
+        public DispatchResult {
+            failureReason = failureReason == null ? "" : failureReason;
+            targetJdkVersion = targetJdkVersion == null ? "" : targetJdkVersion;
+            launchCommand = launchCommand == null ? "" : launchCommand;
+            attachCommand = attachCommand == null ? "" : attachCommand;
+            stdoutArtifact = stdoutArtifact == null ? "" : stdoutArtifact;
+            stderrArtifact = stderrArtifact == null ? "" : stderrArtifact;
+        }
     }
 
     /** One assertion in a row. */
