@@ -1,0 +1,233 @@
+package com.example.kairo.compatmatrix;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.List;
+
+/**
+ * The M3-A row-evidence runner (entry point of {@code run-compatibility.sh}).
+ *
+ * <p>Contract/dispatch foundation only (section 10.4.1): it validates the environment,
+ * looks up the frozen catalog scenario, and dispatches to a scenario implementation.
+ * Because real fixtures land in M3-B through M3-E, in M3-A <strong>no</strong>
+ * C01-C10 scenario has an implementation. Every formal scenario therefore fails
+ * closed with truthful {@code NOT_RUN} evidence (exit 4) and the experimental C09
+ * emits truthful {@code EXPERIMENTAL} evidence (exit 0, non-blocking). It
+ * <strong>never</strong> fabricates {@code PASSED}.
+ *
+ * <p>The dispatch seam is {@link #dispatch(CompatibilityScenario)}: M3-B..M3-E plug
+ * real fixture execution in there. Until then {@link #fixtureImplemented(String)}
+ * returns {@code false} for every scenario.
+ */
+public final class CompatibilityRowRunner {
+
+    /** Exit: row produced non-blocking truthful evidence (PASSED or EXPERIMENTAL). */
+    public static final int EXIT_OK = 0;
+    /** Exit: usage / validation error (incl. dirty PR tree). */
+    public static final int EXIT_USAGE = 1;
+    /** Exit: build failed (set by the shell runner; the JVM never builds). */
+    public static final int EXIT_BUILD = 2;
+    /** Exit: runner unusable (e.g. output path is not a writable file location). */
+    public static final int EXIT_UNUSABLE = 3;
+    /** Exit: row produced blocking non-passed evidence (FAILED / SKIPPED / NOT_RUN). */
+    public static final int EXIT_BLOCKED = 4;
+    /** Exit: row-write error. */
+    public static final int EXIT_WRITE = 5;
+    /** Exit: schema-validation failure (the row failed self-validation). */
+    public static final int EXIT_SCHEMA = 6;
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private CompatibilityRowRunner() {
+    }
+
+    public static void main(String[] args) {
+        int runnerPid = (int) ProcessHandle.current().pid();
+        System.exit(runInProcess(args, System.getProperty("os.name"), System.getProperty("os.arch"),
+                System.getProperty("java.version"), runnerPid, Instant.now()));
+    }
+
+    /**
+     * In-process entry point for tests: uses the supplied environment and a fixed
+     * clock so it is deterministic without a real JVM.
+     */
+    static int runInProcess(String[] args, String osName, String osArch, String runnerJdk,
+                            int runnerPid, Instant now) {
+        CompatibilityCli.RunOptions opts;
+        try {
+            opts = CompatibilityCli.parseRun(args);
+        } catch (IllegalArgumentException e) {
+            System.err.println("error: " + e.getMessage());
+            return EXIT_USAGE;
+        }
+        if (opts.help()) {
+            printUsage();
+            return EXIT_OK;
+        }
+        String startedAt = now.toString();
+        ObjectNode row = buildRow(opts, osName, osArch, runnerJdk, runnerPid, startedAt, now.toString());
+
+        // Self-validate before writing: a malformed row is a harness bug (exit 6), never
+        // a silent success.
+        List<String> errors = new CompatibilityRowValidator().validate(row);
+        if (!errors.isEmpty()) {
+            System.err.println("error: row failed self-validation: " + String.join("; ", errors));
+            return EXIT_SCHEMA;
+        }
+
+        Path output = Path.of(opts.output());
+        try {
+            Files.createDirectories(output.getParent() != null ? output.getParent() : Path.of("."));
+            MAPPER.writerWithDefaultPrettyPrinter().writeValue(output.toFile(), row);
+        } catch (Exception e) {
+            System.err.println("error: failed to write row to " + opts.output() + ": " + e.getMessage());
+            return EXIT_WRITE;
+        }
+
+        String status = row.get("status").asText();
+        System.out.println("==> scenario=" + opts.scenario() + " status=" + status
+                + " -> " + opts.output());
+        return exitCodeForStatus(status);
+    }
+
+    /** Maps a row status to the runner exit code. */
+    static int exitCodeForStatus(String status) {
+        return switch (status) {
+            case "PASSED", "EXPERIMENTAL" -> EXIT_OK;
+            case "FAILED", "SKIPPED", "NOT_RUN" -> EXIT_BLOCKED;
+            default -> EXIT_UNUSABLE;
+        };
+    }
+
+    /**
+     * Builds a truthful row for the scenario under the M3-A contract. Pure: no I/O,
+     * no clock beyond the supplied timestamps.
+     */
+    static ObjectNode buildRow(CompatibilityCli.RunOptions opts, String osName, String osArch,
+                               String runnerJdk, int runnerPid, String startedAt, String endedAt) {
+        CompatibilityScenario scenario = CompatibilityScenarioCatalog.scenario(opts.scenario());
+        DispatchResult d = dispatch(scenario);
+
+        ObjectNode root = MAPPER.createObjectNode();
+        root.put("schemaVersion", CompatibilityScenarioCatalog.SCHEMA_VERSION);
+        root.put("catalogVersion", CompatibilityScenarioCatalog.CATALOG_VERSION);
+        root.put("scenario", scenario.id());
+        root.put("supportLevel", scenario.supportLevel().name());
+
+        ObjectNode cat = root.putObject("catalog");
+        cat.put("runnerOs", scenario.runnerOs());
+        cat.put("runnerArch", scenario.runnerArch());
+        ArrayNode jdks = cat.putArray("targetJdks");
+        for (int j : scenario.targetJdks()) {
+            jdks.add(j);
+        }
+        cat.put("loadMode", scenario.loadMode().name());
+        cat.put("loadModeRaw", scenario.loadModeRaw());
+        cat.put("fixture", scenario.fixture());
+        cat.put("requiredBehaviorsRaw", scenario.requiredBehaviorsRaw());
+        ArrayNode rb = cat.putArray("requiredBehaviors");
+        for (String b : scenario.requiredBehaviors()) {
+            rb.add(b);
+        }
+
+        root.put("buildId", opts.buildId());
+
+        ObjectNode env = root.putObject("environment");
+        env.put("osName", osName == null ? "" : osName);
+        env.put("osArch", osArch == null ? "" : osArch);
+        env.put("jdkVersion", runnerJdk == null ? "" : runnerJdk);
+        env.put("runnerPid", runnerPid);
+
+        ObjectNode tvm = root.putObject("targetJvm");
+        tvm.put("pid", d.childPid);
+        tvm.put("independent", d.childIndependent);
+        tvm.put("jdkVersion", d.targetJdkVersion == null ? "" : d.targetJdkVersion);
+
+        root.put("loadingMode", scenario.loadModeRaw());
+        root.put("fixture", scenario.fixture());
+        root.put("startedAt", startedAt);
+        root.put("endedAt", endedAt);
+        root.put("command", opts.command());
+        // Provenance: evidence mode + working-tree state (correction 3).
+        root.put("mode", opts.mode());
+        root.put("workingTreeDirty", opts.workingTreeDirty());
+
+        ArrayNode assertions = root.putArray("assertions");
+        for (Assertion a : d.assertions) {
+            ObjectNode an = assertions.addObject();
+            an.put("name", a.name);
+            an.put("passed", a.passed);
+            if (a.detail != null) {
+                an.put("detail", a.detail);
+            }
+        }
+
+        root.put("status", d.status);
+        root.put("failureReason", d.failureReason == null ? "" : d.failureReason);
+        return root;
+    }
+
+    /**
+     * The dispatch seam. In M3-A no fixture is implemented, so every formal scenario
+     * fails closed with NOT_RUN and the experimental C09 emits EXPERIMENTAL. M3-B..M3-E
+     * override {@link #fixtureImplemented(String)} and plug real execution in here.
+     */
+    static DispatchResult dispatch(CompatibilityScenario scenario) {
+        if (fixtureImplemented(scenario.id())) {
+            // Future M3-B..M3-E real fixture execution goes here. Unreachable in M3-A.
+            throw new IllegalStateException("fixture implemented but no dispatch path: " + scenario.id());
+        }
+        if (!scenario.isFormal()) {
+            // C09 without a real macOS runner: truthful EXPERIMENTAL, non-blocking.
+            return new DispatchResult("EXPERIMENTAL",
+                    "no real macOS runner available; emitted EXPERIMENTAL per section 10.1/10.4.2",
+                    List.of(), 0, false, "");
+        }
+        return new DispatchResult("NOT_RUN",
+                "no fixture implemented for " + scenario.workPackage() + "; fail-closed per M3-A (section 10.4.1)",
+                List.of(), 0, false, "");
+    }
+
+    /**
+     * Whether a real fixture implementation exists for the scenario. M3-A: always
+     * false. M3-B..M3-E flip specific scenarios to true as their fixtures land.
+     */
+    static boolean fixtureImplemented(String scenarioId) {
+        return false;
+    }
+
+    private static void printUsage() {
+        System.out.println("""
+                Usage: CompatibilityRowRunner --scenario <C01-C10> --output <row.json>
+                        --build-id <40-hex> --command <text> --mode <pr|dev>
+                        --working-tree-dirty <true|false> [--help]
+
+                Produces one V1.7 compatibility row-evidence JSON file. In M3-A every
+                formal scenario fails closed with NOT_RUN (exit 4) and C09 emits
+                EXPERIMENTAL (exit 0). It never fabricates PASSED.
+
+                Exit codes:
+                  0  row produced non-blocking truthful evidence (PASSED or EXPERIMENTAL)
+                  1  usage / validation error (incl. dirty PR tree)
+                  2  build failed (set by the shell runner)
+                  3  runner unusable
+                  4  blocking non-passed evidence (FAILED / SKIPPED / NOT_RUN)
+                  5  row-write error
+                  6  schema-validation failure
+                """);
+    }
+
+    /** The result of dispatching one scenario. */
+    record DispatchResult(String status, String failureReason, List<Assertion> assertions,
+                          int childPid, boolean childIndependent, String targetJdkVersion) {
+    }
+
+    /** One assertion in a row. */
+    record Assertion(String name, boolean passed, String detail) {
+    }
+}
