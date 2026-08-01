@@ -3,9 +3,10 @@
 # scripts/v1.7/run-compatibility.sh
 #
 # V1.7 compatibility row-evidence runner (section 10.3). Produces one row-evidence
-# JSON file for a fixed C01-C10 scenario. M3-B implements C01/C02/C09; later work
-# packages add the remaining fixtures. Unavailable formal rows fail closed and C09
-# may be EXPERIMENTAL only when no truthful macOS runner/JDK is available.
+# JSON file for a fixed C01-C10 scenario. M3-B implements C01/C02/C09 (plain Java);
+# M3-C implements C03/C04 (Spring Boot 3 executable jar). Later work packages add the
+# remaining fixtures. Unavailable formal rows fail closed and C09 may be EXPERIMENTAL
+# only when no truthful macOS runner/JDK is available.
 #
 # Fixed interface (section 10.3):
 #   ./scripts/v1.7/run-compatibility.sh \
@@ -71,9 +72,10 @@ Behavior:
     --allow-dirty only for local development (mode=dev).
   - Cleans only this runner's prior output file before running.
   - Runs the runner in a fresh JVM; the exact exit code is preserved.
-  - C01/C02/C09 run their M3-B real independent-JVM fixtures when the catalog
-    platform and target JDK are available. Other rows remain fail-closed until
-    their bounded M3 work package lands.
+  - C01/C02/C09 run their M3-B real independent-JVM fixtures (plain Java) and
+    C03/C04 run their M3-C real independent-JVM fixtures (Spring Boot 3
+    executable jar) when the catalog platform and target JDK are available.
+    Other rows remain fail-closed until their bounded M3 work package lands.
   - Never modifies the workflow, the acceptance manifest, or support conclusions.
 EOF
 }
@@ -142,14 +144,16 @@ if ! (cd "$REPO_ROOT" && $MVN -B -ntp -pl kairo-integration-tests -am test-compi
 fi
 
 # -----------------------------------------------------------------------------
-# M3-B: for the implemented scenarios (C01/C02/C09) provision the real-execution
-# environment - build the existing agent/bootstrap/core/attach artifacts in place
-# and resolve the target JDK homes without any network download. Non-implemented
-# scenarios are left unprovisioned so the runner fails closed per M3-A.
+# M3-B/M3-C: for the implemented scenarios (C01/C02/C09 plain Java, C03/C04 Spring
+# Boot) provision the real-execution environment - build the existing
+# agent/bootstrap/core/attach artifacts in place, resolve the target JDK homes
+# without any network download, and (for C03/C04) build the Spring Boot 3
+# executable-jar fixture (kairo-demo). Non-implemented scenarios are left
+# unprovisioned so the runner fails closed per M3-A.
 # -----------------------------------------------------------------------------
 REAL_PROPS=()
 case "$SCENARIO" in
-  C01|C02|C09)
+  C01|C02|C03|C04|C09)
     BOOTSTRAP_JAR="$REPO_ROOT/kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar"
     CORE_JAR="$REPO_ROOT/kairo-agent-core-modern/target/kairo-agent-core-modern.jar"
     ATTACH_JAR="$REPO_ROOT/kairo-attach-cli/target/kairo-attach.jar"
@@ -208,6 +212,25 @@ case "$SCENARIO" in
     }
     JDK17_HOME_RESOLVED="$(resolve_jdk 17)"
     JDK21_HOME_RESOLVED="$(resolve_jdk 21)"
+    # M3-C: C03/C04 need the Spring Boot 3 executable-jar fixture (kairo-demo), a real
+    # spring-boot-maven-plugin:repackage artifact. Built in place from the current
+    # worktree so the row's buildId matches the exact bytecode exercised. Reusing any
+    # merely-existing jar could attach stale bytecode while the row claims current HEAD.
+    SPRINGBOOT_EXEC_JAR=""
+    if [[ "$SCENARIO" == "C03" || "$SCENARIO" == "C04" ]]; then
+      echo "==> building Spring Boot executable-jar fixture (kairo-demo) at $REPO_ROOT"
+      if ! (cd "$REPO_ROOT" && $MVN -B -ntp -pl kairo-demo -am package -DskipTests -q); then
+        echo "error: kairo-demo fixture build failed" >&2
+        exit 2
+      fi
+      SPRINGBOOT_EXEC_JAR="$(find "$REPO_ROOT/kairo-demo/target" -maxdepth 1 -type f \
+        -name 'kairo-demo-*-exec.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' \
+        -print -quit 2>/dev/null || true)"
+      if [[ ! -f "$SPRINGBOOT_EXEC_JAR" ]]; then
+        echo "error: kairo-demo executable jar not found after build" >&2
+        exit 2
+      fi
+    fi
     REAL_PROPS+=(
       "-Dkairo.compat.real.exec=true"
       "-Dkairo.compat.repo.root=$REPO_ROOT"
@@ -221,7 +244,8 @@ case "$SCENARIO" in
     )
     [[ -n "$JDK17_HOME_RESOLVED" ]] && REAL_PROPS+=("-Dkairo.compat.target.jdk.17=$JDK17_HOME_RESOLVED")
     [[ -n "$JDK21_HOME_RESOLVED" ]] && REAL_PROPS+=("-Dkairo.compat.target.jdk.21=$JDK21_HOME_RESOLVED")
-    echo "==> real-exec provisioned: jdk17=${JDK17_HOME_RESOLVED:-<none>} jdk21=${JDK21_HOME_RESOLVED:-<none>}"
+    [[ -n "$SPRINGBOOT_EXEC_JAR" ]] && REAL_PROPS+=("-Dkairo.compat.artifacts.springBootExecJar=$SPRINGBOOT_EXEC_JAR")
+    echo "==> real-exec provisioned: jdk17=${JDK17_HOME_RESOLVED:-<none>} jdk21=${JDK21_HOME_RESOLVED:-<none>} springboot-exec=${SPRINGBOOT_EXEC_JAR:-<none>}"
     ;;
 esac
 

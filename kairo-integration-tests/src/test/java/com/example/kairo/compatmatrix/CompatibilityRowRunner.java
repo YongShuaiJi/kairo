@@ -191,11 +191,12 @@ public final class CompatibilityRowRunner {
     /**
      * The dispatch seam. M3-B plugs real plain-Java execution in here for C01
      * (premain), C02 (external attach/agentmain) and C09 (agentmain on macOS
-     * arm64). When the shell runner provisions the real-execution environment
-     * (system properties), the implemented scenarios launch a genuinely
-     * independent target JVM; otherwise they fail closed truthfully without
+     * arm64). M3-C plugs real Spring Boot 3 executable-jar execution in here for
+     * C03 (premain) and C04 (external attach). When the shell runner provisions the
+     * real-execution environment (system properties), the implemented scenarios launch a
+     * genuinely independent target JVM; otherwise they fail closed truthfully without
      * spawning a process, so deterministic tests stay process-free. Scenarios
-     * whose fixture has not landed (M3-C..M3-E) keep the M3-A fail-closed
+     * whose fixture has not landed (M3-D..M3-E) keep the M3-A fail-closed
      * behaviour. It never fabricates PASSED.
      */
     static DispatchResult dispatch(CompatibilityScenario scenario) {
@@ -213,6 +214,9 @@ public final class CompatibilityRowRunner {
                         "real-execution environment not provisioned; fail-closed per M3-A (section 10.4.1)",
                         List.of(), 0, false, "", "", "", "", "");
             }
+            if (isSpringBootScenario(scenario.id())) {
+                return SpringBootScenarioDispatch.run(scenario, env);
+            }
             return PlainJavaScenarioDispatch.run(scenario, env);
         }
         if (!scenario.isFormal()) {
@@ -228,10 +232,21 @@ public final class CompatibilityRowRunner {
 
     /**
      * Whether a real fixture implementation exists for the scenario. M3-B flips
-     * C01/C02/C09 to true; M3-C..M3-E flip the rest as their fixtures land.
+     * C01/C02/C09 to true; M3-C flips C03/C04 to true; M3-D..M3-E flip the rest as
+     * their fixtures land.
      */
     static boolean fixtureImplemented(String scenarioId) {
-        return "C01".equals(scenarioId) || "C02".equals(scenarioId) || "C09".equals(scenarioId);
+        return "C01".equals(scenarioId) || "C02".equals(scenarioId) || "C09".equals(scenarioId)
+                || "C03".equals(scenarioId) || "C04".equals(scenarioId);
+    }
+
+    /**
+     * Whether the scenario is an M3-C Spring Boot executable-jar target (C03/C04),
+     * routed to {@link SpringBootScenarioDispatch} rather than the M3-B plain-Java
+     * dispatch.
+     */
+    static boolean isSpringBootScenario(String scenarioId) {
+        return "C03".equals(scenarioId) || "C04".equals(scenarioId);
     }
 
     private static void printUsage() {
@@ -241,7 +256,8 @@ public final class CompatibilityRowRunner {
                         --working-tree-dirty <true|false> [--help]
 
                 Produces one V1.7 compatibility row-evidence JSON file. M3-B implements
-                real independent-JVM execution for C01/C02/C09; unavailable or later-package
+                real independent-JVM execution for C01/C02/C09; M3-C implements C03/C04
+                against a Spring Boot 3 executable jar; unavailable or later-package
                 scenarios fail closed. It never fabricates PASSED.
 
                 Exit codes:
