@@ -12,8 +12,10 @@ import com.example.kairo.api.ScriptLog;
 import com.example.kairo.api.ScriptPolicyRevision;
 import com.example.kairo.core.ClassLoaderIdentity;
 import com.example.kairo.groovy.CompiledMockScript;
+import com.example.kairo.groovy.KairoScript;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -98,6 +100,77 @@ class AgentScriptCompilerFactoryTest {
     }
 
     @Test
+    void isolatedTargetLoaderResolvesBusinessAndAgentOwnedTypes() throws Exception {
+        // Reproduces the real M3-B C09 attach scenario: a plain-Java target whose ClassLoader
+        // parent chain reaches the bootstrap loader and therefore CANNOT see agent-owned
+        // Kairo/Groovy types. Before the fix the factory handed this loader straight to Groovy
+        // as the compilation parent, so the generated script could not resolve
+        // com.example.kairo.groovy.KairoScript and POST /rules failed with HTTP 400.
+        //
+        // The business loader's parent is deliberately the bootstrap loader (null): it can
+        // load the compiled business class and JDK types, but nothing on the agent classpath.
+        ClassLoader isolatedBusinessLoader = compileBusinessClass("com.example.kairo.customer.BizEcho",
+                "package com.example.kairo.customer; public class BizEcho { "
+                        + "public String echo(String s) { return \"echo:\" + s; } }",
+                null);
+
+        Class<?> bizEcho = Class.forName("com.example.kairo.customer.BizEcho", false, isolatedBusinessLoader);
+        Method echo = bizEcho.getMethod("echo", String.class);
+
+        // Negative / identity assertion: the isolated business loader genuinely cannot load
+        // KairoScript, proving the fix must bridge the agent and target loaders rather than
+        // rely on the target's own parent chain (which is what the buggy code did).
+        assertThatThrownBy(() -> Class.forName(
+                "com.example.kairo.groovy.KairoScript", false, isolatedBusinessLoader))
+                .isInstanceOf(ClassNotFoundException.class);
+
+        ClassLoader agentClassLoader = AgentScriptCompilerFactory.class.getClassLoader();
+        try (AgentScriptCompilerFactory factory = new AgentScriptCompilerFactory(agentClassLoader)) {
+            MockRule rule = MockRule.builder()
+                    .id("isolated-biz-rule")
+                    .target(new MethodSelector(bizEcho.getName(),
+                            ClassLoaderIdentity.idOf(bizEcho.getClassLoader()),
+                            echo.getName(), "()Ljava/lang/String;"))
+                    .phase(InvokePhase.BEFORE)
+                    .script("def e = new com.example.kairo.customer.BizEcho()\n"
+                            + "return mock.returnValue(e.echo('target-dto'))")
+                    .capabilityProfile(CapabilityProfile.UNRESTRICTED)
+                    .policyRevision(REVISION)
+                    .build();
+
+            CompiledMockScript script = factory.compile(echo, rule);
+
+            // (1) Business type resolved from the isolated target loader, AND the agent-owned
+            // KairoScript machinery (mock.returnValue) resolved from the agent loader: the
+            // script compiles and executes correctly. Without the bridge this throws because
+            // Groovy cannot resolve the KairoScript base class.
+            assertThat(script.execute(fakeContext()).returnValue()).isEqualTo("echo:target-dto");
+
+            Class<?> scriptType = scriptTypeOf(script);
+            Class<?> kairoSuper = scriptType.getSuperclass();
+
+            // (2) Exact agent ClassLoader identity: the compiled script's superclass is the
+            // agent-owned KairoScript (not a same-name application class), defined by the
+            // agent ClassLoader rather than the isolated business loader.
+            assertThat(kairoSuper).isEqualTo(KairoScript.class);
+            assertThat(kairoSuper.getClassLoader()).isSameAs(agentClassLoader);
+            assertThat(kairoSuper.getClassLoader()).isNotSameAs(isolatedBusinessLoader);
+
+            // The generated script class itself is never defined in the business loader: the
+            // dual-delegating parent delegates, it does not define classes.
+            assertThat(scriptType.getClassLoader()).isNotSameAs(isolatedBusinessLoader);
+
+            // (3) Target ClassLoader identity is preserved in the cache key (the target's id,
+            // not the dual-delegating parent's), and the cache deduplicates across compiles for
+            // the same target. A per-compile parent identity in the key would miss here.
+            assertThat(recordedTargetClassLoaderId(script))
+                    .isEqualTo(ClassLoaderIdentity.idOf(isolatedBusinessLoader));
+            CompiledMockScript compiledAgain = factory.compile(echo, rule);
+            assertThat(compiledAgain).isSameAs(script);
+        }
+    }
+
+    @Test
     void legacyRuleWithoutProfileDefaultsToSafe() throws Exception {
         // A V1.0 rule carries no capability profile and no policy revision. The factory must
         // treat it as SAFE: an ordinary script compiles and runs, while a SAFE-forbidden
@@ -146,7 +219,40 @@ class AgentScriptCompilerFactoryTest {
         }
     }
 
+    /**
+     * Read the generated script {@code Class} from a compiled script. {@code GroovyCompiledMockScript}
+     * is package-private in {@code kairo-groovy}, so the agent-core test reflects on its
+     * {@code scriptType} field to assert exact superclass/ClassLoader identity.
+     */
+    private static Class<?> scriptTypeOf(CompiledMockScript script) {
+        try {
+            Field field = script.getClass().getDeclaredField("scriptType");
+            field.setAccessible(true);
+            return (Class<?>) field.get(script);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("could not read scriptType from " + script.getClass(), e);
+        }
+    }
+
+    /** Read the recorded target ClassLoader id from a compiled script's metadata via reflection. */
+    private static String recordedTargetClassLoaderId(CompiledMockScript script) {
+        try {
+            Method metadata = script.getClass().getMethod("compilationMetadata");
+            metadata.setAccessible(true);
+            Object value = metadata.invoke(script);
+            Method id = value.getClass().getMethod("targetClassLoaderId");
+            return (String) id.invoke(value);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("could not read targetClassLoaderId from " + script.getClass(), e);
+        }
+    }
+
     private static ClassLoader compileBusinessClass(String fqcn, String source) throws Exception {
+        return compileBusinessClass(fqcn, source, AgentScriptCompilerFactory.class.getClassLoader());
+    }
+
+    private static ClassLoader compileBusinessClass(String fqcn, String source, ClassLoader parent)
+            throws Exception {
         Path tmp = Files.createTempDirectory("kairo-factory-");
         Path src = tmp.resolve(fqcn.replace('.', '/') + ".java");
         Files.createDirectories(src.getParent());
@@ -159,8 +265,7 @@ class AgentScriptCompilerFactoryTest {
             boolean ok = task.call();
             assertThat(ok).as("java compile failed").isTrue();
         }
-        return new URLClassLoader(new URL[]{ tmp.toUri().toURL() },
-                AgentScriptCompilerFactory.class.getClassLoader());
+        return new URLClassLoader(new URL[]{ tmp.toUri().toURL() }, parent);
     }
 
     private static final class FakeInvocationContext implements InvocationContext {
