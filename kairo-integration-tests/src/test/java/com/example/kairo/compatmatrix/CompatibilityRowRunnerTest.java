@@ -106,16 +106,18 @@ class CompatibilityRowRunnerTest {
     }
 
     @Test
-    void fixturesImplementedForM3BM3CAndM3D() {
+    void fixturesImplementedForM3BM3CM3DAndM3E() {
         // M3-B: C01 (premain), C02 (external attach/agentmain) and C09 (agentmain on
         // macOS arm64) are implemented. M3-C: C03 (premain) and C04 (external attach)
         // on a Spring Boot 3 executable jar. M3-D: C05 (parent/child same-name loaders),
         // C06 (JDK Proxy/CGLIB/Byte Buddy) and C07 (lambda/bridge/synthetic) on a real
-        // independent target JVM. M3-E scenarios are still not implemented.
+        // independent target JVM. M3-E: C08 (redefine/retransform/hot-update drift) and
+        // C10 (controlled Byte Buddy Agent coexistence) on a real independent target JVM.
         for (CompatibilityScenario s : CompatibilityScenarioCatalog.all()) {
             boolean expected = "C01".equals(s.id()) || "C02".equals(s.id()) || "C09".equals(s.id())
                     || "C03".equals(s.id()) || "C04".equals(s.id())
-                    || "C05".equals(s.id()) || "C06".equals(s.id()) || "C07".equals(s.id());
+                    || "C05".equals(s.id()) || "C06".equals(s.id()) || "C07".equals(s.id())
+                    || "C08".equals(s.id()) || "C10".equals(s.id());
             assertThat(CompatibilityRowRunner.fixtureImplemented(s.id()))
                     .as(s.id() + " fixtureImplemented").isEqualTo(expected);
             assertThat(CompatibilityRowRunner.isSpringBootScenario(s.id()))
@@ -124,6 +126,9 @@ class CompatibilityRowRunnerTest {
             assertThat(CompatibilityRowRunner.isM3DScenario(s.id()))
                     .as(s.id() + " isM3DScenario")
                     .isEqualTo("C05".equals(s.id()) || "C06".equals(s.id()) || "C07".equals(s.id()));
+            assertThat(CompatibilityRowRunner.isM3EScenario(s.id()))
+                    .as(s.id() + " isM3EScenario")
+                    .isEqualTo("C08".equals(s.id()) || "C10".equals(s.id()));
         }
     }
 

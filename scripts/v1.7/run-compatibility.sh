@@ -5,8 +5,10 @@
 # V1.7 compatibility row-evidence runner (section 10.3). Produces one row-evidence
 # JSON file for a fixed C01-C10 scenario. M3-B implements C01/C02/C09 (plain Java);
 # M3-C implements C03/C04 (Spring Boot 3 executable jar); M3-D implements C05/C06/C07
-# (ClassLoader / proxy / lambda-bridge on a real independent target JVM). Later work
-# packages add the remaining fixtures. Unavailable formal rows fail closed and C09 may
+# (ClassLoader / proxy / lambda-bridge on a real independent target JVM); M3-E
+# implements C08 (redefine/retransform/hot-update drift) and C10 (controlled Byte
+# Buddy Agent coexistence) on a real independent target JVM. Later work packages
+# add the remaining fixtures. Unavailable formal rows fail closed and C09 may
 # be EXPERIMENTAL only when no truthful macOS runner/JDK is available.
 #
 # Fixed interface (section 10.3):
@@ -75,11 +77,13 @@ Behavior:
   - Runs the runner in a fresh JVM; the exact exit code is preserved.
   - C01/C02/C09 run their M3-B real independent-JVM fixtures (plain Java),
     C03/C04 run their M3-C real independent-JVM fixtures (Spring Boot 3
-    executable jar), and C05/C06/C07 run their M3-D real independent-JVM fixtures
-    (parent/child loaders, JDK Proxy/CGLIB/Byte Buddy, lambda/bridge/synthetic)
-    when the catalog platform and target JDK are available. C07 requires both
-    JDK 17 and JDK 21. Other rows remain fail-closed until their bounded M3
-    work package lands.
+    executable jar), C05/C06/C07 run their M3-D real independent-JVM fixtures
+    (parent/child loaders, JDK Proxy/CGLIB/Byte Buddy, lambda/bridge/synthetic),
+    and C08/C10 run their M3-E real independent-JVM fixtures (redefine/retransform/
+    hot-update drift, controlled Byte Buddy Agent coexistence) when the catalog
+    platform and target JDK are available. C07 requires both JDK 17 and JDK 21.
+    C06 requires the byte-buddy and spring-core jars; C10 requires the byte-buddy
+    jar. Other rows remain fail-closed until their bounded M3 work package lands.
   - Never modifies the workflow, the acceptance manifest, or support conclusions.
 EOF
 }
@@ -148,19 +152,20 @@ if ! (cd "$REPO_ROOT" && $MVN -B -ntp -pl kairo-integration-tests -am test-compi
 fi
 
 # -----------------------------------------------------------------------------
-# M3-B/M3-C/M3-D: for the implemented scenarios (C01/C02/C09 plain Java, C03/C04
-# Spring Boot, C05/C06/C07 ClassLoader/proxy/lambda-bridge) provision the
+# M3-B/M3-C/M3-D/M3-E: for the implemented scenarios (C01/C02/C09 plain Java, C03/C04
+# Spring Boot, C05/C06/C07 ClassLoader/proxy/lambda-bridge, C08 redefine/retransform/
+# hot-update drift, C10 controlled Byte Buddy Agent coexistence) provision the
 # real-execution environment - build the existing agent/bootstrap/core/attach
 # artifacts in place, resolve the target JDK homes without any network download,
 # and (for C03/C04) build the Spring Boot 3 executable-jar fixture (kairo-demo).
 # C06 additionally needs the real byte-buddy and spring-core (repackaged CGLIB)
-# jars resolved onto the target classpath (after the dependency classpath is
-# built, below). Non-implemented scenarios are left unprovisioned so the runner
-# fails closed per M3-A.
+# jars and C10 needs the real byte-buddy jar resolved onto the target classpath
+# (after the dependency classpath is built, below). Non-implemented scenarios are
+# left unprovisioned so the runner fails closed per M3-A.
 # -----------------------------------------------------------------------------
 REAL_PROPS=()
 case "$SCENARIO" in
-  C01|C02|C03|C04|C05|C06|C07|C09)
+  C01|C02|C03|C04|C05|C06|C07|C08|C09|C10)
     BOOTSTRAP_JAR="$REPO_ROOT/kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar"
     CORE_JAR="$REPO_ROOT/kairo-agent-core-modern/target/kairo-agent-core-modern.jar"
     ATTACH_JAR="$REPO_ROOT/kairo-attach-cli/target/kairo-attach.jar"
@@ -293,6 +298,22 @@ if [[ "$SCENARIO" == "C06" ]]; then
   REAL_PROPS+=("-Dkairo.compat.artifacts.byteBuddyJar=$BYTE_BUDDY_JAR_RESOLVED")
   REAL_PROPS+=("-Dkairo.compat.artifacts.springCoreJar=$SPRING_CORE_JAR_RESOLVED")
   echo "==> C06 aux jars: byteBuddy=$BYTE_BUDDY_JAR_RESOLVED springCore=$SPRING_CORE_JAR_RESOLVED"
+fi
+
+# M3-E C10: resolve the real byte-buddy jar from the dependency classpath so the
+# single controlled Byte Buddy Agent fixture (genuine net.bytebuddy AgentBuilder +
+# Advice) runs on the independent target JVM classpath. NOT faked by a class-name
+# marker; a missing jar makes C10 fail closed. C08 (redefine/retransform/hot-update
+# drift) is pure Java and needs no auxiliary jar: its harness agent captures the real
+# java.lang.instrument.Instrumentation directly.
+if [[ "$SCENARIO" == "C10" ]]; then
+  BYTE_BUDDY_JAR_RESOLVED="$(echo "$EXTDEPS" | tr ':' '\n' | grep -E '/byte-buddy-[0-9].*\.jar$' | grep -v sources | grep -v javadoc | head -1 || true)"
+  if [[ -z "$BYTE_BUDDY_JAR_RESOLVED" ]]; then
+    echo "error: C10 requires the byte-buddy jar; resolved byteBuddy=${BYTE_BUDDY_JAR_RESOLVED:-<none>}" >&2
+    exit 2
+  fi
+  REAL_PROPS+=("-Dkairo.compat.artifacts.byteBuddyJar=$BYTE_BUDDY_JAR_RESOLVED")
+  echo "==> C10 aux jar: byteBuddy=$BYTE_BUDDY_JAR_RESOLVED"
 fi
 
 echo "==> running row runner (scenario=$SCENARIO)"
