@@ -1,0 +1,71 @@
+{
+  "$comment": "V1.7 M4-D operations mirror of the frozen business-metrics contract (roadmap §11.2). The authoritative source is KairoMetricsCatalog.java plus its cardinality tests (KairoMetricsCatalogTest, BusinessMetricsTest); this file is a human/machine-readable operations reference for alerting and runbook use. Alert thresholds and runbooks may reference only these ten names and the finite label values listed below. High-cardinality identifiers (ruleId, agentId, instanceId, className, methodName, traceId, correlationId, username, application/environment id, exception text, script content) are never labels; locate specific objects via structured logs and existing resource queries (kairo-cli operations/observe, kairo-ops status, support bundles).",
+  "schemaVersion": "1.0",
+  "meterNames": [
+    "kairo_agent_online",
+    "kairo_agent_command_backlog",
+    "kairo_agent_command_total",
+    "kairo_operation_total",
+    "kairo_operation_duration_seconds",
+    "kairo_runtime_rule_targets",
+    "kairo_reconcile_total",
+    "kairo_rollback_total",
+    "kairo_ttl_cleanup_total",
+    "kairo_platform_build_info"
+  ],
+  "meters": {
+    "kairo_agent_online": {
+      "type": "gauge",
+      "tags": { "status": ["ACTIVE", "ONLINE", "STOPPING", "DISABLED", "OFFLINE", "OTHER"] }
+    },
+    "kairo_agent_command_backlog": {
+      "type": "gauge",
+      "tags": {
+        "status": ["PENDING", "DISPATCHED", "ACKED", "FAILED", "OTHER"],
+        "command_type": ["APPLY_RULE", "APPLY_CHAIN", "DISABLE_ALL", "ENABLE_ALL", "RESET_CLASS", "RESET_ALL", "STOP_AGENT", "START_RECORDING", "STOP_RECORDING", "DISCOVER_TARGETS", "LIST_LOADERS", "LIST_CALL_SITES", "RESOLVE_TARGET", "REFRESH_RUNTIME_STATE", "BYTECODE_TRANSFORMATIONS", "BYTECODE_GET", "BYTECODE_PREVIEW", "BYTECODE_CAPTURE", "BYTECODE_DIFF", "SCRIPT_SESSION_CREATE", "SCRIPT_SESSION_VALIDATE", "SCRIPT_SESSION_APPLY", "SCRIPT_SESSION_PROMOTE", "SCRIPT_SESSION_REVERT", "SCRIPT_COMPILE", "OTHER"]
+      }
+    },
+    "kairo_agent_command_total": {
+      "type": "counter",
+      "tags": {
+        "command_type": ["APPLY_RULE", "APPLY_CHAIN", "DISABLE_ALL", "ENABLE_ALL", "RESET_CLASS", "RESET_ALL", "STOP_AGENT", "START_RECORDING", "STOP_RECORDING", "DISCOVER_TARGETS", "LIST_LOADERS", "LIST_CALL_SITES", "RESOLVE_TARGET", "REFRESH_RUNTIME_STATE", "BYTECODE_TRANSFORMATIONS", "BYTECODE_GET", "BYTECODE_PREVIEW", "BYTECODE_CAPTURE", "BYTECODE_DIFF", "SCRIPT_SESSION_CREATE", "SCRIPT_SESSION_VALIDATE", "SCRIPT_SESSION_APPLY", "SCRIPT_SESSION_PROMOTE", "SCRIPT_SESSION_REVERT", "SCRIPT_COMPILE", "OTHER"],
+        "result": ["SUCCESS", "FAILURE", "TIMEOUT", "OTHER"]
+      }
+    },
+    "kairo_operation_total": {
+      "type": "counter",
+      "tags": {
+        "operation_type": ["AGENT_COMMAND", "RULE_PUBLISH", "RULE_ROLLBACK", "RULE_UNLOAD", "PREVIEW", "SCRIPT_SESSION", "RECONCILE", "AUTOMATION_TRIAL", "AUTOMATION_PROMOTE", "AUTOMATION_REVERT", "OTHER"],
+        "result": ["SUCCESS", "FAILURE", "CANCELLED", "TIMEOUT", "OTHER"]
+      }
+    },
+    "kairo_operation_duration_seconds": {
+      "type": "timer",
+      "tags": {
+        "operation_type": ["AGENT_COMMAND", "RULE_PUBLISH", "RULE_ROLLBACK", "RULE_UNLOAD", "PREVIEW", "SCRIPT_SESSION", "RECONCILE", "AUTOMATION_TRIAL", "AUTOMATION_PROMOTE", "AUTOMATION_REVERT", "OTHER"],
+        "result": ["SUCCESS", "FAILURE", "CANCELLED", "TIMEOUT", "OTHER"]
+      }
+    },
+    "kairo_runtime_rule_targets": {
+      "type": "gauge",
+      "tags": { "state": ["FRESH", "DRIFTED", "UNRESOLVED", "OTHER"] }
+    },
+    "kairo_reconcile_total": {
+      "type": "counter",
+      "tags": { "result": ["SUCCESS", "FAILURE", "OTHER"] }
+    },
+    "kairo_rollback_total": {
+      "type": "counter",
+      "tags": { "result": ["SUCCESS", "FAILURE", "OTHER"] }
+    },
+    "kairo_ttl_cleanup_total": {
+      "type": "counter",
+      "tags": { "result": ["SUCCESS", "FAILURE", "OTHER"] }
+    },
+    "kairo_platform_build_info": {
+      "type": "gauge",
+      "value": 1,
+      "tags": { "version": "build version string", "commit": "git commit id" }
+    }
+  }
+}
