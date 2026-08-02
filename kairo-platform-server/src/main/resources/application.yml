@@ -33,11 +33,39 @@ management:
     health:
       probes:
         enabled: true
+      # Operators must see which component is DOWN; every contributor sanitises its own details so no
+      # credentials, JDBC URLs, tokens or stack traces are exposed (&sect;11.1).
+      show-details: always
       group:
+        # &sect;11.1: liveness is exclusively process-liveness. DB, Flyway, required Redis and Agent offline
+        # state can never drive liveness DOWN because none of them are members of this group.
+        liveness:
+          include: livenessState
+        # &sect;11.1: readiness requires the readiness state, DB connectivity, a real runtime Flyway
+        # validate, and Redis only when fencing configures it as required (KairoRedisHealthIndicator gates
+        # itself on kairo.platform.fencing.redis-enabled and is a no-op UP/disabled otherwise).
         readiness:
-          include: db,redis
+          include: readinessState,db,flyway,redis
+  info:
+    # Spring's auto info contributors are disabled; KairoBuildInfoContributor emits a single bounded,
+    # secret-free build-identity object (version, commit, time, javaTarget, contractBaseline).
+    build:
+      enabled: false
+    git:
+      enabled: false
+    env:
+      enabled: false
+    java:
+      enabled: false
+    os:
+      enabled: false
   health:
     redis:
+      enabled: false
+    # Spring Boot 3.3 ships no auto-validating Flyway health indicator; management.health.flyway.enabled
+    # is a defensive no-op today that keeps any future auto contributor from shadowing the validating
+    # KairoFlywayHealthIndicator (registered as the "flyway" contributor via the HealthIndicator suffix).
+    flyway:
       enabled: false
 
 kairo:

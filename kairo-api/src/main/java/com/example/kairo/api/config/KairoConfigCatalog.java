@@ -130,9 +130,23 @@ public final class KairoConfigCatalog {
         spring(out, "platform", "management.endpoints.web.exposure.include", ValueType.STRING,
                 "health,info,metrics");
         spring(out, "platform", "management.endpoint.health.probes.enabled", ValueType.BOOLEAN, "true");
+        // V1.7 M4-A &sect;11.1: liveness is exclusively process-liveness (livenessState); readiness requires
+        // the readiness state, DB, a real Flyway validate and (only when fencing requires it) Redis.
+        spring(out, "platform", "management.endpoint.health.show-details", ValueType.STRING, "always");
+        spring(out, "platform", "management.endpoint.health.group.liveness.include", ValueType.STRING,
+                "livenessState");
         spring(out, "platform", "management.endpoint.health.group.readiness.include", ValueType.STRING,
-                "db,redis");
+                "readinessState,db,flyway,redis");
         spring(out, "platform", "management.health.redis.enabled", ValueType.BOOLEAN, "false");
+        spring(out, "platform", "management.health.flyway.enabled", ValueType.BOOLEAN, "false");
+        // Auto build/git/env/java/os info contributors are disabled; KairoBuildInfoContributor owns a single
+        // bounded, secret-free build-identity object (&sect;11.1). Auto build/git beans still load so the
+        // contributor can read standard BuildProperties/GitProperties when they are generated.
+        spring(out, "platform", "management.info.build.enabled", ValueType.BOOLEAN, "false");
+        spring(out, "platform", "management.info.git.enabled", ValueType.BOOLEAN, "false");
+        spring(out, "platform", "management.info.env.enabled", ValueType.BOOLEAN, "false");
+        spring(out, "platform", "management.info.java.enabled", ValueType.BOOLEAN, "false");
+        spring(out, "platform", "management.info.os.enabled", ValueType.BOOLEAN, "false");
 
         spring(out, "platform", "kairo.platform.automation.expiry.fixed-delay-ms", ValueType.LONG, "10000");
         spring(out, "platform", "kairo.platform.automation.expiry.initial-delay-ms", ValueType.LONG, "10000");

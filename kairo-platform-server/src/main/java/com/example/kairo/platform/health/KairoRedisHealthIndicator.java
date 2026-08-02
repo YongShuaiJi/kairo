@@ -12,8 +12,7 @@ import org.springframework.stereotype.Component;
  * V1.7 M1-F &sect;8.6 item 2 / &sect;11.1: the readiness contributor for Redis. It is registered under the
  * {@code redis} contributor name (Spring's auto {@code RedisHealthIndicator} is disabled via
  * {@code management.health.redis.enabled=false}) so the readiness group is a fixed, deterministic set
- * {@code db,redis}. Flyway validation is enforced during startup by the schema compatibility guard;
- * the later M4 operational milestone owns any additional runtime Flyway health contract.
+ * {@code readinessState,db,flyway,redis}.
  *
  * <p>Behaviour:
  * <ul>
@@ -47,7 +46,7 @@ public class KairoRedisHealthIndicator implements HealthIndicator {
         }
         StringRedisTemplate redisTemplate = redisTemplateProvider.getIfAvailable();
         if (redisTemplate == null) {
-            return Health.down().withDetail("error", "Redis fencing is enabled but no Redis client is available").build();
+            return Health.down().withDetail("error", "redis client unavailable").build();
         }
         try {
             String reply = redisTemplate.execute((RedisCallback<String>) connection -> {
@@ -56,7 +55,9 @@ public class KairoRedisHealthIndicator implements HealthIndicator {
             });
             return Health.up().withDetail("reply", reply == null ? "PONG" : reply).build();
         } catch (RuntimeException e) {
-            return Health.down(e).withDetail("error", String.valueOf(e.getMessage())).build();
+            // Do not attach the exception or its unbounded message: client errors can contain
+            // endpoints, driver internals, credentials or stack traces in actuator JSON.
+            return Health.down().withDetail("error", "redis ping failed").build();
         }
     }
 }
