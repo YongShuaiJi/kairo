@@ -1,5 +1,7 @@
 package com.example.kairo.ops;
 
+import com.example.kairo.api.support.SupportBundleWriter;
+
 import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -69,6 +71,42 @@ public final class OpsOptions {
         return values.get("event");
     }
 
+    /** V1.7 M4-C &sect;11.3: output path for {@code support-bundle}. */
+    public String output() {
+        return values.get("output");
+    }
+
+    /** V1.7 M4-C &sect;11.3: whole-operation timeout (ms), default 30 s. Must be positive. */
+    public long timeoutMs() {
+        return parsePositiveLong(values.getOrDefault("timeout-ms", "30000"), "timeout-ms");
+    }
+
+    /** V1.7 M4-C &sect;11.3: archive size budget (bytes), capped at the 20 MiB hard maximum. Must be positive. */
+    public long maxSizeBytes() {
+        long parsed = parsePositiveLong(values.getOrDefault("max-size-bytes",
+                String.valueOf(SupportBundleWriter.DEFAULT_SIZE_BUDGET_BYTES)), "max-size-bytes");
+        return Math.min(parsed, SupportBundleWriter.DEFAULT_SIZE_BUDGET_BYTES);
+    }
+
+    private long parseLong(String value, String name) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("--" + name + " is required for " + command);
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("--" + name + " must be a number");
+        }
+    }
+
+    private long parsePositiveLong(String value, String name) {
+        long parsed = parseLong(value, name);
+        if (parsed <= 0) {
+            throw new IllegalArgumentException("--" + name + " must be positive");
+        }
+        return parsed;
+    }
+
     private void validate() {
         switch (command) {
             case "status" -> {
@@ -86,6 +124,13 @@ public final class OpsOptions {
             case "disable-all", "enable-all", "reset-all", "shutdown-agent" -> {
                 require("reason");
                 require("event");
+            }
+            // V1.7 M4-C §11.3: read-only local diagnostic collection; no mutation, no reason/event.
+            case "support-bundle" -> {
+                require("output");
+                // Validate timeout/max-size up front (positive); max-size is capped at access time.
+                timeoutMs();
+                maxSizeBytes();
             }
             default -> throw new IllegalArgumentException("Unknown command: " + command);
         }

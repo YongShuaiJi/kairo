@@ -1,6 +1,9 @@
 package com.example.kairo.ops;
 
+import com.example.kairo.ops.bundle.OpsSupportBundle;
+
 import java.io.IOException;
+import java.io.PrintStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -25,21 +28,43 @@ public final class OpsCommand {
     }
 
     public static int execute(String[] args) {
+        return execute(args, System.out, System.err);
+    }
+
+    /** Testable entry point that writes status/errors to the given streams. */
+    public static int execute(String[] args, PrintStream out, PrintStream err) {
+        OpsOptions options;
         try {
-            OpsOptions options = OpsOptions.parse(args);
+            options = OpsOptions.parse(args);
+        } catch (IllegalArgumentException e) {
+            // Fixed code + message only; never echo raw input (a misplaced secret could appear as a value).
+            err.println("{\"error\":\"INVALID_ARGUMENT\",\"message\":\"invalid command arguments\"}");
+            return 64;
+        }
+        // V1.7 M4-C §11.3: support-bundle is a read-only diagnostic collector, not a mutation;
+        // it does not go through the mutation send/audit path.
+        if ("support-bundle".equals(options.command())) {
+            try {
+                return new OpsSupportBundle(options, out, err).run();
+            } catch (Exception e) {
+                err.println("{\"error\":\"BUNDLE_FAILED\",\"message\":\"support bundle failed; no bundle written\"}");
+                return 70;
+            }
+        }
+        try {
             HttpResponse<String> response = send(options);
-            System.out.println(response.body());
+            out.println(response.body());
             appendAudit(options, response.statusCode(), response.body());
             return response.statusCode() >= 200 && response.statusCode() < 300 ? 0 : 2;
         } catch (IllegalArgumentException e) {
-            System.err.println("{\"error\":\"" + escape(e.getMessage()) + "\"}");
+            err.println("{\"error\":\"" + escape(e.getMessage()) + "\"}");
             return 64;
         } catch (IOException e) {
-            System.err.println("{\"error\":\"NETWORK_ERROR\",\"message\":\"" + escape(e.getMessage()) + "\"}");
+            err.println("{\"error\":\"NETWORK_ERROR\",\"message\":\"" + escape(e.getMessage()) + "\"}");
             return 69;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.err.println("{\"error\":\"INTERRUPTED\"}");
+            err.println("{\"error\":\"INTERRUPTED\"}");
             return 130;
         }
     }

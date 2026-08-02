@@ -6,15 +6,19 @@ import com.example.kairo.api.error.ApiError;
 import com.example.kairo.api.error.ErrorCategory;
 import com.example.kairo.api.operation.Operation;
 import com.example.kairo.api.operation.OperationEvent;
+import com.example.kairo.api.support.BoundedReads;
 import com.example.kairo.api.write.PreviewResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +51,152 @@ public final class KairoClient {
 
     public KairoClientConfig config() {
         return config;
+    }
+
+    // ---- read-only diagnostics (V1.7 M4-C §11.3) ----
+
+    /**
+     * Reads an arbitrary read-only Platform endpoint as a bounded JSON object, reusing the shared
+     * HTTP plumbing (Bearer token, correlation id, source) but reading the body through a bounded
+     * stream that aborts at {@code maxBytes + 1} rather than buffering an arbitrary response. Used by the
+     * {@code kairo-cli diagnose} support bundle to fetch actuator data ({@code /actuator/health},
+     * {@code /actuator/info}, {@code /actuator/metrics} and the per-meter readings) &mdash; it never mutates
+     * state and carries the caller's own token.
+     *
+     * <p>Safety contract (V1.7 M4-C &sect;11.3):
+     * <ul>
+     *   <li>The body is streamed ({@link HttpResponse.BodyHandlers#ofInputStream}) and read through
+     *       {@link BoundedReads}, so at most {@code maxBytes + 1} bytes are ever retained in memory.</li>
+     *   <li>An oversized 2xx body returns {@link BoundedJsonRead.Outcome#TOO_LARGE} without the rest.</li>
+     *   <li>A non-2xx response returns {@link BoundedJsonRead.Outcome#HTTP_ERROR} with the status only;
+     *       the error body is discarded unread (never parsed, never bundled).</li>
+     *   <li>{@link java.net.http.HttpTimeoutException} propagates so the caller can abort the whole
+     *       command on a per-request (remaining-deadline) timeout; other {@link IOException}s propagate
+     *       as sanitised transport failures.</li>
+     * </ul>
+     *
+     * @param path a path relative to the configured base URL (e.g. {@code /actuator/info})
+     * @param maxBytes the per-source byte cap (the reader retains at most {@code maxBytes + 1})
+     * @param requestTimeout the per-request timeout (callers pass the remaining whole-operation deadline)
+     * @return the bounded read outcome (never {@code null})
+     */
+    public BoundedJsonRead getJsonBounded(String path, long maxBytes, Duration requestTimeout) {
+        try {
+            Duration effectiveTimeout = requestTimeout == null ? config.timeout() : requestTimeout;
+            long timeoutNanos;
+            try {
+                timeoutNanos = effectiveTimeout.toNanos();
+            } catch (ArithmeticException ignored) {
+                timeoutNanos = Long.MAX_VALUE / 2L;
+            }
+            long requestDeadline = System.nanoTime() + Math.min(timeoutNanos, Long.MAX_VALUE / 2L);
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(URI.create(config.baseUrl() + path))
+                    .timeout(effectiveTimeout)
+                    .header("Accept", "application/json")
+                    .header("Authorization", "Bearer " + config.token())
+                    .GET();
+            if (config.correlationId() != null && !config.correlationId().isBlank()) {
+                builder.header("X-Correlation-Id", config.correlationId());
+            }
+            if (config.source() != null) {
+                builder.header("X-Source", config.source());
+            }
+            HttpResponse<InputStream> response = http.send(builder.build(),
+                    HttpResponse.BodyHandlers.ofInputStream());
+            int status = response.statusCode();
+            if (status < 200 || status >= 300) {
+                // Error bodies must not be read or bundled: close without materialising.
+                try (InputStream body = response.body()) {
+                    // intentionally not read
+                }
+                return BoundedJsonRead.httpError(status);
+            }
+            try (InputStream body = response.body()) {
+                long remainingNanos = requestDeadline - System.nanoTime();
+                if (remainingNanos <= 0L) {
+                    throw new BoundedReadTimeoutException(
+                            new java.net.http.HttpTimeoutException("bounded GET deadline expired"));
+                }
+                Duration bodyTimeout = Duration.ofNanos(remainingNanos);
+                BoundedReads.ReadResult read = BoundedReads.readAtMost(body, maxBytes, bodyTimeout);
+                if (read.isTooLarge()) {
+                    return BoundedJsonRead.tooLarge();
+                }
+                String text = new String(read.bytes(), StandardCharsets.UTF_8);
+                if (text.isBlank()) {
+                    return BoundedJsonRead.ok(null);
+                }
+                return BoundedJsonRead.ok(mapper.readValue(text, Map.class));
+            }
+        } catch (java.net.http.HttpTimeoutException | BoundedReads.ReadTimeoutException e) {
+            // Per-request timeout == remaining whole-operation deadline: propagate so the caller aborts.
+            throw new BoundedReadTimeoutException(e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BoundedReadTransportException(e);
+        } catch (IOException e) {
+            throw new BoundedReadTransportException(e);
+        }
+    }
+
+    /**
+     * Bounded read outcome for {@link #getJsonBounded(String, long, Duration)}. A pure result type so the
+     * caller can branch on OK / TOO_LARGE / HTTP_ERROR without exception-driven control flow. Timeout and
+     * transport failures throw {@link BoundedReadTimeoutException} / {@link BoundedReadTransportException}.
+     */
+    public static final class BoundedJsonRead {
+        public enum Outcome { OK, TOO_LARGE, HTTP_ERROR }
+
+        private final Outcome outcome;
+        private final Map<String, Object> json;
+        private final int httpStatus;
+
+        private BoundedJsonRead(Outcome outcome, Map<String, Object> json, int httpStatus) {
+            this.outcome = outcome;
+            this.json = json;
+            this.httpStatus = httpStatus;
+        }
+
+        static BoundedJsonRead ok(Map<String, Object> json) {
+            return new BoundedJsonRead(Outcome.OK, json, 0);
+        }
+
+        static BoundedJsonRead tooLarge() {
+            return new BoundedJsonRead(Outcome.TOO_LARGE, null, 0);
+        }
+
+        static BoundedJsonRead httpError(int httpStatus) {
+            return new BoundedJsonRead(Outcome.HTTP_ERROR, null, httpStatus);
+        }
+
+        public Outcome outcome() {
+            return outcome;
+        }
+
+        /** The parsed JSON object (2xx), or {@code null} for an empty body. Only valid for {@link Outcome#OK}. */
+        public Map<String, Object> json() {
+            return json;
+        }
+
+        /** The HTTP status (only valid for {@link Outcome#HTTP_ERROR}). */
+        public int httpStatus() {
+            return httpStatus;
+        }
+    }
+
+    /** Raised when a bounded GET times out (the per-request timeout == remaining whole-operation deadline). */
+    public static final class BoundedReadTimeoutException extends RuntimeException {
+        public BoundedReadTimeoutException(Throwable cause) {
+            super(cause);
+        }
+    }
+
+    /** Raised when a bounded GET fails for non-timeout transport reasons (connection refused, reset, ...). */
+    public static final class BoundedReadTransportException extends RuntimeException {
+        public BoundedReadTransportException(Throwable cause) {
+            super(cause);
+        }
     }
 
     // ---- auth ----

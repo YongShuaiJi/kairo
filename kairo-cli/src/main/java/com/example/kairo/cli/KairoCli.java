@@ -2,6 +2,8 @@ package com.example.kairo.cli;
 
 import com.example.kairo.api.automation.AutomationSession;
 import com.example.kairo.api.error.ApiError;
+import com.example.kairo.api.support.SupportBundleWriter;
+import com.example.kairo.cli.bundle.DiagnoseSupportBundle;
 import com.example.kairo.sdk.KairoApiException;
 import com.example.kairo.sdk.KairoClient;
 import com.example.kairo.sdk.KairoClientConfig;
@@ -200,6 +202,25 @@ public class KairoCli {
                 out.println(mapper.writeValueAsString(client.sessionEvents(sessionId)));
                 return 0;
             }
+            case "diagnose" -> {
+                // V1.7 M4-C §11.3: bounded read-only support bundle. Validate args up front (positive,
+                // capped at the 20 MiB hard maximum) and emit only fixed error code + message on failure.
+                try {
+                    Path output = Path.of(requireFlag(pa, "--output"));
+                    long timeoutMs = parsePositiveLong(pa.flags.getOrDefault("--timeout-ms", "30000"), "--timeout-ms");
+                    long maxBytes = Math.min(parsePositiveLong(pa.flags.getOrDefault("--max-size-bytes",
+                            String.valueOf(SupportBundleWriter.DEFAULT_SIZE_BUDGET_BYTES)), "--max-size-bytes"),
+                            SupportBundleWriter.DEFAULT_SIZE_BUDGET_BYTES);
+                    KairoClient client = createClient(pa);
+                    return new DiagnoseSupportBundle(client, mapper, out, err, output, timeoutMs, maxBytes).run();
+                } catch (IllegalArgumentException e) {
+                    printError("INVALID_ARGUMENT", "invalid command arguments");
+                    return 64;
+                } catch (Exception e) {
+                    printError("BUNDLE_FAILED", "diagnose failed; no bundle written");
+                    return 70;
+                }
+            }
             default -> {
                 printError("UNKNOWN_COMMAND", "Unknown command: " + cmd);
                 return 1;
@@ -253,6 +274,14 @@ public class KairoCli {
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException(name + " must be a number: " + value);
         }
+    }
+
+    private long parsePositiveLong(String value, String name) {
+        long parsed = parseLong(value, name);
+        if (parsed <= 0) {
+            throw new IllegalArgumentException(name + " must be positive");
+        }
+        return parsed;
     }
 
     private String requireFlag(ParsedArgs pa, String name) {
