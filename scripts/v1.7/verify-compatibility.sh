@@ -2,22 +2,29 @@
 #
 # scripts/v1.7/verify-compatibility.sh
 #
-# V1.7 M3-A compatibility verifier (section 10.3 / 10.4.1). Validates an existing
-# compatibility-result.json: aggregate schema, catalog completeness (all C01-C10
-# present exactly once), a single candidate build id, formal-row status semantics
-# (every formal scenario PASSED), summary/count consistency, and evidence/provenance
-# fields. It does NOT rerun scenarios and does NOT read docs/compatibility/v1.7.md
-# or the release manifest - that cross-check is M3-F (section 10.4.6).
+# V1.7 M3-A/M3-F compatibility verifier (section 10.3 / 10.4.1 / 10.4.6). Validates an
+# existing compatibility-result.json: aggregate schema, catalog completeness (all C01-C10
+# present exactly once), a single candidate build id, formal-row status semantics,
+# summary/count consistency, and evidence/provenance fields. It does NOT rerun scenarios.
+#
+# M3-F strengthening (section 10.4.6): when --doc and/or --manifest are supplied, the
+# verifier additionally cross-checks that docs/compatibility/v1.7.md was generated from
+# this aggregate (source hash/overall/buildId/catalog version, provenance marker, no
+# release overclaim) and that v1.7-acceptance-manifest.json keeps V17-COMPAT.RC/RELEASE
+# NOT_RUN with no overclaim - so aggregate, document and release-manifest conclusions
+# cannot diverge.
 #
 # Fixed interface (section 10.3):
-#   ./scripts/v1.7/verify-compatibility.sh target/v1.7/compatibility-result.json
+#   ./scripts/v1.7/verify-compatibility.sh target/v1.7/compatibility-result.json \
+#       [--doc docs/compatibility/v1.7.md] \
+#       [--manifest v1.7-acceptance-manifest.json]
 #
 # Exit codes (preserved exactly from the verifier):
 #   0  result valid and complete (overall=PASSED, all formal rows PASSED)
 #   1  usage error / file not found
 #   2  build failed
 #   3  verifier unusable
-#   4  result invalid or incomplete (overall=FAILED, or semantic violation)
+#   4  result invalid or incomplete (overall=FAILED, or semantic/cross-check violation)
 #   6  malformed JSON (unparseable)
 #
 # The runner NEVER switches or dirties the active V1.7 worktree. It builds the
@@ -31,6 +38,8 @@ set -euo pipefail
 # status explicitly and exit with the EXACT code (see the `set +e` block below).
 
 RESULT_FILE=""
+DOC_FILE=""
+MANIFEST_FILE=""
 JAVA_BIN="${JAVA_HOME:+$JAVA_HOME/bin/java}"
 JAVA_BIN="${JAVA_BIN:-java}"
 MVN="${MVN:-mvn}"
@@ -44,12 +53,16 @@ MODULES=(kairo-bootstrap-api kairo-api kairo-groovy kairo-core kairo-agent-core
 
 usage() {
   cat <<'EOF'
-Usage: verify-compatibility.sh <result.json> [--help]
+Usage: verify-compatibility.sh <result.json>
+       [--doc <docs/compatibility/v1.7.md>]
+       [--manifest <v1.7-acceptance-manifest.json>] [--help]
 
 Required:
   result.json   the compatibility-result.json produced by aggregate-compatibility.sh
 
 Optional:
+  --doc         generated compatibility document to cross-check against the result
+  --manifest    v1.7-acceptance-manifest.json to cross-check V17-COMPAT gate conclusions
   --help        show this help
 
 Behavior:
@@ -57,15 +70,23 @@ Behavior:
     the active V1.7 worktree is never switched or dirtied.
   - Validates the aggregate schema, catalog completeness, single candidate build id,
     formal-row status semantics, summary/count consistency and evidence/provenance.
-  - Does NOT rerun scenarios; does NOT read docs/compatibility/v1.7.md or the release
-    manifest (that cross-check is M3-F, section 10.4.6).
-  - Never modifies the workflow, the acceptance manifest, or support conclusions.
+  - With --doc: rejects a document not generated from this result (hash/overall/buildId)
+    or that overclaims release readiness.
+  - With --manifest: rejects V17-COMPAT.RC/RELEASE != NOT_RUN and any gate overclaim.
+  - Does NOT rerun scenarios; never modifies the workflow, the acceptance manifest,
+    or support conclusions.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --help|-h) usage; exit 0 ;;
+    --doc)
+      if [[ $# -lt 2 ]]; then echo "error: --doc requires a value" >&2; exit 1; fi
+      DOC_FILE="$2"; shift 2 ;;
+    --manifest)
+      if [[ $# -lt 2 ]]; then echo "error: --manifest requires a value" >&2; exit 1; fi
+      MANIFEST_FILE="$2"; shift 2 ;;
     --*) echo "unknown argument: $1" >&2; usage; exit 1 ;;
     *)
       if [[ -n "$RESULT_FILE" ]]; then
@@ -125,9 +146,12 @@ echo "==> running verifier"
 # The verifier returns 1/4/6 on usage/invalid/malformed. Temporarily disable `-e`
 # so those codes are captured (not turned into an early abort), then exit with the
 # EXACT code.
+VERIFIER_ARGS=("$RESULT_FILE")
+[[ -n "$DOC_FILE" ]] && VERIFIER_ARGS+=("--doc" "$DOC_FILE")
+[[ -n "$MANIFEST_FILE" ]] && VERIFIER_ARGS+=("--manifest" "$MANIFEST_FILE")
 VER_STATUS=0
 set +e
-"$JAVA_BIN" -cp "$CP" "$VERIFIER_MAIN" "$RESULT_FILE"
+"$JAVA_BIN" -cp "$CP" "$VERIFIER_MAIN" "${VERIFIER_ARGS[@]}"
 VER_STATUS=$?
 set -e
 

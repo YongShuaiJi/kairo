@@ -29,7 +29,11 @@ public final class CompatibilityCli {
     }
 
     /** Options for {@code verify-compatibility.sh}. */
-    public record VerifyOptions(String resultFile, boolean help) {
+    public record VerifyOptions(String resultFile, String doc, String manifest, boolean help) {
+    }
+
+    /** Options for {@code generate-compatibility-doc.sh}. */
+    public record DocOptions(String input, String output, boolean help) {
     }
 
     public static RunOptions parseRun(String... args) {
@@ -111,11 +115,15 @@ public final class CompatibilityCli {
             String a = args[i];
             switch (a) {
                 case "--input" -> {
-                    if (i + 1 >= args.length) throw new IllegalArgumentException("--input requires a value");
+                    if (i + 1 >= args.length) {
+                        throw new IllegalArgumentException("--input requires a value");
+                    }
                     input = args[++i].trim();
                 }
                 case "--output" -> {
-                    if (i + 1 >= args.length) throw new IllegalArgumentException("--output requires a value");
+                    if (i + 1 >= args.length) {
+                        throw new IllegalArgumentException("--output requires a value");
+                    }
                     output = args[++i].trim();
                 }
                 case "--command" -> {
@@ -143,10 +151,21 @@ public final class CompatibilityCli {
 
     public static VerifyOptions parseVerify(String... args) {
         String resultFile = null;
+        String doc = null;
+        String manifest = null;
         boolean help = false;
-        for (String a : args) {
+        for (int i = 0; i < args.length; i++) {
+            String a = args[i];
             switch (a) {
                 case "--help", "-h" -> help = true;
+                case "--doc" -> {
+                    if (i + 1 >= args.length) throw new IllegalArgumentException("--doc requires a value");
+                    doc = args[++i].trim();
+                }
+                case "--manifest" -> {
+                    if (i + 1 >= args.length) throw new IllegalArgumentException("--manifest requires a value");
+                    manifest = args[++i].trim();
+                }
                 default -> {
                     if (a.startsWith("--")) {
                         throw new IllegalArgumentException("unknown argument: " + a);
@@ -159,12 +178,43 @@ public final class CompatibilityCli {
             }
         }
         if (help) {
-            return new VerifyOptions(resultFile, true);
+            return new VerifyOptions(resultFile, doc, manifest, true);
         }
         if (resultFile == null || resultFile.isBlank()) {
             throw new IllegalArgumentException("a result.json path is required");
         }
-        return new VerifyOptions(resultFile, false);
+        return new VerifyOptions(resultFile, doc, manifest, false);
+    }
+
+    public static DocOptions parseDoc(String... args) {
+        String input = null;
+        String output = null;
+        boolean help = false;
+        for (int i = 0; i < args.length; i++) {
+            String a = args[i];
+            switch (a) {
+                case "--input" -> {
+                    if (i + 1 >= args.length) throw new IllegalArgumentException("--input requires a value");
+                    input = args[++i].trim();
+                }
+                case "--output" -> {
+                    if (i + 1 >= args.length) throw new IllegalArgumentException("--output requires a value");
+                    output = args[++i].trim();
+                }
+                case "--help", "-h" -> help = true;
+                default -> throw new IllegalArgumentException("unknown argument: " + a);
+            }
+        }
+        if (help) {
+            return new DocOptions(input, output, true);
+        }
+        if (input == null || input.isBlank()) {
+            throw new IllegalArgumentException("--input is required (a compatibility-result.json)");
+        }
+        if (output == null || output.isEmpty()) {
+            throw new IllegalArgumentException("--output is required");
+        }
+        return new DocOptions(input, output, false);
     }
 
     private static boolean parseBoolean(String value, String flag) {

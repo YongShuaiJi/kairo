@@ -5,15 +5,21 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Entry point of {@code verify-compatibility.sh}. Validates an existing
  * {@code compatibility-result.json}: aggregate schema, catalog completeness, a
  * single candidate build id, formal-row status semantics, and evidence/provenance
- * fields. It <strong>does not rerun scenarios</strong> and does not read
- * {@code docs/compatibility/v1.7.md} or the release manifest (that cross-check is
- * M3-F, section 10.4.6).
+ * fields. When {@code --doc} and/or {@code --manifest} are supplied (M3-F,
+ * section 10.4.6), it additionally cross-checks that the generated
+ * {@code docs/compatibility/v1.7.md} was produced from this aggregate and that
+ * {@code v1.7-acceptance-manifest.json} keeps {@code V17-COMPAT.RC}/{@code RELEASE}
+ * {@code NOT_RUN} with no overclaim &mdash; so the aggregate, document and release
+ * manifest conclusions cannot diverge.
+ *
+ * <p>It <strong>does not rerun scenarios</strong>.
  *
  * <p>Exit codes:
  * <ul>
@@ -21,7 +27,7 @@ import java.util.List;
  *   <li>1 usage error / file not found</li>
  *   <li>2 build failed (set by the shell runner)</li>
  *   <li>3 verifier unusable</li>
- *   <li>4 result invalid or incomplete (overall=FAILED, or semantic violation)</li>
+ *   <li>4 result invalid or incomplete (overall=FAILED, or semantic/cross-check violation)</li>
  *   <li>6 malformed JSON (unparseable)</li>
  * </ul>
  */
@@ -65,6 +71,15 @@ public final class CompatibilityVerifierMain {
         }
 
         List<String> errors = new CompatibilityResultValidator().validate(root);
+        // M3-F cross-checks (section 10.4.6): when a document and/or manifest are supplied,
+        // bind the aggregate, document and release-manifest conclusions together. These do
+        // not replace the structural validation above; they add divergence rejection.
+        if (errors.isEmpty() && opts.doc() != null) {
+            errors.addAll(checkDocument(root, opts.doc()));
+        }
+        if (errors.isEmpty() && opts.manifest() != null) {
+            errors.addAll(checkManifest(root, opts.manifest()));
+        }
         if (!errors.isEmpty()) {
             System.err.println("error: result failed validation:");
             for (String e : errors) {
@@ -87,21 +102,65 @@ public final class CompatibilityVerifierMain {
         return 0;
     }
 
+    private static List<String> checkDocument(JsonNode root, String docPath) {
+        Path p = Path.of(docPath);
+        if (!Files.isRegularFile(p)) {
+            List<String> e = new ArrayList<>();
+            e.add("document not found: " + docPath);
+            return e;
+        }
+        try {
+            String doc = Files.readString(p);
+            return new CompatibilityDocumentCheck().checkDocument(root, doc);
+        } catch (Exception ex) {
+            List<String> e = new ArrayList<>();
+            e.add("document could not be read (" + ex.getClass().getSimpleName()
+                    + "): " + ex.getMessage());
+            return e;
+        }
+    }
+
+    private static List<String> checkManifest(JsonNode root, String manifestPath) {
+        Path p = Path.of(manifestPath);
+        if (!Files.isRegularFile(p)) {
+            List<String> e = new ArrayList<>();
+            e.add("manifest not found: " + manifestPath);
+            return e;
+        }
+        try {
+            JsonNode manifest = MAPPER.readTree(Files.readString(p));
+            return new CompatibilityDocumentCheck().checkManifest(root, manifest);
+        } catch (Exception ex) {
+            List<String> e = new ArrayList<>();
+            e.add("manifest is not parseable JSON (" + ex.getClass().getSimpleName()
+                    + "): " + ex.getMessage());
+            return e;
+        }
+    }
+
     private static void printUsage() {
         System.out.println("""
-                Usage: CompatibilityVerifierMain <result.json> [--help]
+                Usage: CompatibilityVerifierMain <result.json>
+                        [--doc <docs/compatibility/v1.7.md>]
+                        [--manifest <v1.7-acceptance-manifest.json>] [--help]
 
                 Validates compatibility-result.json: schema, catalog completeness
                 (all C01-C10 present once), a single candidate build id, formal-row
                 status semantics (every formal scenario PASSED), summary/count
                 consistency, and evidence/provenance fields. Does not rerun scenarios.
 
+                With --doc: verifies the generated document was produced from this
+                aggregate (source hash/overall/buildId/catalog version) and does not
+                overclaim release readiness.
+                With --manifest: verifies V17-COMPAT.RC/RELEASE remain NOT_RUN and no
+                gate overclaims support the aggregate does not have.
+
                 Exit codes:
                   0  result valid and complete (overall=PASSED)
                   1  usage error / file not found
                   2  build failed (set by the shell runner)
                   3  verifier unusable
-                  4  result invalid or incomplete
+                  4  result invalid or incomplete (or cross-check violation)
                   6  malformed JSON (unparseable)
                 """);
     }
