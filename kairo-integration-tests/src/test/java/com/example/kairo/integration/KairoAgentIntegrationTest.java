@@ -846,6 +846,27 @@ class KairoAgentIntegrationTest {
         com.example.kairo.api.TargetMatchResult result = runtime.resolveTarget(type,
                 com.example.kairo.api.EnhancementTarget.of(ms, com.example.kairo.api.EnhancementLocation.METHOD_ENTER));
         assertThat(result.status()).isEqualTo(com.example.kairo.api.TargetMatchResult.Status.DRIFTED);
+
+        // A hot update must fail closed before it mutates the registry or retransforms the class.
+        // Previously publishLocked accepted this update and recordAppliedHash silently cleared the
+        // drift marker, allowing an unsafe overwrite even though the historical drift event stayed
+        // visible. Pin both the exact status token and the absence of mutation.
+        String scriptHashBeforeRejectedUpdate = runtime.rules().stream()
+                .filter(r -> "redefine-rule".equals(r.id()))
+                .findFirst().orElseThrow().scriptHash();
+        assertThatThrownBy(() -> runtime.publish(method,
+                rule("redefine-rule", method, InvokePhase.BEFORE,
+                        "return mock.returnValue(123)")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("TARGET_DRIFTED")
+                .hasMessageContaining(name);
+        assertThat(runtime.isClassDrifted(name)).isTrue();
+        assertThat(runtime.rules().stream()
+                .filter(r -> "redefine-rule".equals(r.id()))
+                .findFirst().orElseThrow().scriptHash())
+                .isEqualTo(scriptHashBeforeRejectedUpdate);
+        assertThat((Integer) method.invoke(type.getDeclaredConstructor().newInstance(), 5))
+                .isNotEqualTo(123);
     }
 
     // V1.5 §4.1: the ClassLoader tree the Web selector renders. A class loaded by a custom

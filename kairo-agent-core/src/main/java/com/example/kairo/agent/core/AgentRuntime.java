@@ -226,6 +226,7 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
 
     private CompiledRule publishLocked(Method method, MockRule rule, String actor) {
         requireOperationalForPublish();
+        rejectDriftedClass(method.getDeclaringClass());
         SyntheticBridgePolicy.Verdict verdict = syntheticBridgePolicy.evaluate(method);
         if (!verdict.isAllowed()) {
             throw new IllegalArgumentException("Synthetic and bridge methods cannot be mocked: " + method
@@ -294,6 +295,7 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
 
     private CompiledRule publishConstructorLocked(Constructor<?> constructor, MockRule rule, String actor) {
         requireOperationalForPublish();
+        rejectDriftedClass(constructor.getDeclaringClass());
         if (Modifier.isNative(constructor.getModifiers())) {
             throw new IllegalArgumentException("Native constructors cannot be enhanced: " + constructor);
         }
@@ -1010,6 +1012,22 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     /** V1.5 §4.4: whether a class is currently flagged as drifted (external redefine changed its hash). */
     public boolean isClassDrifted(String binaryName) {
         return binaryName != null && driftedClasses.containsKey(binaryName);
+    }
+
+    /**
+     * Refuse every rule publication path while an external redefine has left the target on an
+     * unrecognised bytecode baseline. Publication would otherwise retransform the class, anchor
+     * the new bytes in {@link #recordAppliedHash(Class)}, and silently clear the drift marker.
+     * The stable token is deliberately included for the loopback API and Platform command path
+     * to surface the exact fail-closed outcome instead of a generic transform failure.
+     */
+    private void rejectDriftedClass(Class<?> type) {
+        if (type == null || !isClassDrifted(type.getName())) {
+            return;
+        }
+        throw new IllegalArgumentException("TARGET_DRIFTED: class " + type.getName()
+                + " changed since the last successful apply; explicit recovery is required: "
+                + driftedClasses.get(type.getName()));
     }
 
     /** V1.5 §4.4: snapshot of currently-drifted classes (className -> reason) for diagnostics. */
