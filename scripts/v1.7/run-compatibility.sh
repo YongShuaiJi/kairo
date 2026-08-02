@@ -4,9 +4,10 @@
 #
 # V1.7 compatibility row-evidence runner (section 10.3). Produces one row-evidence
 # JSON file for a fixed C01-C10 scenario. M3-B implements C01/C02/C09 (plain Java);
-# M3-C implements C03/C04 (Spring Boot 3 executable jar). Later work packages add the
-# remaining fixtures. Unavailable formal rows fail closed and C09 may be EXPERIMENTAL
-# only when no truthful macOS runner/JDK is available.
+# M3-C implements C03/C04 (Spring Boot 3 executable jar); M3-D implements C05/C06/C07
+# (ClassLoader / proxy / lambda-bridge on a real independent target JVM). Later work
+# packages add the remaining fixtures. Unavailable formal rows fail closed and C09 may
+# be EXPERIMENTAL only when no truthful macOS runner/JDK is available.
 #
 # Fixed interface (section 10.3):
 #   ./scripts/v1.7/run-compatibility.sh \
@@ -72,10 +73,13 @@ Behavior:
     --allow-dirty only for local development (mode=dev).
   - Cleans only this runner's prior output file before running.
   - Runs the runner in a fresh JVM; the exact exit code is preserved.
-  - C01/C02/C09 run their M3-B real independent-JVM fixtures (plain Java) and
+  - C01/C02/C09 run their M3-B real independent-JVM fixtures (plain Java),
     C03/C04 run their M3-C real independent-JVM fixtures (Spring Boot 3
-    executable jar) when the catalog platform and target JDK are available.
-    Other rows remain fail-closed until their bounded M3 work package lands.
+    executable jar), and C05/C06/C07 run their M3-D real independent-JVM fixtures
+    (parent/child loaders, JDK Proxy/CGLIB/Byte Buddy, lambda/bridge/synthetic)
+    when the catalog platform and target JDK are available. C07 requires both
+    JDK 17 and JDK 21. Other rows remain fail-closed until their bounded M3
+    work package lands.
   - Never modifies the workflow, the acceptance manifest, or support conclusions.
 EOF
 }
@@ -144,16 +148,19 @@ if ! (cd "$REPO_ROOT" && $MVN -B -ntp -pl kairo-integration-tests -am test-compi
 fi
 
 # -----------------------------------------------------------------------------
-# M3-B/M3-C: for the implemented scenarios (C01/C02/C09 plain Java, C03/C04 Spring
-# Boot) provision the real-execution environment - build the existing
-# agent/bootstrap/core/attach artifacts in place, resolve the target JDK homes
-# without any network download, and (for C03/C04) build the Spring Boot 3
-# executable-jar fixture (kairo-demo). Non-implemented scenarios are left
-# unprovisioned so the runner fails closed per M3-A.
+# M3-B/M3-C/M3-D: for the implemented scenarios (C01/C02/C09 plain Java, C03/C04
+# Spring Boot, C05/C06/C07 ClassLoader/proxy/lambda-bridge) provision the
+# real-execution environment - build the existing agent/bootstrap/core/attach
+# artifacts in place, resolve the target JDK homes without any network download,
+# and (for C03/C04) build the Spring Boot 3 executable-jar fixture (kairo-demo).
+# C06 additionally needs the real byte-buddy and spring-core (repackaged CGLIB)
+# jars resolved onto the target classpath (after the dependency classpath is
+# built, below). Non-implemented scenarios are left unprovisioned so the runner
+# fails closed per M3-A.
 # -----------------------------------------------------------------------------
 REAL_PROPS=()
 case "$SCENARIO" in
-  C01|C02|C03|C04|C09)
+  C01|C02|C03|C04|C05|C06|C07|C09)
     BOOTSTRAP_JAR="$REPO_ROOT/kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar"
     CORE_JAR="$REPO_ROOT/kairo-agent-core-modern/target/kairo-agent-core-modern.jar"
     ATTACH_JAR="$REPO_ROOT/kairo-attach-cli/target/kairo-attach.jar"
@@ -271,6 +278,22 @@ fi
 EXTDEPS="$(cat "$EXTDEPS_FILE")"
 rm -f "$EXTDEPS_FILE"
 CP="$REPO_ROOT/kairo-integration-tests/target/test-classes:$(reactor_classes):$EXTDEPS"
+
+# M3-D C06: resolve the real byte-buddy and spring-core (repackaged CGLIB) jars
+# from the dependency classpath so the genuine CGLIB Enhancer and genuine Byte Buddy
+# runtime subclass generation are on the independent target JVM classpath. They are
+# NOT faked by a class-name marker; a missing jar makes C06 fail closed.
+if [[ "$SCENARIO" == "C06" ]]; then
+  BYTE_BUDDY_JAR_RESOLVED="$(echo "$EXTDEPS" | tr ':' '\n' | grep -E '/byte-buddy-[0-9].*\.jar$' | grep -v sources | grep -v javadoc | head -1 || true)"
+  SPRING_CORE_JAR_RESOLVED="$(echo "$EXTDEPS" | tr ':' '\n' | grep -E '/spring-core-[0-9].*\.jar$' | grep -v sources | grep -v javadoc | head -1 || true)"
+  if [[ -z "$BYTE_BUDDY_JAR_RESOLVED" || -z "$SPRING_CORE_JAR_RESOLVED" ]]; then
+    echo "error: C06 requires byte-buddy and spring-core jars; resolved byteBuddy=${BYTE_BUDDY_JAR_RESOLVED:-<none>} springCore=${SPRING_CORE_JAR_RESOLVED:-<none>}" >&2
+    exit 2
+  fi
+  REAL_PROPS+=("-Dkairo.compat.artifacts.byteBuddyJar=$BYTE_BUDDY_JAR_RESOLVED")
+  REAL_PROPS+=("-Dkairo.compat.artifacts.springCoreJar=$SPRING_CORE_JAR_RESOLVED")
+  echo "==> C06 aux jars: byteBuddy=$BYTE_BUDDY_JAR_RESOLVED springCore=$SPRING_CORE_JAR_RESOLVED"
+fi
 
 echo "==> running row runner (scenario=$SCENARIO)"
 # The runner returns 3/4/5/6 on unusable/blocked/write/schema failure. Temporarily

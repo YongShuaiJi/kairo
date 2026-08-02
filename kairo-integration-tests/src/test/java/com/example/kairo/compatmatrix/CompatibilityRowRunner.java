@@ -192,12 +192,13 @@ public final class CompatibilityRowRunner {
      * The dispatch seam. M3-B plugs real plain-Java execution in here for C01
      * (premain), C02 (external attach/agentmain) and C09 (agentmain on macOS
      * arm64). M3-C plugs real Spring Boot 3 executable-jar execution in here for
-     * C03 (premain) and C04 (external attach). When the shell runner provisions the
-     * real-execution environment (system properties), the implemented scenarios launch a
-     * genuinely independent target JVM; otherwise they fail closed truthfully without
-     * spawning a process, so deterministic tests stay process-free. Scenarios
-     * whose fixture has not landed (M3-D..M3-E) keep the M3-A fail-closed
-     * behaviour. It never fabricates PASSED.
+     * C03 (premain) and C04 (external attach). M3-D plugs real ClassLoader / proxy /
+     * lambda-bridge execution in here for C05/C06/C07 (premain). When the shell
+     * runner provisions the real-execution environment (system properties), the
+     * implemented scenarios launch a genuinely independent target JVM; otherwise
+     * they fail closed truthfully without spawning a process, so deterministic
+     * tests stay process-free. Scenarios whose fixture has not landed (M3-E) keep
+     * the M3-A fail-closed behaviour. It never fabricates PASSED.
      */
     static DispatchResult dispatch(CompatibilityScenario scenario) {
         if (fixtureImplemented(scenario.id())) {
@@ -217,6 +218,9 @@ public final class CompatibilityRowRunner {
             if (isSpringBootScenario(scenario.id())) {
                 return SpringBootScenarioDispatch.run(scenario, env);
             }
+            if (isM3DScenario(scenario.id())) {
+                return M3DScenarioDispatch.run(scenario, env);
+            }
             return PlainJavaScenarioDispatch.run(scenario, env);
         }
         if (!scenario.isFormal()) {
@@ -232,12 +236,13 @@ public final class CompatibilityRowRunner {
 
     /**
      * Whether a real fixture implementation exists for the scenario. M3-B flips
-     * C01/C02/C09 to true; M3-C flips C03/C04 to true; M3-D..M3-E flip the rest as
-     * their fixtures land.
+     * C01/C02/C09 to true; M3-C flips C03/C04 to true; M3-D flips C05/C06/C07 to true;
+     * M3-E flips the rest as their fixtures land.
      */
     static boolean fixtureImplemented(String scenarioId) {
         return "C01".equals(scenarioId) || "C02".equals(scenarioId) || "C09".equals(scenarioId)
-                || "C03".equals(scenarioId) || "C04".equals(scenarioId);
+                || "C03".equals(scenarioId) || "C04".equals(scenarioId)
+                || "C05".equals(scenarioId) || "C06".equals(scenarioId) || "C07".equals(scenarioId);
     }
 
     /**
@@ -249,6 +254,15 @@ public final class CompatibilityRowRunner {
         return "C03".equals(scenarioId) || "C04".equals(scenarioId);
     }
 
+    /**
+     * Whether the scenario is an M3-D ClassLoader / proxy / lambda-bridge target
+     * (C05/C06/C07), routed to {@link M3DScenarioDispatch} rather than the M3-B
+     * plain-Java dispatch.
+     */
+    static boolean isM3DScenario(String scenarioId) {
+        return "C05".equals(scenarioId) || "C06".equals(scenarioId) || "C07".equals(scenarioId);
+    }
+
     private static void printUsage() {
         System.out.println("""
                 Usage: CompatibilityRowRunner --scenario <C01-C10> --output <row.json>
@@ -257,7 +271,9 @@ public final class CompatibilityRowRunner {
 
                 Produces one V1.7 compatibility row-evidence JSON file. M3-B implements
                 real independent-JVM execution for C01/C02/C09; M3-C implements C03/C04
-                against a Spring Boot 3 executable jar; unavailable or later-package
+                against a Spring Boot 3 executable jar; M3-D implements C05 (parent/child
+                same-name loaders), C06 (JDK Proxy/CGLIB/Byte Buddy) and C07
+                (lambda/bridge/synthetic on JDK 17 and 21). Unavailable or later-package
                 scenarios fail closed. It never fabricates PASSED.
 
                 Exit codes:
