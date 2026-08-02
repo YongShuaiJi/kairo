@@ -5,6 +5,7 @@ import com.example.kairo.api.snapshot.AgentRuntimeSnapshot;
 import com.example.kairo.api.snapshot.CallSiteSnapshot;
 import com.example.kairo.api.snapshot.ChainSnapshot;
 import com.example.kairo.api.snapshot.CollectionTruncation;
+import com.example.kairo.platform.metrics.KairoMetricsRecorder;
 import com.example.kairo.platform.persistence.mapper.AgentCommandMapper;
 import com.example.kairo.platform.persistence.mapper.AgentReconciliationMapper;
 import com.example.kairo.platform.persistence.mapper.AgentRuntimeStateMapper;
@@ -106,6 +107,14 @@ public class AgentReconciliationService {
      *  convergence commands (APPLY_RULE / RESET_CLASS) dispatched by the rollout or a restore. */
     @Value("${kairo.platform.reconciliation.snapshot-request-delay-ms:5000}")
     private long snapshotRequestDelayMillis;
+
+    /** V1.7 M4-B &sect;11.2: metrics recorder for reconcile outcomes; no-op when not injected. */
+    private KairoMetricsRecorder metricsRecorder = KairoMetricsRecorder.NO_OP;
+
+    @Autowired
+    void setMetricsRecorder(KairoMetricsRecorder metricsRecorder) {
+        this.metricsRecorder = metricsRecorder;
+    }
 
     @Autowired
     public AgentReconciliationService(AgentRuntimeStateMapper stateMapper,
@@ -377,8 +386,32 @@ public class AgentReconciliationService {
      * call repeatedly (idempotent per &sect;8.4 item 8): in-flight convergence commands are skipped,
      * IN_SYNC targets are no-ops, and a fresh snapshot that still shows drift after a terminal
      * convergence command marks the target DEGRADED rather than re-enqueuing.
+     *
+     * <p>V1.7 M4-B &sect;11.2: this is the single reconciliation choke point &mdash; every scheduled,
+     * manual and post-registration reconciliation flows through here, so {@code kairo_reconcile_total}
+     * is recorded exactly once per call (SUCCESS on return, FAILURE on a thrown exception, which is
+     * re-thrown unchanged).
      */
     public ReconciliationResult reconcileAgent(RequestContext context, String agentId) {
+        try {
+            ReconciliationResult result = doReconcileAgent(context, agentId);
+            recordReconcileSafely("SUCCESS");
+            return result;
+        } catch (RuntimeException e) {
+            recordReconcileSafely("FAILURE");
+            throw e;
+        }
+    }
+
+    private void recordReconcileSafely(String result) {
+        try {
+            metricsRecorder.recordReconcile(result);
+        } catch (RuntimeException e) {
+            log.warn("Reconciliation metric recording failed: {}", e.getMessage());
+        }
+    }
+
+    private ReconciliationResult doReconcileAgent(RequestContext context, String agentId) {
         Map<String, Object> registration = stateMapper.findInstanceRegistrationByAgent(agentId);
         if (registration == null || registration.get("process_start_id") == null) {
             return ReconciliationResult.empty();

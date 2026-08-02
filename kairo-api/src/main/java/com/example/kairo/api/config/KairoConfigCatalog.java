@@ -167,6 +167,11 @@ public final class KairoConfigCatalog {
         spring(out, "platform", "kairo.platform.script.expiry.initial-delay-ms", ValueType.LONG, "5000");
         spring(out, "platform", "kairo.platform.target-resolution.timeout-ms", ValueType.LONG, "10000");
 
+        // V1.7 M4-B §11.2: business-metrics gauge refresh cadence. The bounded-state gauges read a
+        // cached aggregate (never the database on each scrape); these control that refresh interval.
+        spring(out, "platform", "kairo.platform.metrics.gauge-refresh.fixed-delay-ms", ValueType.LONG, "15000");
+        spring(out, "platform", "kairo.platform.metrics.gauge-refresh.initial-delay-ms", ValueType.LONG, "5000");
+
         // Environment bindings exposed by the Platform deployment.
         env(out, "platform", "KAIRO_DB_URL", ValueType.URL,
                 "jdbc:postgresql://127.0.0.1:5432/kairo", true);

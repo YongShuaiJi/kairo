@@ -1,5 +1,6 @@
 package com.example.kairo.platform.command;
 
+import com.example.kairo.platform.metrics.KairoMetricsRecorder;
 import com.example.kairo.platform.persistence.mapper.AgentCommandMapper;
 import com.example.kairo.platform.persistence.mapper.RuleUnloadMapper;
 import com.example.kairo.platform.service.PlatformException;
@@ -44,6 +45,13 @@ public class AgentCommandService {
     private RuleUnloadMapper ruleUnloadMapper;
     private AgentRuntimeStateExchange runtimeStateExchange;
     private AgentReconciliationService agentReconciliationService;
+    private KairoMetricsRecorder metricsRecorder = KairoMetricsRecorder.NO_OP;
+
+    /** V1.7 M4-B &sect;11.2: metrics recorder for command/rollback outcomes; no-op when not injected. */
+    @Autowired
+    void setMetricsRecorder(KairoMetricsRecorder metricsRecorder) {
+        this.metricsRecorder = metricsRecorder;
+    }
 
     @Autowired
     void setBytecodeExchange(BytecodeDiagnosticExchange bytecodeExchange) {
@@ -254,7 +262,10 @@ public class AgentCommandService {
         // max_attempts, so they never linger invisibly in DISPATCHED. Triggered on each poll
         // (no background sweeper in M1-A; restart reconciliation is M1-B). Agent-scoped: only
         // the polling agent's commands are touched, never another agent's in-flight lease.
-        commandMapper.expireExhaustedCommands(agentId, timestamp(now));
+        // V1.7 M4-B §11.2: each exhausted command is a terminal TIMEOUT outcome, recorded after the
+        // poll transaction commits (a rollback would un-fail them, so the count must not pre-commit).
+        int exhausted = commandMapper.expireExhaustedCommands(agentId, timestamp(now));
+        registerAfterCommitCommandsExhausted(exhausted);
         Instant leaseExpiresAt = now.plusSeconds(optionalLong(request, "leaseSeconds", 60));
         List<Map<String, Object>> candidates = commandMapper.pollCandidates(agentId, timestamp(now));
         if (candidates.isEmpty()) {
@@ -401,6 +412,9 @@ public class AgentCommandService {
                 && agentReconciliationService != null) {
             registerAfterCommitRuntimeStateRefresh(String.valueOf(updated.get("agent_id")));
         }
+        // V1.7 M4-B §11.2: the command reached a terminal state (ACKED -> SUCCESS, FAILED -> FAILURE),
+        // recorded after the ACK transaction commits so a rollback never counts a non-terminal command.
+        registerAfterCommitCommandOutcome(commandType, "ACKED".equals(resultStatus) ? "SUCCESS" : "FAILURE");
         return updated;
     }
 
@@ -477,6 +491,10 @@ public class AgentCommandService {
                 rollback, updatedOperation, operationStatus,
                 allUnloaded ? "规则字节码卸载完成" : "规则字节码卸载失败",
                 Map.of("rollbackExecutionId", rollbackId, "executionCount", executions.size()));
+        // V1.7 M4-B §11.2: the rollback reached a terminal outcome (SUCCEEDED -> SUCCESS, FAILED ->
+        // FAILURE), recorded after the transaction commits. completeRollbackExecution is guarded on
+        // status='DISPATCHED', so this fires exactly once per rollback even across multiple acks.
+        registerAfterCommitRollbackOutcome(rollbackStatus);
     }
 
     /** V1.7 M1-E §8.5: a rollout_instance_execution status terminal for the unload phase. */
@@ -896,6 +914,84 @@ public class AgentCommandService {
             });
         } else {
             refresh.run();
+        }
+    }
+
+    /**
+     * V1.7 M4-B &sect;11.2: record one command terminal outcome after the current transaction commits.
+     * If no transaction is active, record immediately. A metric failure is swallowed and logged so it
+     * never propagates into the ACK path.
+     */
+    private void registerAfterCommitCommandOutcome(String commandType, String result) {
+        Runnable record = () -> {
+            try {
+                metricsRecorder.recordCommandOutcome(commandType, result);
+            } catch (RuntimeException e) {
+                log.warn("Command outcome metric for {} failed: {}", commandType, e.getMessage());
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    record.run();
+                }
+            });
+        } else {
+            record.run();
+        }
+    }
+
+    /**
+     * V1.7 M4-B &sect;11.2: record {@code count} commands that exhausted retries (TIMEOUT) after the
+     * current transaction commits, so a rollback never counts commands that remain non-terminal.
+     */
+    private void registerAfterCommitCommandsExhausted(int count) {
+        if (count <= 0) {
+            return;
+        }
+        Runnable record = () -> {
+            try {
+                metricsRecorder.recordCommandsExhausted(count);
+            } catch (RuntimeException e) {
+                log.warn("Command exhausted metric failed: {}", e.getMessage());
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    record.run();
+                }
+            });
+        } else {
+            record.run();
+        }
+    }
+
+    /**
+     * V1.7 M4-B &sect;11.2: record one rollback terminal outcome after the current transaction commits.
+     * Called only when {@code completeRollbackExecution} flipped a DISPATCHED rollback, so each rollback
+     * is counted exactly once.
+     */
+    private void registerAfterCommitRollbackOutcome(String rollbackStatus) {
+        String result = "SUCCEEDED".equals(rollbackStatus) ? "SUCCESS" : "FAILURE";
+        Runnable record = () -> {
+            try {
+                metricsRecorder.recordRollback(result);
+            } catch (RuntimeException e) {
+                log.warn("Rollback outcome metric failed: {}", e.getMessage());
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    record.run();
+                }
+            });
+        } else {
+            record.run();
         }
     }
 

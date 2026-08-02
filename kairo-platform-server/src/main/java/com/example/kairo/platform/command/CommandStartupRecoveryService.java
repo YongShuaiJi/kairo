@@ -1,5 +1,6 @@
 package com.example.kairo.platform.command;
 
+import com.example.kairo.platform.metrics.KairoMetricsRecorder;
 import com.example.kairo.platform.persistence.mapper.AgentCommandMapper;
 import com.example.kairo.platform.service.PlatformCoreService;
 import com.example.kairo.platform.service.RequestContext;
@@ -60,6 +61,13 @@ public class CommandStartupRecoveryService implements ApplicationRunner {
     private final Clock clock;
     private final Instant startupBoundary;
     private final TransactionTemplate transactionTemplate;
+    private KairoMetricsRecorder metricsRecorder = KairoMetricsRecorder.NO_OP;
+
+    /** V1.7 M4-B &sect;11.2: metrics recorder for recovered-command outcomes; no-op when not injected. */
+    @Autowired
+    void setMetricsRecorder(KairoMetricsRecorder metricsRecorder) {
+        this.metricsRecorder = metricsRecorder;
+    }
 
     @Autowired
     public CommandStartupRecoveryService(AgentCommandMapper commandMapper,
@@ -118,6 +126,14 @@ public class CommandStartupRecoveryService implements ApplicationRunner {
                     failAndAudit(id, commandType, previousStatus, attempts));
             if (updated != null && updated > 0) {
                 recovered++;
+                // V1.7 M4-B §11.2: a recovered transient command reached a terminal FAILED outcome
+                // (context lost on restart). Recorded after the per-row transaction committed.
+                try {
+                    metricsRecorder.recordCommandOutcome(commandType, "FAILURE");
+                } catch (RuntimeException e) {
+                    // An observability backend must not turn a completed recovery into startup failure.
+                    log.warn("Recovered-command metric recording failed for {}: {}", commandType, e.getMessage());
+                }
             }
         }
         return new RecoveryResult(recovered, candidates.size());

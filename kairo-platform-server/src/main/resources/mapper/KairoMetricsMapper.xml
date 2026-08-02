@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.kairo.platform.persistence.mapper.KairoMetricsMapper">
+
+    <!--
+        V1.7 M4-B §11.2: bounded aggregates for the state gauges. Each GROUP BY returns one row per
+        bounded tag value (never per resource). Read only on the controlled gauge-refresh cadence;
+        the provider caches results between refreshes so a Prometheus scrape never hits the database.
+        Columns are read case-insensitively by KairoMetricsStateProvider (lower-cased keys), so the
+        driver's returned alias case does not matter.
+    -->
+    <select id="countAgentsByStatus" resultType="map">
+        select case
+                   when status in ('ACTIVE', 'ONLINE', 'STOPPING', 'DISABLED', 'OFFLINE') then status
+                   else 'OTHER'
+               end as status,
+               count(*) as total
+          from agent_instance
+         group by case
+                      when status in ('ACTIVE', 'ONLINE', 'STOPPING', 'DISABLED', 'OFFLINE') then status
+                      else 'OTHER'
+                  end
+    </select>
+
+    <select id="countCommandsByStatusAndType" resultType="map">
+        select case
+                   when status in ('PENDING', 'DISPATCHED', 'ACKED', 'FAILED') then status
+                   else 'OTHER'
+               end as status,
+               case
+                   when command_type in (
+                       'APPLY_RULE', 'APPLY_CHAIN', 'DISABLE_ALL', 'ENABLE_ALL',
+                       'RESET_CLASS', 'RESET_ALL', 'STOP_AGENT',
+                       'START_RECORDING', 'STOP_RECORDING',
+                       'DISCOVER_TARGETS', 'LIST_LOADERS', 'LIST_CALL_SITES',
+                       'RESOLVE_TARGET', 'REFRESH_RUNTIME_STATE',
+                       'BYTECODE_TRANSFORMATIONS', 'BYTECODE_GET', 'BYTECODE_PREVIEW',
+                       'BYTECODE_CAPTURE', 'BYTECODE_DIFF',
+                       'SCRIPT_SESSION_CREATE', 'SCRIPT_SESSION_VALIDATE',
+                       'SCRIPT_SESSION_APPLY', 'SCRIPT_SESSION_PROMOTE',
+                       'SCRIPT_SESSION_REVERT', 'SCRIPT_COMPILE'
+                   ) then command_type
+                   else 'OTHER'
+               end as command_type,
+               count(*) as total
+          from agent_command
+         group by case
+                      when status in ('PENDING', 'DISPATCHED', 'ACKED', 'FAILED') then status
+                      else 'OTHER'
+                  end,
+                  case
+                      when command_type in (
+                          'APPLY_RULE', 'APPLY_CHAIN', 'DISABLE_ALL', 'ENABLE_ALL',
+                          'RESET_CLASS', 'RESET_ALL', 'STOP_AGENT',
+                          'START_RECORDING', 'STOP_RECORDING',
+                          'DISCOVER_TARGETS', 'LIST_LOADERS', 'LIST_CALL_SITES',
+                          'RESOLVE_TARGET', 'REFRESH_RUNTIME_STATE',
+                          'BYTECODE_TRANSFORMATIONS', 'BYTECODE_GET', 'BYTECODE_PREVIEW',
+                          'BYTECODE_CAPTURE', 'BYTECODE_DIFF',
+                          'SCRIPT_SESSION_CREATE', 'SCRIPT_SESSION_VALIDATE',
+                          'SCRIPT_SESSION_APPLY', 'SCRIPT_SESSION_PROMOTE',
+                          'SCRIPT_SESSION_REVERT', 'SCRIPT_COMPILE'
+                      ) then command_type
+                      else 'OTHER'
+                  end
+    </select>
+
+    <select id="countRuleTargetsByDriftStatus" resultType="map">
+        select case
+                   when drift_status in ('FRESH', 'DRIFTED', 'UNRESOLVED') then drift_status
+                   else 'OTHER'
+               end as drift_status,
+               count(*) as total
+          from rule_target
+         group by case
+                      when drift_status in ('FRESH', 'DRIFTED', 'UNRESOLVED') then drift_status
+                      else 'OTHER'
+                  end
+    </select>
+</mapper>

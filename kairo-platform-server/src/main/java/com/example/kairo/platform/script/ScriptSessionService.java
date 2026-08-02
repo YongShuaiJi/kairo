@@ -10,6 +10,7 @@ import com.example.kairo.platform.command.AgentCommandService;
 import com.example.kairo.platform.command.ScriptCommandFailure;
 import com.example.kairo.platform.command.ScriptCommandTimeoutException;
 import com.example.kairo.platform.command.ScriptSessionExchange;
+import com.example.kairo.platform.metrics.KairoMetricsRecorder;
 import com.example.kairo.platform.persistence.mapper.ScriptSessionEventMapper;
 import com.example.kairo.platform.persistence.mapper.ScriptSessionMapper;
 import com.example.kairo.platform.service.BusinessIdService;
@@ -23,6 +24,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.sql.Timestamp;
@@ -49,6 +52,8 @@ import java.util.UUID;
  */
 @Service
 public class ScriptSessionService {
+
+    private static final Logger log = LoggerFactory.getLogger(ScriptSessionService.class);
 
     public static final String CMD_CREATE = "SCRIPT_SESSION_CREATE";
     public static final String CMD_VALIDATE = "SCRIPT_SESSION_VALIDATE";
@@ -82,6 +87,14 @@ public class ScriptSessionService {
 
     @Value("${kairo.platform.script.default-max-hits:1}")
     private long defaultMaxHits;
+
+    /** V1.7 M4-B &sect;11.2: metrics recorder for the TTL-cleanup cycle; no-op when not injected. */
+    private KairoMetricsRecorder metricsRecorder = KairoMetricsRecorder.NO_OP;
+
+    @Autowired
+    void setMetricsRecorder(KairoMetricsRecorder metricsRecorder) {
+        this.metricsRecorder = metricsRecorder;
+    }
 
     @Autowired
     public ScriptSessionService(ScriptSessionMapper sessionMapper,
@@ -388,8 +401,30 @@ public class ScriptSessionService {
      * revert is dispatched in its own transaction. A missing agent makes {@code enqueue} throw, which
      * is caught and swallowed &mdash; had this whole sweep run in one transaction, that throw would
      * mark it rollback-only despite the catch, so each statement commits independently instead.
+     *
+     * <p>V1.7 M4-B &sect;11.2: this is the TTL-cleanup boundary &mdash; {@code kairo_ttl_cleanup_total}
+     * is recorded once per cycle (SUCCESS on return, FAILURE on a thrown exception, re-thrown unchanged).
      */
     public Map<String, Object> expireSessions() {
+        try {
+            Map<String, Object> result = doExpireSessions();
+            recordTtlCleanupSafely("SUCCESS");
+            return result;
+        } catch (RuntimeException e) {
+            recordTtlCleanupSafely("FAILURE");
+            throw e;
+        }
+    }
+
+    private void recordTtlCleanupSafely(String result) {
+        try {
+            metricsRecorder.recordTtlCleanup(result);
+        } catch (RuntimeException e) {
+            log.warn("TTL cleanup metric recording failed: {}", e.getMessage());
+        }
+    }
+
+    private Map<String, Object> doExpireSessions() {
         Timestamp now = Timestamp.from(clock.instant());
         List<ScriptSessionRecord> expirable = sessionMapper.findExpirable(now);
         int expired = 0;

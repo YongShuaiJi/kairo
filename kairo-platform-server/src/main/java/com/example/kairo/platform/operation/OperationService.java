@@ -8,14 +8,18 @@ import com.example.kairo.api.operation.OperationStatus;
 import com.example.kairo.api.operation.OperationType;
 import com.example.kairo.api.write.ImpactSummary;
 import com.example.kairo.api.write.RiskLevel;
+import com.example.kairo.platform.metrics.KairoMetricsRecorder;
 import com.example.kairo.platform.persistence.mapper.OperationMapper;
 import com.example.kairo.platform.service.PlatformException;
 import com.example.kairo.platform.service.PlatformJson;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.sql.Timestamp;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -40,6 +44,7 @@ public final class OperationService {
 
     private final OperationMapper operationMapper;
     private final Clock clock;
+    private KairoMetricsRecorder metricsRecorder = KairoMetricsRecorder.NO_OP;
 
     @Autowired
     public OperationService(OperationMapper operationMapper) {
@@ -49,6 +54,12 @@ public final class OperationService {
     OperationService(OperationMapper operationMapper, Clock clock) {
         this.operationMapper = operationMapper;
         this.clock = clock;
+    }
+
+    /** V1.7 M4-B &sect;11.2: inject the metrics recorder; defaults to a no-op for direct unit construction. */
+    @Autowired
+    void setMetricsRecorder(KairoMetricsRecorder metricsRecorder) {
+        this.metricsRecorder = metricsRecorder;
     }
 
     /** Request to start a new operation. */
@@ -117,20 +128,56 @@ public final class OperationService {
     }
 
     public void succeed(String id, Map<String, Object> result) {
+        Map<String, Object> existing = requireExisting(id);
         transition(id, OperationStatus.SUCCEEDED, 100,
                 result == null ? Map.of() : result, null, null);
+        registerAfterCommitOperationOutcome(existing, "SUCCESS");
         recordEvent(id, "COMPLETED", "", Map.of("result", result == null ? Map.of() : result));
     }
 
     public void fail(String id, ApiError error) {
+        Map<String, Object> existing = requireExisting(id);
         String errorJson = error == null ? null : PlatformJson.write(toMap(error));
         transition(id, OperationStatus.FAILED, -1, null, errorJson, null);
+        registerAfterCommitOperationOutcome(existing, "FAILURE");
         recordEvent(id, "FAILED", "", error == null ? Map.of() : Map.of("code", error.code()));
     }
 
     public void cancel(String id) {
+        Map<String, Object> existing = requireExisting(id);
         transition(id, OperationStatus.CANCELLED, -1, null, null, null);
+        registerAfterCommitOperationOutcome(existing, "CANCELLED");
         recordEvent(id, "CANCELLED", "", Map.of());
+    }
+
+    /**
+     * V1.7 M4-B &sect;11.2: record one operation terminal outcome and its wall-clock duration since
+     * creation, tagged only with operation_type + result. Registered after the guarded transition succeeds
+     * and emitted only after an enclosing transaction commits (or immediately when none exists), so a stale
+     * version or rollback is never counted. REVERTED is a post-terminal lifecycle event and is not counted
+     * here to avoid double-counting an already-terminal operation.
+     */
+    private void registerAfterCommitOperationOutcome(Map<String, Object> existing, String result) {
+        Instant startedAt = Instant.ofEpochMilli(timestampMillis(existing.get("created_at")));
+        long durationNanos = Duration.between(startedAt, clock.instant()).toNanos();
+        String operationType = str(existing.get("operation_type"));
+        Runnable record = () -> {
+            try {
+                metricsRecorder.recordOperationOutcome(operationType, result, durationNanos);
+            } catch (RuntimeException ignored) {
+                // Observability must never change the operation state-machine result.
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    record.run();
+                }
+            });
+        } else {
+            record.run();
+        }
     }
 
     public void markReverted(String id, String revertOperationId) {
