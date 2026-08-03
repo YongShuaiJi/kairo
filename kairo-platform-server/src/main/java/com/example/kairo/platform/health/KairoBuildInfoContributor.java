@@ -20,8 +20,10 @@ import java.util.Map;
  * <p>Identity derivation lives in {@link KairoBuildIdentity} so the M4-B {@code kairo_platform_build_info}
  * gauge reuses the exact same version/commit. It never exposes secrets, tokens, JDBC URLs or stack traces.
  *
- * <p>M4-A intentionally does not perform the M5 global version unification: the version reflects the
- * current Maven {@code project.version} and the contract baseline stays pinned to V1.6.0 /
+ * <p>V1.7 M5-A &sect;12.1: the version is the Maven reactor version. When {@code build-info.properties}
+ * is present it is sourced from {@link BuildProperties}; otherwise {@link KairoBuildIdentity} falls back
+ * to the shared {@code KairoBuildVersion} resolver, so the Platform reports the same version as the Agent,
+ * CLI, MCP and Ops. The contract baseline stays pinned to V1.6.0 /
  * {@code 113823b41981a2d8fb5473a772ae2d2938d9582e}.
  */
 @Component

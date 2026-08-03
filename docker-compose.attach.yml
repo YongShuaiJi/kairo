@@ -1,6 +1,6 @@
 services:
   attach-executor:
-    image: kairo-attach-executor:0.1.0-SNAPSHOT
+    image: kairo-attach-executor:1.7.0
     build:
       context: .
       dockerfile: kairo-attach-cli/Dockerfile

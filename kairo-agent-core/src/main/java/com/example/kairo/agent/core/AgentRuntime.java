@@ -23,6 +23,7 @@ import com.example.kairo.api.MethodSelector;
 import com.example.kairo.api.MockRule;
 import com.example.kairo.api.SupportLevel;
 import com.example.kairo.api.TargetMatchResult;
+import com.example.kairo.api.build.KairoBuildVersion;
 import com.example.kairo.api.bytecode.ClassIdentity;
 import com.example.kairo.api.bytecode.ClassMetadata;
 import com.example.kairo.bridge.KairoBridge;
@@ -1045,12 +1046,13 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     }
 
     /**
-     * V1.7 M1-C &sect;8.3: the Agent version, the single source also surfaced via {@link JvmInfo}
-     * during registration so a snapshot's {@code agentVersion} cannot drift from what the Agent
-     * registered.
+     * V1.7 M1-C &sect;8.3 / M5-A &sect;12.1: the Agent version, the single source also surfaced via
+     * {@link JvmInfo} during registration so a snapshot's {@code agentVersion} cannot drift from what
+     * the Agent registered. Resolved from the packaged {@code Implementation-Version} (the Maven reactor
+     * version) with the deterministic {@code 1.7.0-SNAPSHOT} fallback for unpacked IDE/test runs.
      */
     public String agentVersion() {
-        return "0.1.0-SNAPSHOT";
+        return KairoBuildVersion.resolve();
     }
 
     /** V1.7 M1-C &sect;8.3: the global disabled flag (true when rule dispatch is globally disabled). */

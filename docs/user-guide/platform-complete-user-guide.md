@@ -74,8 +74,8 @@ Token 只在创建或更换时明文展示一次。生产或长期环境中不�
 
 ```bash
 java \
-  -javaagent:kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformToken=kairo-dev-admin-token-change-me,platformProjectName=kairo,platformApplicationName=kairo-demo,platformEnvironmentName=sit \
-  -jar kairo-demo/target/kairo-demo-0.1.0-SNAPSHOT-exec.jar \
+  -javaagent:kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-1.7.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformToken=kairo-dev-admin-token-change-me,platformProjectName=kairo,platformApplicationName=kairo-demo,platformEnvironmentName=sit \
+  -jar kairo-demo/target/kairo-demo-1.7.0-SNAPSHOT-exec.jar \
   --server.port=18090
 ```
 

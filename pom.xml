@@ -6,7 +6,7 @@
 
     <groupId>com.example.kairo</groupId>
     <artifactId>kairo-parent</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>${revision}</version>
     <packaging>pom</packaging>
 
     <name>Kairo Parent</name>
@@ -41,6 +41,11 @@
 
     <properties>
         <java.version>17</java.version>
+        <!-- V1.7 M5-A §12.1: one CI-friendly reactor version family. The developer default is
+             1.7.0-SNAPSHOT; release/RC builds override with -Drevision=1.7.0-rc.N or -Drevision=1.7.0
+             without editing any child POM. Child modules inherit ${revision} and internal
+             dependencies use ${project.version}, so the whole reactor resolves to a single value. -->
+        <revision>1.7.0-SNAPSHOT</revision>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <byte-buddy.version>1.17.8</byte-buddy.version>
         <groovy.version>4.0.24</groovy.version>

@@ -1,5 +1,6 @@
 package com.example.kairo.ops.bundle;
 
+import com.example.kairo.api.build.KairoBuildVersion;
 import com.example.kairo.api.support.BoundedReads;
 import com.example.kairo.api.support.SupportBundleWriter;
 import com.example.kairo.api.support.SupportBundleWriter.BundleBudgetExceededException;
@@ -65,7 +66,7 @@ public final class OpsSupportBundle {
     static final String SAFE_BASENAME = "support-bundle.zip";
 
     private static final int SCALAR_MAX = 256;
-    private static final String TOOL_VERSION = toolVersion();
+    private static final String TOOL_VERSION = KairoBuildVersion.resolve();
 
     private final OpsOptions options;
     private final PrintStream out;
@@ -430,15 +431,6 @@ public final class OpsSupportBundle {
 
     private static String entryName(String sourceName) {
         return sourceName + ".json";
-    }
-
-    private static String toolVersion() {
-        try {
-            String v = OpsSupportBundle.class.getPackage().getImplementationVersion();
-            return (v != null && !v.isBlank()) ? v : "0.1.0-SNAPSHOT";
-        } catch (Exception e) {
-            return "0.1.0-SNAPSHOT";
-        }
     }
 
     private void printOk(Path output, int bytes, int entryCount, Set<String> secrets) {

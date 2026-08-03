@@ -49,9 +49,17 @@ class KairoMcpServerTest {
         assertThat(result.get("protocolVersion")).isEqualTo("2024-11-05");
         Map<String, Object> serverInfo = (Map<String, Object>) result.get("serverInfo");
         assertThat(serverInfo.get("name")).isEqualTo("kairo-mcp");
-        assertThat(serverInfo.get("version")).isEqualTo("0.1.0");
+        // V1.7 M5-A §12.1: initialize.serverInfo.version uses the shared build-version resolver.
+        assertThat(serverInfo.get("version")).isEqualTo(com.example.kairo.api.build.KairoBuildVersion.resolve());
         Map<String, Object> caps = (Map<String, Object>) result.get("capabilities");
         assertThat(caps).containsKey("tools");
+    }
+
+    @Test
+    void versionBannerUsesSharedBuildVersionResolver() {
+        // V1.7 M5-A §12.1: kairo-mcp --version reports the packaged project version without credentials.
+        assertThat(KairoMcpServer.versionBanner())
+                .isEqualTo("kairo-mcp " + com.example.kairo.api.build.KairoBuildVersion.resolve());
     }
 
     @Test

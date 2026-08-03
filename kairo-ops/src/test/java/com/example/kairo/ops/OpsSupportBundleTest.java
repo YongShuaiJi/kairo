@@ -166,6 +166,9 @@ class OpsSupportBundleTest {
         JsonNode manifest = MAPPER.readTree(entries.get("manifest.json"));
         assertThat(manifest.get("bundleType").asText()).isEqualTo("agent-support");
         assertThat(manifest.get("tool").get("name").asText()).isEqualTo("kairo-ops");
+        // V1.7 M5-A §12.1: the support-bundle manifest tool identity uses the shared build-version resolver.
+        assertThat(manifest.get("tool").get("version").asText())
+                .isEqualTo(com.example.kairo.api.build.KairoBuildVersion.resolve());
         // Config fully redacted.
         JsonNode config = MAPPER.readTree(entries.get("config.json"));
         assertThat(config.get("agentUrl").get("value").asText()).isEqualTo("***");

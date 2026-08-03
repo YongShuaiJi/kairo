@@ -10,6 +10,7 @@ import com.example.kairo.api.MethodSelector;
 import com.example.kairo.api.MockDecision;
 import com.example.kairo.api.MockRule;
 import com.example.kairo.api.RuleChainRevision;
+import com.example.kairo.api.build.KairoBuildVersion;
 import com.example.kairo.api.snapshot.AgentRuntimeSnapshot;
 import com.example.kairo.api.snapshot.ChainSnapshot;
 import com.example.kairo.api.snapshot.RuleSnapshot;
@@ -99,6 +100,19 @@ class RuntimeStateSnapshotTest {
         assertThat(after.rules()).extracting(RuleSnapshot::ruleId).doesNotContain("snap-rule");
         assertThat(after.chains()).allSatisfy(chain ->
                 assertThat(chain.ruleIds()).doesNotContain("snap-rule"));
+    }
+
+    @Test
+    void agentVersionMatchesSharedBuildVersionResolver() {
+        // V1.7 M5-A §12.1: the Agent's reported version is the shared build identity (packaged
+        // Implementation-Version, fallback 1.7.0-SNAPSHOT), so jvmInfo/registration/snapshot agree with
+        // the CLI/MCP/Ops surfaces and the Maven reactor version. The old hardcoded 0.1.0-SNAPSHOT is gone.
+        String version = runtime.agentVersion();
+        assertThat(version).isEqualTo(KairoBuildVersion.resolve());
+        assertThat(runtime.jvmInfo().agentVersion()).isEqualTo(version);
+        assertThat(runtime.snapshotRuntimeState("agent-snap", PROCESS_START_ID).agentVersion())
+                .isEqualTo(version);
+        assertThat(version).isNotEqualTo("0.1.0-SNAPSHOT");
     }
 
     @Test

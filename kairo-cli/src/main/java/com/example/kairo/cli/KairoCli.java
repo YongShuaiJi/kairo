@@ -1,6 +1,7 @@
 package com.example.kairo.cli;
 
 import com.example.kairo.api.automation.AutomationSession;
+import com.example.kairo.api.build.KairoBuildVersion;
 import com.example.kairo.api.error.ApiError;
 import com.example.kairo.api.support.SupportBundleWriter;
 import com.example.kairo.cli.bundle.DiagnoseSupportBundle;
@@ -57,6 +58,11 @@ public class KairoCli {
     }
 
     public int run(String[] args) {
+        // V1.7 M5-A §12.1: stable --version surface that works without credentials or network.
+        if (args.length > 0 && "--version".equals(args[0])) {
+            out.println("kairo-cli " + KairoBuildVersion.resolve());
+            return 0;
+        }
         if (args.length == 0) {
             printError("MISSING_COMMAND", "No command provided");
             return 1;

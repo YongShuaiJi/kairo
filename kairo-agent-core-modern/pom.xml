@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.example.kairo</groupId>
         <artifactId>kairo-parent</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>${revision}</version>
     </parent>
 
     <artifactId>kairo-agent-core-modern</artifactId>
@@ -41,6 +41,8 @@
                                     <manifestEntries>
                                         <Kairo-Core-Launcher>com.example.kairo.agent.server.AgentCoreLauncher</Kairo-Core-Launcher>
                                         <Kairo-Core-Profile>modern</Kairo-Core-Profile>
+                                        <!-- V1.7 M5-A §12.1: packaged build identity read by KairoBuildVersion for Agent jvmInfo/status/registration. -->
+                                        <Implementation-Version>${project.version}</Implementation-Version>
                                     </manifestEntries>
                                 </transformer>
                             </transformers>

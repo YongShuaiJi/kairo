@@ -355,8 +355,8 @@ premain 在业务 JVM 启动时加载，适合可改启动参数的应用：
 
 ```bash
 java \
-  -javaagent:kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformToken=kairo-dev-admin-token-change-me,platformProjectName=kairo,platformApplicationName=kairo-demo,platformEnvironmentName=sit \
-  -jar kairo-demo/target/kairo-demo-0.1.0-SNAPSHOT-exec.jar \
+  -javaagent:kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-1.7.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformToken=kairo-dev-admin-token-change-me,platformProjectName=kairo,platformApplicationName=kairo-demo,platformEnvironmentName=sit \
+  -jar kairo-demo/target/kairo-demo-1.7.0-SNAPSHOT-exec.jar \
   --server.port=18090
 ```
 
@@ -369,7 +369,7 @@ java -jar kairo-attach-cli/target/kairo-attach.jar \
   --pid <pid> \
   --agent kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar \
   --core-jar kairo-agent-core-modern/target/kairo-agent-core-modern.jar \
-  --bootstrap-jar kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar \
+  --bootstrap-jar kairo-bootstrap-api/target/kairo-bootstrap-api-1.7.0-SNAPSHOT.jar \
   --port 18080 \
   --token dev
 ```

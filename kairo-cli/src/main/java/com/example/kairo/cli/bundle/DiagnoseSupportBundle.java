@@ -1,5 +1,6 @@
 package com.example.kairo.cli.bundle;
 
+import com.example.kairo.api.build.KairoBuildVersion;
 import com.example.kairo.api.error.ErrorCategory;
 import com.example.kairo.api.operation.OperationStatus;
 import com.example.kairo.api.operation.OperationType;
@@ -533,7 +534,7 @@ public final class DiagnoseSupportBundle {
             manifest.put("generatedAt", java.time.Instant.now().toString());
             Map<String, Object> tool = new LinkedHashMap<>();
             tool.put("name", "kairo-cli");
-            tool.put("version", toolVersion());
+            tool.put("version", KairoBuildVersion.resolve());
             manifest.put("tool", tool);
             manifest.put("budgetBytes", maxBytes);
             manifest.put("timeoutMillis", timeoutMillis);
@@ -548,15 +549,6 @@ public final class DiagnoseSupportBundle {
                 return "{\"error\":\"manifest-serialize-failed\"}".getBytes(StandardCharsets.UTF_8);
             }
         };
-    }
-
-    private static String toolVersion() {
-        try {
-            String v = DiagnoseSupportBundle.class.getPackage().getImplementationVersion();
-            return (v != null && !v.isBlank()) ? v : "0.1.0-SNAPSHOT";
-        } catch (Exception e) {
-            return "0.1.0-SNAPSHOT";
-        }
     }
 
     private void printOk(Path output, int bytes, int entryCount, Set<String> secrets) {

@@ -31,10 +31,12 @@ services:
       retries: 20
 
   platform:
-    image: kairo-platform-server:0.1.0-SNAPSHOT
+    image: kairo-platform-server:1.7.0
     build:
       context: .
       dockerfile: kairo-platform-server/Dockerfile
+      args:
+        BUILD_VERSION: ${BUILD_VERSION:-1.7.0-SNAPSHOT}
     container_name: kairo-platform
     depends_on:
       postgres:
@@ -63,7 +65,7 @@ services:
       retries: 30
 
   platform-web:
-    image: kairo-platform-web:0.1.0
+    image: kairo-platform-web:1.7.0
     build:
       context: ./kairo-platform-web
       dockerfile: Dockerfile
@@ -84,10 +86,12 @@ services:
       retries: 30
 
   demo-app:
-    image: kairo-demo:0.1.0-SNAPSHOT
+    image: kairo-demo:1.7.0
     build:
       context: .
       dockerfile: kairo-demo/Dockerfile
+      args:
+        BUILD_VERSION: ${BUILD_VERSION:-1.7.0-SNAPSHOT}
     container_name: kairo-demo
     depends_on:
       platform:

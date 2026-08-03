@@ -1,5 +1,6 @@
 package com.example.kairo.ops;
 
+import com.example.kairo.api.build.KairoBuildVersion;
 import com.example.kairo.ops.bundle.OpsSupportBundle;
 
 import java.io.IOException;
@@ -33,6 +34,11 @@ public final class OpsCommand {
 
     /** Testable entry point that writes status/errors to the given streams. */
     public static int execute(String[] args, PrintStream out, PrintStream err) {
+        // V1.7 M5-A §12.1: stable --version surface that works without credentials or network.
+        if (args.length > 0 && "--version".equals(args[0])) {
+            out.println("kairo-ops " + KairoBuildVersion.resolve());
+            return 0;
+        }
         OpsOptions options;
         try {
             options = OpsOptions.parse(args);

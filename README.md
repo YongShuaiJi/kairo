@@ -37,14 +37,14 @@ kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar
 kairo-agent-core-modern/target/kairo-agent-core-modern.jar
 kairo-attach-cli/target/kairo-attach.jar
 kairo-ops/target/kairo-ops.jar
-kairo-platform-server/target/kairo-platform-server-0.1.0-SNAPSHOT.jar
+kairo-platform-server/target/kairo-platform-server-1.7.0-SNAPSHOT.jar
 ```
 
 ## Premain
 
 ```bash
 java \
-  -javaagent:kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev \
+  -javaagent:kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-1.7.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev \
   -jar your-application.jar
 ```
 
@@ -52,7 +52,7 @@ To let the Agent pull platform commands, add `platformUrl` and `platformAgentId`
 
 ```bash
 java \
-  -javaagent:kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformAgentId=agent-1 \
+  -javaagent:kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-1.7.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformAgentId=agent-1 \
   -jar your-application.jar
 ```
 
@@ -65,7 +65,7 @@ java -jar kairo-attach-cli/target/kairo-attach.jar \
   --pid <pid> \
   --agent kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar \
   --core-jar kairo-agent-core-modern/target/kairo-agent-core-modern.jar \
-  --bootstrap-jar kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar \
+  --bootstrap-jar kairo-bootstrap-api/target/kairo-bootstrap-api-1.7.0-SNAPSHOT.jar \
   --port 18080 \
   --token dev
 ```
@@ -73,7 +73,7 @@ java -jar kairo-attach-cli/target/kairo-attach.jar \
 It can also be loaded through JDK tooling:
 
 ```bash
-jcmd <pid> JVMTI.agent_load kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar "attach=true,coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev"
+jcmd <pid> JVMTI.agent_load kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar "attach=true,coreJar=kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=kairo-bootstrap-api/target/kairo-bootstrap-api-1.7.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev"
 ```
 
 For local development, integration tests use:
@@ -151,8 +151,8 @@ For a quick end-to-end fault-injection exercise, start the bundled Spring Boot d
 
 ```bash
 java \
-  -javaagent:/Users/jiyongshuai/code/kairo/kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=/Users/jiyongshuai/code/kairo/kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=/Users/jiyongshuai/code/kairo/kairo-bootstrap-api/target/kairo-bootstrap-api-0.1.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformToken=kairo-dev-admin-token-change-me,platformProjectName=kairo,platformApplicationName=kairo-demo \
-  -jar kairo-demo/target/kairo-demo-0.1.0-SNAPSHOT-exec.jar \
+  -javaagent:/Users/jiyongshuai/code/kairo/kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar=coreJar=/Users/jiyongshuai/code/kairo/kairo-agent-core-modern/target/kairo-agent-core-modern.jar,bootstrapJar=/Users/jiyongshuai/code/kairo/kairo-bootstrap-api/target/kairo-bootstrap-api-1.7.0-SNAPSHOT.jar,host=127.0.0.1,port=18080,token=dev,platformUrl=http://127.0.0.1:18280,platformToken=kairo-dev-admin-token-change-me,platformProjectName=kairo,platformApplicationName=kairo-demo \
+  -jar kairo-demo/target/kairo-demo-1.7.0-SNAPSHOT-exec.jar \
   --server.port=18090
 ```
 
@@ -179,7 +179,7 @@ The production control-plane module is the authoritative API for PostgreSQL-back
 ```bash
 mvn -pl kairo-platform-server -am test
 mvn -pl kairo-platform-server -am -DskipTests package
-java -jar kairo-platform-server/target/kairo-platform-server-0.1.0-SNAPSHOT.jar
+java -jar kairo-platform-server/target/kairo-platform-server-1.7.0-SNAPSHOT.jar
 ```
 
 Docker-assisted local platform:

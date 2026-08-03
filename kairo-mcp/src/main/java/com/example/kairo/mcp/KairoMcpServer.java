@@ -1,5 +1,6 @@
 package com.example.kairo.mcp;
 
+import com.example.kairo.api.build.KairoBuildVersion;
 import com.example.kairo.sdk.KairoClient;
 import com.example.kairo.sdk.KairoClientConfig;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -30,7 +31,17 @@ public class KairoMcpServer {
         this.mapper = new ObjectMapper();
     }
 
+    /** V1.7 M5-A §12.1: the {@code --version} banner line, sourced from the shared build resolver. */
+    static String versionBanner() {
+        return "kairo-mcp " + KairoBuildVersion.resolve();
+    }
+
     public static void main(String[] args) {
+        // V1.7 M5-A §12.1: stable --version surface that works without credentials or network.
+        if (args.length > 0 && "--version".equals(args[0])) {
+            System.out.println(versionBanner());
+            return;
+        }
         KairoMcpConfig config = KairoMcpConfig.load();
         if (config.token() == null || config.token().isBlank()) {
             System.err.println("ERROR: KAIRO_TOKEN is not set. Please set the KAIRO_TOKEN environment variable or add token to ~/.kairo/credentials.");
@@ -103,7 +114,7 @@ public class KairoMcpServer {
     private Map<String, Object> initialize() {
         Map<String, Object> serverInfo = new LinkedHashMap<>();
         serverInfo.put("name", "kairo-mcp");
-        serverInfo.put("version", "0.1.0");
+        serverInfo.put("version", KairoBuildVersion.resolve());
 
         Map<String, Object> caps = new LinkedHashMap<>();
         caps.put("tools", Map.of());

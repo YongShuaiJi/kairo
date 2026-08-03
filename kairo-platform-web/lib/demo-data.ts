@@ -12,8 +12,8 @@ const stamp = "2026-06-18T09:30:00+08:00";
 
 const datasets: Record<string, PlatformRecord[]> = {
   agents: [
-    { id: "agt-01", name: "kairo-demo", application: "kairo-demo", environment: "sit", status: "ONLINE", version: "0.1.0", host: "demo", lastHeartbeatAt: stamp },
-    { id: "agt-02", name: "kairo-attach-executor", application: "kairo-demo", environment: "sit", status: "ONLINE", version: "0.1.0", host: "attach-executor", lastHeartbeatAt: stamp },
+    { id: "agt-01", name: "kairo-demo", application: "kairo-demo", environment: "sit", status: "ONLINE", version: "1.7.0", host: "demo", lastHeartbeatAt: stamp },
+    { id: "agt-02", name: "kairo-attach-executor", application: "kairo-demo", environment: "sit", status: "ONLINE", version: "1.7.0", host: "attach-executor", lastHeartbeatAt: stamp },
   ],
   instances: [
     { id: "ins-01", nickname: "kairo-demo", application: "kairo-demo", environment: "sit", host: "demo", status: "ACTIVE", agentStatus: "ONLINE", loadMode: "attach", javaVersion: "21.0.11", lastSeenAt: stamp },
