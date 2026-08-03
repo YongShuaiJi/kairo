@@ -1,0 +1,91 @@
+# V1.7 release Compose template (roadmap §12.2).
+#
+# This is the sanitized, release-grade deployment topology. It is NOT the development
+# docker-compose.yml: it carries no development/default token or secret, references the
+# pre-built release images by tag, and omits the kairo-demo service (kairo-demo is not a
+# §12.2 release artifact). Every secret is a required environment-variable reference
+# (${VAR:?...}) so Compose fails fast if an operator forgets to supply it.
+#
+# __KAIRO_VERSION__ is substituted by scripts/v1.7/build-release.sh with the release version.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kairo-postgres
+    environment:
+      POSTGRES_DB: ${KAIRO_DB_NAME:-kairo}
+      POSTGRES_USER: ${KAIRO_DB_USER:-kairo}
+      POSTGRES_PASSWORD: ${KAIRO_DB_PASSWORD:?set the PostgreSQL password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - kairo-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KAIRO_DB_USER:-kairo} -d ${KAIRO_DB_NAME:-kairo}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: kairo-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - kairo-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  platform:
+    image: kairo-platform-server:__KAIRO_VERSION__
+    container_name: kairo-platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      KAIRO_DB_URL: jdbc:postgresql://postgres:5432/${KAIRO_DB_NAME:-kairo}
+      KAIRO_DB_USER: ${KAIRO_DB_USER:-kairo}
+      KAIRO_DB_PASSWORD: ${KAIRO_DB_PASSWORD:?set the PostgreSQL password}
+      KAIRO_REDIS_HOST: redis
+      KAIRO_REDIS_PORT: "6379"
+      KAIRO_FENCING_REDIS_ENABLED: "true"
+      KAIRO_API_ENABLED: "true"
+      KAIRO_ROLLOUT_SCHEDULER_ENABLED: "true"
+      KAIRO_AUTH_MODE: local-token
+      KAIRO_BOOTSTRAP_TOKEN: ${KAIRO_BOOTSTRAP_TOKEN:?set the Platform bootstrap admin token}
+      KAIRO_ATTACH_PLATFORM_URL: http://platform:18280
+      KAIRO_ATTACH_PLATFORM_TOKEN: ${KAIRO_ATTACH_PLATFORM_TOKEN:?set the attach platform token}
+    ports:
+      - "18280:18280"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec \"exec 3<>/dev/tcp/127.0.0.1/18280; printf 'GET /actuator/health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q 'UP' <&3\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  platform-web:
+    image: kairo-platform-web:__KAIRO_VERSION__
+    container_name: kairo-platform-web
+    depends_on:
+      platform:
+        condition: service_healthy
+    environment:
+      KAIRO_PLATFORM_API_URL: http://platform:18280
+      KAIRO_WEB_SESSION_KEY: ${KAIRO_WEB_SESSION_KEY:?set the web session signing key}
+      KAIRO_WEB_DEMO_MODE: "false"
+    ports:
+      - "18380:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  kairo-postgres-data:
+  kairo-redis-data:

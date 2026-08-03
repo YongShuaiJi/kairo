@@ -12,6 +12,12 @@ RUN npm run build
 
 FROM public.ecr.aws/docker/library/node:24.17.0-alpine AS runner
 WORKDIR /app
+# V1.7 M5-B §12.1/§12.2: build metadata only. The release version is carried by the image tag and
+# this OCI label; it is NOT a runtime configuration key and does not mutate package.json.
+ARG BUILD_VERSION=1.7.0-SNAPSHOT
+LABEL org.opencontainers.image.version="${BUILD_VERSION}"
+LABEL org.opencontainers.image.title="kairo-platform-web"
+LABEL org.opencontainers.image.source="https://github.com/kairo/runtime-mock"
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
