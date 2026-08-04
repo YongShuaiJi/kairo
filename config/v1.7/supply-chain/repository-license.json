@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1.0",
+  "scope": "repository",
+  "repositoryLicense": "AGPL-3.0-only",
+  "spdxId": "AGPL-3.0-only",
+  "note": "Kairo repository license identity, recorded SEPARATELY from third-party dependency license decisions (roadmap §12.3 / lts-policy §9). This file is not a third-party policy and is never used to allow/deny a dependency; it only states the project's own license. Third-party decisions live in license-policy.json + license-exceptions.json.",
+  "owner": "Kairo V1.7 maintainers"
+}

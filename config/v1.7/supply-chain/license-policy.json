@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "1.0",
+  "scope": "third-party-license",
+  "description": "V1.7 M5-C third-party dependency license policy (roadmap §12.3 / lts-policy §9). The repository's OWN license (AGPL-3.0-only) is recorded separately in repository-license.json and is never used to allow/deny a dependency. SPDX IDs are parsed conservatively from CycloneDX license.id / license.expression. A component license is ALLOWED iff it matches the allow set; DENIED licenses block; REVIEW licenses are reported (documented) but do not block; UNKNOWN (unrecognized/non-SPDX) and MISSING (no license metadata) block unless covered by an exact, unexpired license-exceptions.json entry. This allow/deny/review set is aligned to the licenses actually present in the generated Maven + Web CycloneDX SBOMs; review-only licenses are documented in the note below. It is intentionally narrow -- not a kitchen-sink allowlist.",
+  "repositoryLicenseRef": "repository-license.json",
+  "firstPartyGroups": [
+    "com.example.kairo"
+  ],
+  "firstPartyNote": "Components whose CycloneDX group / PURL namespace matches a firstPartyGroups entry are the project's own reactor modules (AGPL-3.0-only, the repository license). They are FIRST-PARTY and are excluded from third-party license decisions, consistent with keeping the repository license separate from third-party policy (roadmap §12.3 / lts-policy §9).",
+  "allow": [
+    "Apache-2.0",
+    "MIT",
+    "BSD-3-Clause",
+    "BSD-2-Clause",
+    "0BSD",
+    "ISC",
+    "MPL-2.0",
+    "EPL-2.0",
+    "Python-2.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "BlueOak-1.0.0",
+    "BSL-1.0",
+    "Zlib",
+    "Unlicense",
+    "CC-BY-4.0",
+    "WTFPL",
+    "MIT-0"
+  ],
+  "deny": [
+    "GPL-2.0-only",
+    "CC-BY-NC-4.0",
+    "SSPL-1.0",
+    "BUSL-1.1"
+  ],
+  "review": [
+    "LGPL-2.1-only",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
+    "GPL-2.0-with-classpath-exception",
+    "CDDL-1.1",
+    "CDDL-1.0",
+    "EPL-1.0"
+  ],
+  "reviewNote": "Review-only licenses are reported and counted but do not block the gate; they require periodic human re-review per lts-policy §9. Aligned/confirmed against the real generated Maven + Web CycloneDX SBOMs during M5-C: review covers weak-copyleft (LGPL-2.1/3.0 variants, present in both SBOMs) and the GPL-2.0-with-classpath-exception (classpath exception, a Maven dependency) and CDDL/EPL-1.0 (Jakarta/JUnit ecosystem). See the normalized license-decision report for exact component-level review counts."
+}

@@ -50,6 +50,28 @@ NON_EVIDENCE_STATUSES = {"NOT_AVAILABLE", "PENDING"}  # may stand in for owned-b
 # "SIGNED" / "VERIFIED" / "PRESENT" value would be a fabrication.
 SUPPLY_STATUSES = {"NOT_AVAILABLE", "PENDING", "SKIPPED"}
 
+# --- V1.7 M5-C supply-chain stage ---------------------------------------------------------
+# M5-C (roadmap §12.3 / lts-policy §9) is a bounded, auditable post-assembly supply-chain gate. It
+# promotes an M5-B manifest by attaching a ``supplyChain`` section and real SBOM references to each
+# §12.2 artifact, WITHOUT touching the eight-artifact inventory, SHA256SUMS contract, signature
+# (still SKIPPED locally: no OIDC) or provenance (still NOT_AVAILABLE: owned by M5-D). An untouched
+# M5-B manifest (no ``supplyChain``) remains valid; a manifest that declares
+# ``supplyChain.stage == "M5-C"`` must carry verified SBOM path/SHA-256/size/media-type/spec on every
+# applicable artifact and an explicit NOT_APPLICABLE reason for the compose archive.
+SUPPLY_CHAIN_STAGE = "M5-C"
+SBOM_MEDIA_TYPE_JSON = "application/vnd.cyclonedx+json"
+SBOM_SPEC_VERSIONS = ("1.4", "1.5", "1.6")  # CycloneDX JSON spec versions accepted structurally
+
+# CycloneDX JSON evidence stored under <release>/sbom and <release>/reports. These names are the
+# stable, repo-defined evidence filenames referenced from the manifest (release-root-relative).
+MAVEN_SBOM_NAME = "kairo-maven-reactor.cdx.json"
+WEB_SBOM_NAME = "kairo-platform-web.cdx.json"
+
+# Relative path prefix used by run-supply-chain.sh for evidence; validated for containment.
+SBOM_DIR = "sbom"
+REPORTS_DIR = "reports"
+SUPPLY_CONFIG_DIR = "supply-chain-config"
+
 # Substrings that must never appear in staged release content (§12.2 "no development Token" /
 # §12.6 exclusion of demo/fixtures/credentials). Matched as raw byte substrings.
 SECRET_PATTERNS = [
@@ -320,8 +342,139 @@ def _validate_supply_field(obj, field, errors, prefix):
         _err(errors, "%s.%s must be a string or {status,...} object" % (prefix, field))
 
 
+# --- V1.7 M5-C stage-aware supply-chain validation ---------------------------------------
+
+def artifact_sbom_group(name):
+    """Map a §12.2 artifact name to its SBOM group for M5-C: 'maven' | 'web' | 'not-applicable'.
+
+    Java JARs, the agent bundle and the platform-server image reference the Maven reactor SBOM; the
+    platform-web image references the Web SBOM; the compose archive carries no third-party runtime
+    dependencies and is explicitly NOT_APPLICABLE (never a fake reference)."""
+    if not isinstance(name, str):
+        return 'maven'
+    if name.startswith('kairo-platform-web:'):
+        return 'web'
+    if name.startswith('kairo-compose-'):
+        return 'not-applicable'
+    return 'maven'
+
+
+def _validate_rel_path(rel, errors, prefix):
+    """Schema-level path containment: a release-root-relative, non-absolute, non-traversal string.
+
+    Deep symlink/realpath containment against an actual release root is performed by
+    supplychainlib.verify_release (offline verifier); this structural check rejects absolute paths,
+    backslash escapes and ``..`` segments so a malformed manifest never reaches the verifier."""
+    if not isinstance(rel, str) or not rel:
+        _err(errors, "%s.path must be a non-blank string" % prefix)
+        return False
+    if rel.startswith('/'):
+        _err(errors, "%s.path must be release-root-relative (got absolute): %s" % (prefix, rel))
+        return False
+    if '\\' in rel:
+        _err(errors, "%s.path must not contain backslashes: %s" % (prefix, rel))
+        return False
+    parts = rel.split('/')
+    if '..' in parts:
+        _err(errors, "%s.path must not contain '..' traversal segments: %s" % (prefix, rel))
+        return False
+    if '.' in parts:
+        _err(errors, "%s.path must be canonical and must not contain '.' segments: %s" % (prefix, rel))
+        return False
+    if any(p == '' for p in parts[1:]):
+        _err(errors, "%s.path must not contain empty segments: %s" % (prefix, rel))
+        return False
+    return True
+
+
+def _validate_sbom_ref(obj, errors, prefix):
+    """Validate an M5-C SBOM reference object: path/SHA-256/size/mediaType/specVersion."""
+    if not isinstance(obj, dict):
+        _err(errors, "%s must be an object {path,sha256,size,mediaType,specVersion}" % prefix)
+        return None
+    path_ok = _validate_rel_path(obj.get('path'), errors, prefix)
+    sha = obj.get('sha256')
+    if not (isinstance(sha, str) and SHA256_RE.match(sha)):
+        _err(errors, "%s.sha256 must be 64-hex" % prefix)
+    size = obj.get('size')
+    if not isinstance(size, int) or size < 0:
+        _err(errors, "%s.size must be a non-negative integer" % prefix)
+    mt = obj.get('mediaType')
+    if mt != SBOM_MEDIA_TYPE_JSON:
+        _err(errors, "%s.mediaType must be %s" % (prefix, SBOM_MEDIA_TYPE_JSON))
+    sv = obj.get('specVersion')
+    if sv not in SBOM_SPEC_VERSIONS:
+        _err(errors, "%s.specVersion must be one of %s" % (prefix, SBOM_SPEC_VERSIONS))
+    return obj.get('path') if path_ok else None
+
+
+def _validate_artifact_sbom_m5c(a, errors, idx, sbom_paths):
+    """Validate one artifact's sbom field in M5-C mode against its group + supplyChain SBOM paths."""
+    name = a.get('name')
+    group = artifact_sbom_group(name)
+    sbom = a.get('sbom')
+    if group == 'not-applicable':
+        if not (isinstance(sbom, dict) and sbom.get('status') == 'NOT_APPLICABLE'
+                and isinstance(sbom.get('reason'), str) and sbom.get('reason').strip()):
+            _err(errors, "artifacts[%d] (%s) sbom must be {status:'NOT_APPLICABLE',reason} "
+                 "(compose carries no third-party runtime deps)" % (idx, name))
+        return
+    # maven or web: must be a real SBOM reference whose path matches the supplyChain SBOM for group.
+    path = _validate_sbom_ref(sbom, errors, "artifacts[%d] (%s).sbom" % (idx, name))
+    expected = sbom_paths.get(group)
+    if expected is None:
+        _err(errors, "artifacts[%d] (%s) sbom group '%s' has no supplyChain.sboms entry" % (idx, name, group))
+    elif path is not None and path != expected:
+        _err(errors, "artifacts[%d] (%s) sbom.path must be %s (group %s); got %s"
+             % (idx, name, expected, group, path))
+
+
+def _validate_supply_chain_section(supply, errors):
+    """Light structural validation of the supplyChain section (M5-C). Deep evidence verification
+    (re-hashing, CycloneDX structure, decision re-derivation, realpath containment) is owned by
+    supplychainlib.verify_release; this only enforces the schema/honesty contract."""
+    if not isinstance(supply, dict):
+        return _err(errors, "supplyChain must be an object")
+    if supply.get('stage') != SUPPLY_CHAIN_STAGE:
+        return _err(errors, "supplyChain.stage must be %s" % SUPPLY_CHAIN_STAGE)
+    sboms = supply.get('sboms')
+    sbom_paths = {}
+    if not isinstance(sboms, dict):
+        _err(errors, "supplyChain.sboms must be an object {maven,web}")
+    else:
+        for grp in ('maven', 'web'):
+            ref = sboms.get(grp)
+            p = _validate_sbom_ref(ref, errors, "supplyChain.sboms.%s" % grp)
+            if p is not None:
+                sbom_paths[grp] = p
+            else:
+                _err(errors, "supplyChain.sboms.%s missing or invalid" % grp)
+    generators = supply.get('generators')
+    expected_generators = {
+        'maven': {'name': 'cyclonedx-maven-plugin', 'version': '2.9.3'},
+        'web': {'name': '@cyclonedx/cyclonedx-npm', 'version': '6.0.0'},
+    }
+    if generators != expected_generators:
+        _err(errors, "supplyChain.generators must be the pinned M5-C generators: %r" % expected_generators)
+    for k in ('vulnerabilityScan', 'licensePolicy', 'overallStatus'):
+        if k not in supply:
+            _err(errors, "supplyChain missing field: %s" % k)
+    ov = supply.get('overallStatus')
+    if ov not in ('PASSED', 'FAILED'):
+        _err(errors, "supplyChain.overallStatus must be PASSED or FAILED; got %r" % ov)
+    if ov == 'FAILED' and not supply.get('failureReasons'):
+        _err(errors, "supplyChain.overallStatus=FAILED requires non-empty failureReasons")
+    return sbom_paths
+
+
 def validate_manifest(obj):
-    """Validate a release manifest against §12.5 + honesty; return a list of error strings."""
+    """Validate a release manifest against §12.5 + honesty + M5-C stage; return a list of error strings.
+
+    Stage-aware: a manifest WITHOUT ``supplyChain`` is an M5-B local RC and keeps the existing
+    NOT_AVAILABLE/PENDING/SKIPPED supply vocabulary. A manifest WITH ``supplyChain.stage == "M5-C"``
+    is M5-C-promoted and must carry verified SBOM references on every applicable artifact, an explicit
+    NOT_APPLICABLE compose, an unchanged (pre-M5-D) signature/provenance, and a complete supplyChain
+    section. Signature/provenance are NEVER promoted to SIGNED/VERIFIED/PRESENT by M5-C."""
     errors = []
     if not isinstance(obj, dict):
         return _err(errors, "manifest must be a JSON object")
@@ -385,6 +538,18 @@ def validate_manifest(obj):
         else:
             _err(errors, "%s must be {status,...}" % f)
 
+    # --- stage detection (M5-B local RC vs M5-C supply-chain-promoted) ----------------
+    supply = obj.get('supplyChain')
+    is_m5c = isinstance(supply, dict) and supply.get('stage') == SUPPLY_CHAIN_STAGE
+    if 'supplyChain' in obj and not isinstance(supply, dict):
+        _err(errors, "supplyChain must be an object if present")
+    if isinstance(supply, dict) and supply.get('stage') != SUPPLY_CHAIN_STAGE:
+        _err(errors, "supplyChain.stage must be %s (only supply-chain stage defined); got %r"
+             % (SUPPLY_CHAIN_STAGE, supply.get('stage')))
+    sbom_paths = {}
+    if is_m5c:
+        sbom_paths = _validate_supply_chain_section(supply, errors)
+
     artifacts = obj.get('artifacts')
     if not isinstance(artifacts, list) or not artifacts:
         _err(errors, "artifacts must be a non-empty array")
@@ -424,8 +589,23 @@ def validate_manifest(obj):
                         _err(errors, "artifact %s image.rootfs.diffIds must be a non-empty list" % a.get('name'))
             else:
                 _err(errors, "artifact %s has unknown type: %s" % (a.get('name'), atype))
-            for k in ('sbom', 'signature', 'provenance'):
-                _validate_supply_field(a, k, errors, "artifacts[%d] (%s)" % (i, a.get('name')))
+            if is_m5c:
+                # M5-C: verified SBOM reference per artifact group (maven/web) or NOT_APPLICABLE for
+                # compose; signature stays SKIPPED (no OIDC locally) and provenance stays NOT_AVAILABLE
+                # (owned by M5-D). Neither is ever promoted to SIGNED/VERIFIED/PRESENT by M5-C.
+                _validate_artifact_sbom_m5c(a, errors, i, sbom_paths)
+                sig = a.get('signature')
+                if not (isinstance(sig, dict) and sig.get('status') == 'SKIPPED'):
+                    _err(errors, "artifacts[%d] (%s) signature.status must remain SKIPPED under M5-C "
+                         "(pre-M5-D; cosign keyless is owned by M5-D/M6)" % (i, a.get('name')))
+                prov = a.get('provenance')
+                if not (isinstance(prov, dict) and prov.get('status') == 'NOT_AVAILABLE'):
+                    _err(errors, "artifacts[%d] (%s) provenance.status must remain NOT_AVAILABLE under "
+                         "M5-C (pre-M5-D; provenance generation is owned by M5-D)" % (i, a.get('name')))
+            else:
+                # M5-B: existing NOT_AVAILABLE/PENDING/SKIPPED supply vocabulary.
+                for k in ('sbom', 'signature', 'provenance'):
+                    _validate_supply_field(a, k, errors, "artifacts[%d] (%s)" % (i, a.get('name')))
     return errors
 
 
