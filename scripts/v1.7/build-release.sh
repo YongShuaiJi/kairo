@@ -33,8 +33,8 @@ set -euo pipefail
 # Never leave bytecode caches in the worktree; releaselib is only ever run as a script here.
 export PYTHONDONTWRITEBYTECODE=1
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd -P)"
 LIB="${SCRIPT_DIR}/lib/releaselib.py"
 RELEASE_LIB="${SCRIPT_DIR}/lib/release"
 
@@ -76,7 +76,7 @@ python3 "$LIB" validate-version "$VERSION" >/dev/null \
   || fail "release version rejected: $VERSION"
 
 # --- 2. repository root ---------------------------------------------------------------
-[ -f "$REPO_ROOT/pom.xml" ] && [ -d "$REPO_ROOT/.git" ] \
+[ -f "$REPO_ROOT/pom.xml" ] && [ -e "$REPO_ROOT/.git" ] \
   || fail "not a kairo repository root: $REPO_ROOT"
 grep -q '<artifactId>kairo-parent</artifactId>' "$REPO_ROOT/pom.xml" \
   || fail "root pom is not kairo-parent: $REPO_ROOT/pom.xml"
@@ -138,6 +138,12 @@ fi
 [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]] || fail "SOURCE_DATE_EPOCH is not a non-negative integer: $SOURCE_DATE_EPOCH"
 export SOURCE_DATE_EPOCH
 
+# V1.7 M5-D (roadmap §12.4): Maven reproducible-builds flag. Deriving project.build.outputTimestamp
+# from SOURCE_DATE_EPOCH fixes JAR entry mtimes (maven-jar/assembly/shade plugins) and Spring Boot
+# build-info build.time, so two clean builds of the same commit produce bit-identical file artifacts.
+OUTPUT_TIMESTAMP="$(python3 -c 'import datetime as d,sys; print(d.datetime.fromtimestamp(int(sys.argv[1]),tz=d.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$SOURCE_DATE_EPOCH")"
+export OUTPUT_TIMESTAMP
+
 GIT_COMMIT="$(git rev-parse HEAD)"
 BUILD_WORKFLOW="./scripts/v1.7/build-release.sh --version $VERSION --output ${OUTPUT_RAW#${REPO_ROOT}/}"
 [ "$ALLOW_DIRTY" -eq 1 ] && BUILD_WORKFLOW="$BUILD_WORKFLOW --allow-dirty"
@@ -169,8 +175,10 @@ trap cleanup EXIT
 # --- 7. Maven package (release revision) ---------------------------------------------
 # NOTE: `mvn clean` removes the reactor root build directory (kairo-parent target/), so the output
 # directory (commonly target/v1.7/...) is created AFTER the Maven build, not before.
-echo "==> mvn clean package -Drevision=$VERSION (-DskipTests: assembly; §14 is a separate gate)"
-mvn -B -ntp -Drevision="$VERSION" -DskipTests clean package
+# -Dproject.build.outputTimestamp (M5-D §12.4) fixes JAR entry mtimes + spring-boot build.time to
+#   SOURCE_DATE_EPOCH for reproducible file artifacts.
+echo "==> mvn clean package -Drevision=$VERSION -DskipTests (-Dproject.build.outputTimestamp; §14 is a separate gate)"
+mvn -B -ntp -Drevision="$VERSION" -Dproject.build.outputTimestamp="$OUTPUT_TIMESTAMP" -DskipTests clean package
 echo "    maven: ok"
 
 # --- 8. locate + verify build outputs (reject SNAPSHOT identities) --------------------

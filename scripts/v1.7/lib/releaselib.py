@@ -50,6 +50,19 @@ NON_EVIDENCE_STATUSES = {"NOT_AVAILABLE", "PENDING"}  # may stand in for owned-b
 # "SIGNED" / "VERIFIED" / "PRESENT" value would be a fabrication.
 SUPPLY_STATUSES = {"NOT_AVAILABLE", "PENDING", "SKIPPED"}
 
+# --- V1.7 M5-D release-integrity stage -----------------------------------------------
+# M5-D (roadmap §12.4 / §12.5 / §12.6) promotes an M5-C manifest by attaching a ``releaseIntegrity``
+# section that carries reproducibility, provenance and signature evidence. It is strictly additive:
+# the eight-artifact §12.2 inventory, SHA256SUMS contract and the M5-C ``supplyChain`` section are
+# NEVER altered. At M5-D, each artifact's provenance is promoted to PRESENT (an in-toto Statement
+# subject) and signature may be SKIPPED (local/PR, no OIDC) or SIGNED (controlled cosign keyless CI).
+# M5-D never claims RELEASE: V17-SUPPLY.RELEASE stays NOT_RUN until M6.
+RELEASE_INTEGRITY_STAGE = "M5-D"
+PROVENANCE_PRESENT_STATUS = "PRESENT"          # provenance statement attached and verified
+SIGNATURE_STATUSES_M5D = ("SKIPPED", "SIGNED")  # SKIPPED=local no-OIDC; SIGNED=cosign keyless bundle
+REPRODUCIBILITY_STATUSES = ("PASSED", "FAILED")
+PROVENANCE_GENERATORS = ("local-unsigned", "github-actions-oidc")
+
 # --- V1.7 M5-C supply-chain stage ---------------------------------------------------------
 # M5-C (roadmap §12.3 / lts-policy §9) is a bounded, auditable post-assembly supply-chain gate. It
 # promotes an M5-B manifest by attaching a ``supplyChain`` section and real SBOM references to each
@@ -259,6 +272,25 @@ def parse_docker_inspect(obj):
     os_name = obj.get('Os', '') or ''
     rootfs = obj.get('RootFS') or {}
     layers = rootfs.get('Layers', []) if isinstance(rootfs, dict) else []
+    config = obj.get('Config') or {}
+    if not isinstance(config, dict):
+        config = {}
+    # Record the content-relevant OCI config separately from the volatile top-level Created field.
+    # imageId commits to this config, but M5-D must be able to prove that an imageId difference is
+    # caused only by allowed volatile metadata rather than silently ignoring Env/Cmd/labels/etc.
+    normalized_config = {
+        'user': config.get('User') or '',
+        'env': list(config.get('Env') or []),
+        'entrypoint': list(config.get('Entrypoint') or []),
+        'cmd': list(config.get('Cmd') or []),
+        'workingDir': config.get('WorkingDir') or '',
+        'labels': dict(sorted((config.get('Labels') or {}).items())),
+        'exposedPorts': sorted((config.get('ExposedPorts') or {}).keys()),
+        'volumes': sorted((config.get('Volumes') or {}).keys()),
+        'stopSignal': config.get('StopSignal') or '',
+        'shell': list(config.get('Shell') or []),
+        'healthcheck': config.get('Healthcheck') or {},
+    }
     return {
         'imageId': image_id,
         'repoTags': list(repo_tags),
@@ -271,6 +303,7 @@ def parse_docker_inspect(obj):
             'type': rootfs.get('type', 'layers') if isinstance(rootfs, dict) else 'layers',
             'diffIds': list(layers),
         },
+        'config': normalized_config,
         'manifestDigest': 'NOT_AVAILABLE',
     }
 
@@ -467,6 +500,157 @@ def _validate_supply_chain_section(supply, errors):
     return sbom_paths
 
 
+# --- V1.7 M5-D release-integrity validation ----------------------------------------------
+
+def _validate_evidence_ref(ref, errors, prefix, *, allow_path=True):
+    """Validate a release-root-relative evidence reference {path, sha256, size}.
+
+    Schema-level path containment (deep realpath containment is performed by the offline verifier);
+    sha256 must be 64-hex; size a non-negative integer. ``allow_path`` is False when the reference is
+    allowed to omit a path (e.g. an inline-only object) -- currently always True for M5-D evidence."""
+    if not isinstance(ref, dict):
+        return _err(errors, "%s must be an object {path,sha256,size}" % prefix)
+    ok = True
+    if allow_path:
+        ok = _validate_rel_path(ref.get('path'), errors, prefix)
+    sha = ref.get('sha256')
+    if not (isinstance(sha, str) and SHA256_RE.match(sha)):
+        _err(errors, "%s.sha256 must be 64-hex" % prefix)
+    size = ref.get('size')
+    if not isinstance(size, int) or size < 0:
+        _err(errors, "%s.size must be a non-negative integer" % prefix)
+    return ok
+
+
+def _validate_release_integrity_section(ri, errors):
+    """Structural validation of the releaseIntegrity section (M5-D). Deep evidence re-hashing,
+    provenance subject recomputation, signature bundle verification and the aggregate reproducibility
+    re-derivation are owned by reprolib.verify_release_integrity; this only enforces the schema /
+    honesty contract so a malformed manifest never reaches the verifier."""
+    if not isinstance(ri, dict):
+        return _err(errors, "releaseIntegrity must be an object")
+    if ri.get('stage') != RELEASE_INTEGRITY_STAGE:
+        return _err(errors, "releaseIntegrity.stage must be %s" % RELEASE_INTEGRITY_STAGE)
+    for k in ('generatedAt', 'reproducibility', 'provenance', 'signature', 'overallStatus'):
+        if k not in ri:
+            _err(errors, "releaseIntegrity missing field: %s" % k)
+    ga = ri.get('generatedAt')
+    if not isinstance(ga, str) or not ga.strip():
+        _err(errors, "releaseIntegrity.generatedAt must be a non-blank ISO-8601 string")
+    # --- reproducibility ---
+    repro = ri.get('reproducibility')
+    if isinstance(repro, dict):
+        if repro.get('status') not in REPRODUCIBILITY_STATUSES:
+            _err(errors, "releaseIntegrity.reproducibility.status must be PASSED or FAILED; got %r"
+                 % repro.get('status'))
+        # inputs (commit/version/toolchain/SDE for both releases) must be recorded
+        inputs = repro.get('inputs')
+        if not isinstance(inputs, dict) or not isinstance(inputs.get('releaseA'), dict) \
+                or not isinstance(inputs.get('releaseB'), dict):
+            _err(errors, "releaseIntegrity.reproducibility.inputs must be {releaseA,releaseB}")
+        rr = repro.get('resultReport')
+        if not isinstance(rr, dict):
+            _err(errors, "releaseIntegrity.reproducibility.resultReport must be {path,sha256,size}")
+        else:
+            _validate_evidence_ref(rr, errors, "releaseIntegrity.reproducibility.resultReport")
+        for fld in ('comparedFields', 'allowedDifferences'):
+            v = repro.get(fld)
+            if not isinstance(v, list) or not all(isinstance(x, str) and x for x in v):
+                _err(errors, "releaseIntegrity.reproducibility.%s must be a list of non-blank strings" % fld)
+        if repro.get('status') == 'FAILED' and not repro.get('failureReasons'):
+            _err(errors, "releaseIntegrity.reproducibility.status=FAILED requires non-empty failureReasons")
+    else:
+        _err(errors, "releaseIntegrity.reproducibility must be an object")
+    # --- provenance (per-release statement) ---
+    prov = ri.get('provenance')
+    if isinstance(prov, dict):
+        if prov.get('status') != PROVENANCE_PRESENT_STATUS:
+            _err(errors, "releaseIntegrity.provenance.status must be %s at M5-D; got %r"
+                 % (PROVENANCE_PRESENT_STATUS, prov.get('status')))
+        if prov.get('generator') not in PROVENANCE_GENERATORS:
+            _err(errors, "releaseIntegrity.provenance.generator must be one of %s; got %r"
+                 % (PROVENANCE_GENERATORS, prov.get('generator')))
+        st = prov.get('statement')
+        if not isinstance(st, dict):
+            _err(errors, "releaseIntegrity.provenance.statement must be {path,sha256,size}")
+        else:
+            _validate_evidence_ref(st, errors, "releaseIntegrity.provenance.statement")
+        # Local/unsigned provenance must be disclosed honestly, never misrepresent as trusted OIDC.
+        if prov.get('generator') == 'local-unsigned':
+            if prov.get('trustedOIDC') is True:
+                _err(errors, "releaseIntegrity.provenance.generator=local-unsigned must not claim "
+                     "trustedOIDC=true (that would misrepresent local provenance as GitHub/OIDC)")
+        else:
+            if not prov.get('trustedOIDC'):
+                _err(errors, "releaseIntegrity.provenance.generator=github-actions-oidc requires "
+                     "trustedOIDC=true")
+    else:
+        _err(errors, "releaseIntegrity.provenance must be an object")
+    # --- signature (release-level summary; per-artifact signature validated below) ---
+    sig = ri.get('signature')
+    if isinstance(sig, dict):
+        if sig.get('status') not in SIGNATURE_STATUSES_M5D:
+            _err(errors, "releaseIntegrity.signature.status must be SKIPPED or SIGNED; got %r"
+                 % sig.get('status'))
+        if sig.get('status') == 'SKIPPED' and not (isinstance(sig.get('reason'), str) and sig.get('reason').strip()):
+            _err(errors, "releaseIntegrity.signature SKIPPED requires a reason")
+    else:
+        _err(errors, "releaseIntegrity.signature must be an object")
+    ov = ri.get('overallStatus')
+    if ov not in ('PASSED', 'FAILED'):
+        _err(errors, "releaseIntegrity.overallStatus must be PASSED or FAILED; got %r" % ov)
+    if ov == 'FAILED' and not ri.get('failureReasons'):
+        _err(errors, "releaseIntegrity.overallStatus=FAILED requires non-empty failureReasons")
+
+
+def _validate_artifact_m5d(a, errors, idx):
+    """Validate one artifact's provenance/signature fields at M5-D. SBOM is still the verified M5-C
+    reference (validated by _validate_artifact_sbom_m5c). Provenance must be PRESENT with a statement
+    reference + subject digest; signature SKIPPED (reason) or SIGNED (bundle reference)."""
+    name = a.get('name')
+    if a.get('type') == 'docker-image':
+        image = a.get('image') or {}
+        if not isinstance(image.get('config'), dict) or not image.get('config'):
+            _err(errors, "artifacts[%d] (%s) image.config must contain normalized OCI runtime "
+                 "configuration at M5-D" % (idx, name))
+    prov = a.get('provenance')
+    if not isinstance(prov, dict):
+        _err(errors, "artifacts[%d] (%s) provenance must be an object at M5-D" % (idx, name))
+    elif prov.get('status') != PROVENANCE_PRESENT_STATUS:
+        _err(errors, "artifacts[%d] (%s) provenance.status must be %s at M5-D; got %r"
+             % (idx, name, PROVENANCE_PRESENT_STATUS, prov.get('status')))
+    else:
+        st = prov.get('statement')
+        if not isinstance(st, dict):
+            _err(errors, "artifacts[%d] (%s) provenance.statement must be {path,sha256,size}" % (idx, name))
+        else:
+            _validate_evidence_ref(st, errors, "artifacts[%d] (%s) provenance.statement" % (idx, name))
+        subj = prov.get('subject')
+        if not isinstance(subj, dict) or not isinstance(subj.get('name'), str) or not subj.get('name'):
+            _err(errors, "artifacts[%d] (%s) provenance.subject.name must be a non-blank string" % (idx, name))
+        digest = subj.get('digest') if isinstance(subj, dict) else None
+        if not isinstance(digest, dict) or not (isinstance(digest.get('sha256'), str)
+                                                and SHA256_RE.match(digest.get('sha256'))):
+            _err(errors, "artifacts[%d] (%s) provenance.subject.digest.sha256 must be 64-hex "
+                 "(file sha256 or normalized immutable image digest)" % (idx, name))
+    sig = a.get('signature')
+    if not isinstance(sig, dict) or sig.get('status') not in SIGNATURE_STATUSES_M5D:
+        _err(errors, "artifacts[%d] (%s) signature.status must be SKIPPED or SIGNED at M5-D; got %r"
+             % (idx, name, sig.get('status') if isinstance(sig, dict) else sig))
+    elif sig.get('status') == 'SIGNED':
+        b = sig.get('bundle')
+        if not isinstance(b, dict):
+            _err(errors, "artifacts[%d] (%s) signature.bundle must be {path,sha256,size}" % (idx, name))
+        else:
+            _validate_evidence_ref(b, errors, "artifacts[%d] (%s) signature.bundle" % (idx, name))
+        for k in ('identity', 'issuer'):
+            if not isinstance(sig.get(k), str) or not sig.get(k).strip():
+                _err(errors, "artifacts[%d] (%s) signature.%s must be a non-blank string" % (idx, name, k))
+    elif sig.get('status') == 'SKIPPED':
+        if not (isinstance(sig.get('reason'), str) and sig.get('reason').strip()):
+            _err(errors, "artifacts[%d] (%s) signature SKIPPED requires a reason" % (idx, name))
+
+
 def validate_manifest(obj):
     """Validate a release manifest against §12.5 + honesty + M5-C stage; return a list of error strings.
 
@@ -538,7 +722,7 @@ def validate_manifest(obj):
         else:
             _err(errors, "%s must be {status,...}" % f)
 
-    # --- stage detection (M5-B local RC vs M5-C supply-chain-promoted) ----------------
+    # --- stage detection (M5-B local RC vs M5-C supply-chain-promoted vs M5-D release-integrity) ---
     supply = obj.get('supplyChain')
     is_m5c = isinstance(supply, dict) and supply.get('stage') == SUPPLY_CHAIN_STAGE
     if 'supplyChain' in obj and not isinstance(supply, dict):
@@ -549,6 +733,18 @@ def validate_manifest(obj):
     sbom_paths = {}
     if is_m5c:
         sbom_paths = _validate_supply_chain_section(supply, errors)
+
+    # M5-D is strictly additive on top of M5-C: it requires a valid M5-C supplyChain section PLUS a
+    # releaseIntegrity section. It relaxes ONLY the per-artifact signature/provenance constraints
+    # (signature may be SIGNED; provenance may be PRESENT) -- every other M5-C contract is unchanged.
+    ri = obj.get('releaseIntegrity')
+    is_m5d = isinstance(ri, dict) and ri.get('stage') == RELEASE_INTEGRITY_STAGE
+    if 'releaseIntegrity' in obj and not isinstance(ri, dict):
+        _err(errors, "releaseIntegrity must be an object if present")
+    if is_m5d:
+        if not is_m5c:
+            _err(errors, "releaseIntegrity (M5-D) requires a promoted M5-C supplyChain section")
+        _validate_release_integrity_section(ri, errors)
 
     artifacts = obj.get('artifacts')
     if not isinstance(artifacts, list) or not artifacts:
@@ -591,21 +787,41 @@ def validate_manifest(obj):
                 _err(errors, "artifact %s has unknown type: %s" % (a.get('name'), atype))
             if is_m5c:
                 # M5-C: verified SBOM reference per artifact group (maven/web) or NOT_APPLICABLE for
-                # compose; signature stays SKIPPED (no OIDC locally) and provenance stays NOT_AVAILABLE
-                # (owned by M5-D). Neither is ever promoted to SIGNED/VERIFIED/PRESENT by M5-C.
+                # compose. Signature/provenance stay SKIPPED/NOT_AVAILABLE under pure M5-C; at M5-D they
+                # are promoted (PRESENT/SIGNED-or-SKIPPED) and validated separately below.
                 _validate_artifact_sbom_m5c(a, errors, i, sbom_paths)
-                sig = a.get('signature')
-                if not (isinstance(sig, dict) and sig.get('status') == 'SKIPPED'):
-                    _err(errors, "artifacts[%d] (%s) signature.status must remain SKIPPED under M5-C "
-                         "(pre-M5-D; cosign keyless is owned by M5-D/M6)" % (i, a.get('name')))
-                prov = a.get('provenance')
-                if not (isinstance(prov, dict) and prov.get('status') == 'NOT_AVAILABLE'):
-                    _err(errors, "artifacts[%d] (%s) provenance.status must remain NOT_AVAILABLE under "
-                         "M5-C (pre-M5-D; provenance generation is owned by M5-D)" % (i, a.get('name')))
+                if is_m5d:
+                    # M5-D: provenance PRESENT (in-toto subject); signature SKIPPED or SIGNED (bundle).
+                    _validate_artifact_m5d(a, errors, i)
+                else:
+                    # pure M5-C: signature stays SKIPPED (no OIDC locally), provenance NOT_AVAILABLE
+                    # (owned by M5-D). Neither is ever promoted to SIGNED/PRESENT by M5-C.
+                    sig = a.get('signature')
+                    if not (isinstance(sig, dict) and sig.get('status') == 'SKIPPED'):
+                        _err(errors, "artifacts[%d] (%s) signature.status must remain SKIPPED under M5-C "
+                             "(pre-M5-D; cosign keyless is owned by M5-D/M6)" % (i, a.get('name')))
+                    prov = a.get('provenance')
+                    if not (isinstance(prov, dict) and prov.get('status') == 'NOT_AVAILABLE'):
+                        _err(errors, "artifacts[%d] (%s) provenance.status must remain NOT_AVAILABLE under "
+                             "M5-C (pre-M5-D; provenance generation is owned by M5-D)" % (i, a.get('name')))
             else:
                 # M5-B: existing NOT_AVAILABLE/PENDING/SKIPPED supply vocabulary.
                 for k in ('sbom', 'signature', 'provenance'):
                     _validate_supply_field(a, k, errors, "artifacts[%d] (%s)" % (i, a.get('name')))
+    # M5-D honesty: a release with any locally-unsigned or skipped signature must disclose it in
+    # knownLimitations; it must never present as a certified/signed LTS release.
+    if is_m5d:
+        kls = obj.get('knownLimitations') or []
+        kls_text = " ".join(str(k).lower() for k in kls)
+        ri_obj = obj.get('releaseIntegrity') or {}
+        prov_gen = (ri_obj.get('provenance') or {}).get('generator')
+        sig_status = (ri_obj.get('signature') or {}).get('status')
+        if prov_gen == 'local-unsigned' and 'local' not in kls_text and 'unsigned' not in kls_text:
+            _err(errors, "releaseIntegrity.provenance.generator=local-unsigned requires knownLimitations "
+                 "to disclose locally-generated/unsigned provenance (not trusted GitHub/OIDC)")
+        if sig_status == 'SKIPPED' and 'skipped' not in kls_text and 'signature' not in kls_text:
+            _err(errors, "releaseIntegrity.signature.status=SKIPPED requires knownLimitations to disclose "
+                 "that the signature is skipped (local/PR; RELEASE requires cosign keyless at M6)")
     return errors
 
 
@@ -825,6 +1041,9 @@ def _self_test_docker_inspect():
         "Architecture": "amd64",
         "Os": "linux",
         "RootFS": {"type": "layers", "Layers": ["sha256:layer1", "sha256:layer2"]},
+        "Config": {"User": "1000", "Env": ["LANG=C.UTF-8"], "Entrypoint": ["/entrypoint"],
+                   "Cmd": ["java", "-jar", "app.jar"], "WorkingDir": "/app",
+                   "Labels": {"org.opencontainers.image.version": "1.7.0-rc.1"}},
     }]
     meta = parse_docker_inspect(payload)
     if meta['imageId'] != 'sha256:abc123def':
@@ -835,6 +1054,8 @@ def _self_test_docker_inspect():
         return False, "manifestDigest must be NOT_AVAILABLE for local image"
     if meta['rootfs']['diffIds'] != ['sha256:layer1', 'sha256:layer2']:
         return False, "rootfs layers not parsed"
+    if meta['config']['cmd'] != ['java', '-jar', 'app.jar'] or meta['config']['workingDir'] != '/app':
+        return False, "normalized OCI runtime config not parsed"
     # Truthful non-empty RepoDigests (e.g. an image whose base was pulled from a registry) must be
     # preserved verbatim, never dropped or invented. Do not require RepoDigests to be empty in all envs.
     payload2 = json.loads(json.dumps(payload))

@@ -1046,7 +1046,8 @@ def verify_release(manifest_path, now=None):
         return {'ok': len(errors) == 0, 'stage': 'M5-B' if not schema_errors else None,
                 'errors': errors, 'notes': notes}
 
-    stage = 'M5-C'
+    stage = 'M5-D' if isinstance(manifest.get('releaseIntegrity'), dict) and \
+        manifest['releaseIntegrity'].get('stage') == releaselib.RELEASE_INTEGRITY_STAGE else 'M5-C'
     expected_generators = {
         'maven': {'name': 'cyclonedx-maven-plugin', 'version': CYCLONEDX_MAVEN_PLUGIN_VERSION},
         'web': {'name': '@cyclonedx/cyclonedx-npm', 'version': CYCLONEDX_NPM_VERSION},
@@ -1272,12 +1273,16 @@ def verify_release(manifest_path, now=None):
         if red_l['overallStatus'] != 'PASSED':
             errors.append("license gate FAILED: %s" % '; '.join(red_l['failureReasons']))
 
-    # 7. signature/provenance must remain pre-M5-D (already enforced by validate_manifest; double-check)
-    for a in artifacts:
-        if a.get('signature', {}).get('status') != 'SKIPPED':
-            errors.append("artifact %s signature.status must remain SKIPPED (pre-M5-D)" % a.get('name'))
-        if a.get('provenance', {}).get('status') != 'NOT_AVAILABLE':
-            errors.append("artifact %s provenance.status must remain NOT_AVAILABLE (pre-M5-D)" % a.get('name'))
+    # 7. signature/provenance honesty. Under pure M5-C these must remain pre-M5-D (SKIPPED /
+    #    NOT_AVAILABLE); under M5-D they are promoted (PRESENT / SIGNED-or-SKIPPED) and validated by
+    #    releaselib.validate_manifest + reprolib, so this double-check is skipped for M5-D manifests.
+    is_m5d = stage == 'M5-D'
+    if not is_m5d:
+        for a in artifacts:
+            if a.get('signature', {}).get('status') != 'SKIPPED':
+                errors.append("artifact %s signature.status must remain SKIPPED (pre-M5-D)" % a.get('name'))
+            if a.get('provenance', {}).get('status') != 'NOT_AVAILABLE':
+                errors.append("artifact %s provenance.status must remain NOT_AVAILABLE (pre-M5-D)" % a.get('name'))
 
     # 8. overall status honesty
     ov = supply.get('overallStatus')
@@ -1294,7 +1299,7 @@ def verify_release(manifest_path, now=None):
         errors.append("supplyChain.failureReasons != vulnerability+license failure reasons")
     if expected_overall != 'PASSED':
         errors.append("supply-chain gate is not PASSED")
-    notes.append("manifest stage: M5-C; offline verification %s" % ('PASSED' if not errors else 'FAILED'))
+    notes.append("manifest stage: %s; offline verification %s" % (stage, 'PASSED' if not errors else 'FAILED'))
     return {'ok': len(errors) == 0, 'stage': stage, 'errors': errors, 'notes': notes}
 
 

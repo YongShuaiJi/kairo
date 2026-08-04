@@ -1,0 +1,173 @@
+name: release-integrity
+
+# V1.7 M5-D (roadmap §12.4 / §12.6): the controlled cosign keyless RC signing rehearsal + final
+# release-integrity gate. Proves the RC signing path with real GitHub Actions OIDC; does NOT produce
+# or claim the final M6 release signature, does NOT publish artifacts or images.
+#
+# Pipeline: assemble release-a (eight §12.2 artifacts) + supply-chain gate (M5-C) + assemble
+# release-b for the reproducibility comparison + verify-reproducible + generate-provenance (M5-D,
+# generator=github-actions-oidc) + cosign keyless sign-blob of the provenance statement + verify-release
+# --require-signature true.
+#
+# V17-SUPPLY.PR may PASSED here; V17-SUPPLY.RELEASE stays NOT_RUN until M6 (Engineering Complete is
+# not Released). All third-party actions and the cosign version are pinned by digest; only the minimum
+# required permissions are requested (id-token: write for OIDC; contents: read).
+
+on:
+  push:
+    branches: [V1.7]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  release-integrity:
+    name: Release-integrity gate (reproducible + provenance + cosign keyless RC)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GRYPE_VERSION: "0.116.1"
+      RC_VERSION: "1.7.0-rc.1"
+      COSIGN_VERSION: "2.5.0"
+      RELEASE_A_ROOT: ${{ runner.temp }}/kairo-release-a
+      RELEASE_B_ROOT: ${{ runner.temp }}/kairo-release-b
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Set up Node 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: kairo-platform-web/package-lock.json
+
+      - name: Install pinned Grype 0.116.1 (release binary + official checksum)
+        run: |
+          set -euo pipefail
+          GRYPE_TAR="grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
+          base="https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}"
+          curl -fsSL -o "$GRYPE_TAR" "${base}/${GRYPE_TAR}"
+          curl -fsSL -o checksums.txt "${base}/grype_${GRYPE_VERSION}_checksums.txt"
+          expected="$(grep -E " ${GRYPE_TAR}\$" checksums.txt | awk '{print $1}' | head -1)"
+          [ -n "$expected" ] || { echo "checksum for $GRYPE_TAR not found" >&2; exit 1; }
+          actual="$(sha256sum "$GRYPE_TAR" | awk '{print $1}')"
+          [ "$actual" = "$expected" ] || { echo "grype checksum mismatch: expected=$expected actual=$actual" >&2; exit 1; }
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf "$GRYPE_TAR" -C "$HOME/.local/bin" grype
+          echo "GRYPE_BIN=$HOME/.local/bin/grype" >> "$GITHUB_ENV"
+
+      - name: Install pinned cosign (keyless, OIDC)
+        uses: sigstore/cosign-installer@59c3f618c6a25f5a4f59e55f567068611a64bdf5 # v3.9.0
+        with:
+          cosign-release: "v${{ env.COSIGN_VERSION }}"
+
+      - name: Cache Grype vulnerability DB
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cache/grype/db
+          key: grype-db-${{ env.GRYPE_VERSION }}-${{ runner.os }}
+
+      # The two builds must come from distinct clean checkouts, not two output directories in the
+      # same checkout. Linked detached worktrees preserve the exact GITHUB_SHA while isolating all
+      # source/build state.
+      - name: Create two clean isolated checkouts of the candidate commit
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RELEASE_A_ROOT" "$GITHUB_SHA"
+          git worktree add --detach "$RELEASE_B_ROOT" "$GITHUB_SHA"
+          test "$(git -C "$RELEASE_A_ROOT" rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C "$RELEASE_B_ROOT" rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git -C "$RELEASE_A_ROOT" status --porcelain)"
+          test -z "$(git -C "$RELEASE_B_ROOT" status --porcelain)"
+
+      # --- release-a: full pipeline (build + supply-chain + M5-C) ------------------------
+      - name: Assemble release-a (eight §12.2 artifacts)
+        run: |
+          cd "$RELEASE_A_ROOT"
+          ./scripts/v1.7/build-release.sh --version "$RC_VERSION" --output target/v1.7/release
+
+      - name: Run the supply-chain gate on release-a (SBOM + Grype + license + promote M5-C)
+        run: |
+          cd "$RELEASE_A_ROOT"
+          ./scripts/v1.7/run-supply-chain.sh --release-dir target/v1.7/release
+
+      - name: Offline-verify the M5-C supply-chain evidence (release-a)
+        run: |
+          "$RELEASE_A_ROOT/scripts/v1.7/verify-supply-chain.sh" \
+            --manifest "$RELEASE_A_ROOT/target/v1.7/release/release-manifest.json"
+
+      # --- release-b: a second clean build for the reproducibility comparison ------------
+      - name: Assemble release-b (second clean build for reproducibility)
+        run: |
+          cd "$RELEASE_B_ROOT"
+          ./scripts/v1.7/build-release.sh --version "$RC_VERSION" --output target/v1.7/release
+
+      - name: Verify reproducibility (release-a vs release-b)
+        run: |
+          ./scripts/v1.7/verify-reproducible.sh \
+            "$RELEASE_A_ROOT/target/v1.7/release" \
+            "$RELEASE_B_ROOT/target/v1.7/release"
+
+      # --- M5-D: provenance + cosign keyless RC signature rehearsal ----------------------
+      - name: Generate the in-toto provenance statement (deterministic)
+        run: |
+          ./scripts/v1.7/lib/reprolib.py build-provenance \
+            --manifest "$RELEASE_A_ROOT/target/v1.7/release/release-manifest.json" \
+            --generator github-actions-oidc \
+            --build-workflow "./scripts/v1.7/build-release.sh --version $RC_VERSION --output target/v1.7/release"
+
+      - name: Cosign keyless sign-blob of the provenance statement (RC rehearsal)
+        run: |
+          set -euo pipefail
+          # The signed blob is the deterministic in-toto provenance statement (the attestation that
+          # carries every artifact subject). Keyless: cosign uses the GitHub Actions OIDC token.
+          STMT="$RELEASE_A_ROOT/target/v1.7/release/provenance/kairo-release.intoto.json"
+          BUNDLE="$RELEASE_A_ROOT/target/v1.7/release/signatures/release-manifest.sigstore.json"
+          mkdir -p "$(dirname "$BUNDLE")"
+          cosign sign-blob --yes --bundle "$BUNDLE" "$STMT"
+          IDENTITY="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-integrity.yml@${GITHUB_REF}"
+          echo "KAIRO_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "KAIRO_EXPECTED_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Promote manifest to M5-D with the cosign keyless bundle
+        run: |
+          ./scripts/v1.7/generate-provenance.sh \
+            --release-dir "$RELEASE_A_ROOT/target/v1.7/release" \
+            --generator github-actions-oidc \
+            --signature-bundle signatures/release-manifest.sigstore.json \
+            --identity "$KAIRO_SIGNING_IDENTITY" \
+            --issuer "https://token.actions.githubusercontent.com"
+
+      # --- final M5 gate: require-signature true (cosign keyless, controlled CI) --------
+      - name: Verify release integrity (require-signature true)
+        run: |
+          ./scripts/v1.7/verify-release.sh \
+            --manifest "$RELEASE_A_ROOT/target/v1.7/release/release-manifest.json" \
+            --require-signature true
+
+      - name: Upload release-integrity evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-integrity-evidence
+          path: |
+            ${{ env.RELEASE_A_ROOT }}/target/v1.7/release/release-manifest.json
+            ${{ env.RELEASE_A_ROOT }}/target/v1.7/release/SHA256SUMS
+            ${{ env.RELEASE_A_ROOT }}/target/v1.7/release/provenance/
+            ${{ env.RELEASE_A_ROOT }}/target/v1.7/release/signatures/
+            ${{ env.RELEASE_A_ROOT }}/target/v1.7/release/reports/reproducibility-result.json
+            ${{ env.RELEASE_B_ROOT }}/target/v1.7/release/release-manifest.json
+            ${{ env.RELEASE_B_ROOT }}/target/v1.7/release/SHA256SUMS
+          if-no-files-found: error
