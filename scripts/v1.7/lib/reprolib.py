@@ -68,8 +68,8 @@ EXPECTED_IDENTITY_PREFIX = "https://github.com/"
 # size and registry digests. The config digest (imageId) is compared and may differ only when every
 # immutable field matches, because Docker embeds the sole allowed volatile field (`created`) in it.
 IMAGE_IMMUTABLE_FIELDS = ("rootfs.type", "rootfs.diffIds", "config", "architecture", "os",
-                          "manifestDigest", "size", "repoDigests")
-IMAGE_VOLATILE_FIELDS = ("created", "imageId")
+                          "manifestDigest", "size")
+IMAGE_VOLATILE_FIELDS = ("created", "imageId", "repoDigests")
 ALLOWED_REPRO_DIFF_FIELDS = list(IMAGE_VOLATILE_FIELDS)
 
 
@@ -227,8 +227,7 @@ def _compare_images(a_art, b_art):
                         'classification': 'immutable',
                         'a': a['rootfs']['diffIds'], 'b': b['rootfs']['diffIds']})
     for fld, key in (('rootfs.type', None), ('config', 'config'), ('architecture', 'architecture'),
-                     ('os', 'os'), ('manifestDigest', 'manifestDigest'), ('size', 'size'),
-                     ('repoDigests', 'repoDigests')):
+                     ('os', 'os'), ('manifestDigest', 'manifestDigest'), ('size', 'size')):
         if fld == 'rootfs.type':
             va, vb = a['rootfs']['type'], b['rootfs']['type']
         else:
@@ -248,7 +247,27 @@ def _compare_images(a_art, b_art):
     else:
         records.append({'name': name, 'field': 'repoTags', 'match': True, 'classification': 'immutable',
                         'a': a['repoTags'], 'b': b['repoTags']})
-    # Only Created is directly volatile. imageId may differ only when every immutable field matches,
+    # Docker Desktop may expose a local RepoDigest equal to the config imageId. That local alias
+    # changes when imageId changes because of non-runtime history metadata; it is allowed to differ
+    # only when both sides are exact aliases of their imageId and every immutable field matches.
+    immutable_match = not failures
+    def local_repo_aliases(identity):
+        iid = identity['imageId']
+        if not identity['repoDigests']:
+            return True
+        return bool(iid) and all('@' in d and d.rsplit('@', 1)[1] == iid for d in identity['repoDigests'])
+    if a['repoDigests'] == b['repoDigests']:
+        records.append({'name': name, 'field': 'repoDigests', 'a': a['repoDigests'],
+                        'b': b['repoDigests'], 'match': True, 'classification': 'immutable'})
+    elif immutable_match and local_repo_aliases(a) and local_repo_aliases(b):
+        records.append({'name': name, 'field': 'repoDigests', 'a': a['repoDigests'],
+                        'b': b['repoDigests'], 'match': False, 'classification': 'allowed-volatile'})
+    else:
+        records.append({'name': name, 'field': 'repoDigests', 'a': a['repoDigests'],
+                        'b': b['repoDigests'], 'match': False, 'classification': 'content-diff'})
+        failures.append("%s repoDigests differ and are not matching local imageId aliases" % name)
+
+    # Created is directly volatile. imageId may differ only when every immutable field matches,
     # proving that runtime configuration and layer content did not drift.
     records.append({'name': name, 'field': 'created', 'a': a['created'], 'b': b['created'],
                     'match': a['created'] == b['created'], 'classification': 'allowed-volatile'})
@@ -409,9 +428,9 @@ def compare_releases(a_manifest_path, b_manifest_path, *, now=None):
         'inputs': {'releaseA': sa, 'releaseB': sb, 'matches': matches},
         'comparedFields': compared_fields,
         'allowedDifferences': list(ALLOWED_REPRO_DIFF_FIELDS),
-        'allowedDifferencesNote': "created is wall-clock volatile; imageId may differ only when "
+        'allowedDifferencesNote': "created is wall-clock volatile; a local repoDigest alias and imageId may differ only when "
                                   "rootfs, normalized runtime config, platform, size and repo digests "
-                                  "all match (the config digest embeds the volatile created timestamp)",
+                                  "otherwise match (the config digest includes non-runtime build history metadata)",
         'fileComparisons': file_comparisons,
         'sha256sumsComparison': sha_cmp,
         'imageComparisons': image_comparisons,
