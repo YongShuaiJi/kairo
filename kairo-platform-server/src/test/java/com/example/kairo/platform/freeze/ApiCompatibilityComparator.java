@@ -274,8 +274,20 @@ final class ApiCompatibilityComparator {
     }
 
     private static boolean isOpenAdditionalProperties(com.fasterxml.jackson.databind.JsonNode node) {
-        return node == null || node.isMissingNode() || node.isNull()
-                || (node.isBoolean() && node.asBoolean());
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return true;
+        }
+        if (node.isBoolean()) {
+            return node.asBoolean();
+        }
+        // An object-valued additionalProperties that declares neither a $ref nor a (non-empty) type
+        // constrains nothing -- any value is permitted -- so it is OPEN, equivalent to unset/true.
+        // swagger-core 2.2.47 (pulled in transitively by springdoc 2.8.17, required for Spring Boot
+        // 3.5.16 compatibility) renders Object-typed map values as {} (open) where 2.2.22 rendered
+        // {type:object}; treat the unconstrained object form as OPEN so the swagger typed->open
+        // rendering change is the safe relaxation the comparator already documents, not a typed shape
+        // mutation. Narrowing transitions (open->typed, open->closed, typed->closed) stay rejected.
+        return node.isObject() && !hasRefOrType(node);
     }
 
     private static boolean isClosedAdditionalProperties(com.fasterxml.jackson.databind.JsonNode node) {
@@ -283,7 +295,17 @@ final class ApiCompatibilityComparator {
     }
 
     private static boolean isTypedAdditionalProperties(com.fasterxml.jackson.databind.JsonNode node) {
-        return node != null && node.isObject();
+        return node != null && node.isObject() && hasRefOrType(node);
+    }
+
+    /** A schema with a $ref or a non-empty {@code type} is a concrete (typed) value schema, not open. */
+    private static boolean hasRefOrType(com.fasterxml.jackson.databind.JsonNode schema) {
+        String ref = schema.path("$ref").asText(null);
+        if (ref != null && !ref.isEmpty()) {
+            return true;
+        }
+        String type = schema.path("type").asText(null);
+        return type != null && !type.isEmpty();
     }
 
     private static void compareOptionalNode(List<String> violations, String context,

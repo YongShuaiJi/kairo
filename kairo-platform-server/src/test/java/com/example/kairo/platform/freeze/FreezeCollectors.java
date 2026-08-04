@@ -370,7 +370,28 @@ final class FreezeCollectors {
         if (ap.isBoolean()) {
             return ap.asText();
         }
+        // An additionalProperties schema that declares neither a $ref nor a (non-empty) type
+        // constrains nothing -- it permits any value, so it is semantically OPEN, equivalent to
+        // unset/true. swagger-core 2.2.47 (pulled in transitively by springdoc 2.8.17, which is
+        // required for Spring Boot 3.5.16 compatibility) renders Object-typed map values as {}
+        // (open) where 2.2.22 rendered {type:object}; recognizing the unconstrained form as OPEN
+        // lets the additive-only comparator classify that typed->open rendering change as the safe
+        // relaxation it is, rather than a typed shape mutation. Narrowing transitions (open->typed,
+        // open->closed, typed->closed, typed shape/ref mutation) are still rejected downstream.
+        if (!hasRefOrType(ap)) {
+            return null;
+        }
         return "schema:" + schemaShape(ap);
+    }
+
+    /** A schema with a $ref or a non-empty {@code type} is a concrete (typed) value schema, not open. */
+    private static boolean hasRefOrType(JsonNode schema) {
+        String ref = schema.path("$ref").asText(null);
+        if (ref != null && !ref.isEmpty()) {
+            return true;
+        }
+        String type = schema.path("type").asText(null);
+        return type != null && !type.isEmpty();
     }
 
     private static String schemaShape(JsonNode schema) {

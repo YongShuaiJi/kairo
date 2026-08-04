@@ -129,6 +129,10 @@ class AdditionalPropertiesFreezeTest {
         String closed = body("{\"type\":\"object\",\"additionalProperties\":false}");
         String typedObject = body("{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\"}}");
         String unset = body("{\"type\":\"object\"}");
+        // An empty additionalProperties schema ({} -- no $ref/type) is OPEN (any value), so
+        // typed -> empty is a safe relaxation. swagger-core 2.2.47 (via springdoc 2.8.17 for
+        // Spring Boot 3.5.16) renders Object-typed map values this way; it must not be flagged.
+        String empty = body("{\"type\":\"object\",\"additionalProperties\":{}}");
 
         assertThat(ApiCompatibilityComparator.compare(apiWithBody(closed), apiWithBody(open)))
                 .as("closed -> open is a safe relaxation").isEmpty();
@@ -136,8 +140,12 @@ class AdditionalPropertiesFreezeTest {
                 .as("closed -> unset is a safe relaxation").isEmpty();
         assertThat(ApiCompatibilityComparator.compare(apiWithBody(typedObject), apiWithBody(open)))
                 .as("typed -> open is a safe relaxation").isEmpty();
+        assertThat(ApiCompatibilityComparator.compare(apiWithBody(typedObject), apiWithBody(empty)))
+                .as("typed -> empty schema {} (open) is a safe relaxation").isEmpty();
         assertThat(ApiCompatibilityComparator.compare(apiWithBody(open), apiWithBody(unset)))
                 .as("open <-> unset are semantically identical").isEmpty();
+        assertThat(ApiCompatibilityComparator.compare(apiWithBody(empty), apiWithBody(unset)))
+                .as("empty {} <-> unset are semantically identical (both open)").isEmpty();
         assertThat(ApiCompatibilityComparator.compare(apiWithBody(typedObject), apiWithBody(typedObject)))
                 .as("unchanged typed map is compatible").isEmpty();
     }
