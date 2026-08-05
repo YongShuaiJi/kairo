@@ -47,6 +47,10 @@ Web `/api/health`.
 1. Stop the Platform (`docker compose down platform`).
 2. Restore PostgreSQL from the pre-upgrade backup.
 3. Run the prior V1.6.0 Platform image against the restored DB.
+
+Do not start the V1.6.0 application against a database whose Flyway migration head is newer than
+V1.6.0's migration head (V41). The M6-A rehearsal enforces this as a fail-closed deployment preflight;
+restore the pre-upgrade backup first, then start V1.6.0 only after the database reports V41.
 4. On reconnect, the Platform reconciles desired vs actual agent rule state (M1-D); agents that
    were offline are not falsely reported as unloaded (M1-E compensation runs first).
 

@@ -70,16 +70,16 @@ class CompatibilityDocumentCheckTest {
     }
 
     @Test
-    void committedManifestIsConsistentWithNotRunAggregate() throws Exception {
-        // The committed manifest keeps V17-COMPAT PR/RC/RELEASE NOT_RUN; against the honest
-        // NOT_RUN representative aggregate there is no overclaim.
-        assertThat(check().checkManifest(notRunResult(), committedManifest())).isEmpty();
+    void committedPrPassIsRejectedAgainstNotRunAggregate() throws Exception {
+        // M3 PR acceptance is now a historical PASSED fact. A NOT_RUN aggregate cannot
+        // substantiate that claim and must fail the divergence check.
+        assertThat(check().checkManifest(notRunResult(), committedManifest()))
+                .anyMatch(e -> e.contains("V17-COMPAT.PR is PASSED") && e.contains("overclaim"));
     }
 
     @Test
     void committedManifestIsConsistentWithPassingAggregate() throws Exception {
-        // A passing aggregate (PR evidence) does not contradict a manifest with PR NOT_RUN:
-        // NOT_RUN is not an overclaim, only PASSED-without-evidence would be.
+        // The committed historical PR PASSED claim is consistent with a passing aggregate.
         assertThat(check().checkManifest(passingResult(), committedManifest())).isEmpty();
     }
 

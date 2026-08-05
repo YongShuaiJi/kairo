@@ -158,6 +158,17 @@ def detect_build_id(root):
     return run(["git", "rev-parse", "HEAD"], root)
 
 
+def detect_worktree_dirty(root):
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=root,
+            capture_output=True, text=True, timeout=30,
+        )
+        return result.returncode != 0 or bool(result.stdout.strip())
+    except Exception:
+        return True
+
+
 def now_iso():
     # Use timezone-aware UTC; equivalent to date -u on the runner.
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -310,11 +321,14 @@ def main():
     else:
         pr_status = "NOT_RUN"
 
+    dirty = detect_worktree_dirty(root)
     result = {
         "schemaVersion": "1.0",
         "release": RELEASE,
         "milestone": MILESTONE,
         "buildId": detect_build_id(root),
+        "mode": "dev" if dirty else "pr",
+        "workingTreeDirty": dirty,
         "generatedAt": now_iso(),
         "environment": detect_environment(root),
         "runnerOutcomes": outcomes,

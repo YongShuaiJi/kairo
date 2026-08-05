@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1.0",
+  "status": "authoritative",
+  "buildId": "${CANDIDATE_SHA}",
+  "generatedAt": "2026-08-05T00:00:00Z",
+  "note": "Maintainer-owned V1.7 RC defect declaration reviewed at the M6-A freeze point. The tracked ${CANDIDATE_SHA} token is deliberately not a wildcard: rc-certification.yml copies this declaration into the evidence directory and replaces only buildId with the exact frozen 40-hex candidate SHA. The aggregator rejects a missing inventory, a token or wildcard that was not bound, any mismatched buildId, every open P0/P1, and any open P2 without owner, workaround, and targetVersion. An empty defects array therefore means no known open defects at this review point, not that an absent inventory was treated as zero defects.",
+  "defects": []
+}

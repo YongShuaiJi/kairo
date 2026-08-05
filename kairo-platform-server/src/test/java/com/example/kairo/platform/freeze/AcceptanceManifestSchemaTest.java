@@ -72,9 +72,10 @@ class AcceptanceManifestSchemaTest {
             }
         }
         assertThat(passedPr).contains("V17-CONTRACT", "V17-UPGRADE", "V17-REGRESSION");
+        assertThat(passedPr).contains("V17-RECOVERY", "V17-SOAK", "V17-PERF", "V17-COMPAT", "V17-OPS", "V17-SUPPLY");
         assertThat(passedPr).allMatch(id -> Set.of(
                 "V17-CONTRACT", "V17-UPGRADE", "V17-REGRESSION",
-                "V17-RECOVERY", "V17-PERF").contains(id));
+                "V17-RECOVERY", "V17-SOAK", "V17-PERF", "V17-COMPAT", "V17-OPS", "V17-SUPPLY").contains(id));
 
         for (String id : List.of("V17-CONTRACT", "V17-UPGRADE", "V17-REGRESSION")) {
             JsonNode gate = findRequirement(requirements, id).get("gates").get("PR");
@@ -97,8 +98,8 @@ class AcceptanceManifestSchemaTest {
             String status = gate.get("status").asText();
             assertThat(ALLOWED_STATUSES).as(id + "." + level + " status").contains(status);
 
-            // Completed gates must carry concrete evidence. RC/RELEASE remain unexecuted during
-            // PR implementation and certification.
+            // Completed gates must carry concrete evidence. M6-A may promote only its frozen
+            // recovery/upgrade/compatibility/soak RC gates; RELEASE remains owned by M6-B.
             if ("PASSED".equals(status) || "FAILED".equals(status)) {
                 assertThat(gate.get("commands").isArray()).isTrue();
                 assertThat(gate.get("commands")).as(id + "." + level + " commands").isNotEmpty();
@@ -108,8 +109,14 @@ class AcceptanceManifestSchemaTest {
                 assertThat(gate.get("endedAt").isNull()).isFalse();
                 assertThat(gate.get("buildId").asText())
                         .as(id + "." + level + " tested build").isNotBlank();
-                assertThat(level).as(id + "." + level + " is not a self-certifiable gate yet")
-                        .isEqualTo("PR");
+                if ("RC".equals(level)) {
+                    assertThat(Set.of("V17-RECOVERY", "V17-UPGRADE", "V17-SOAK", "V17-PERF", "V17-COMPAT"))
+                            .as(id + ".RC is not promotable by M6-A")
+                            .contains(id);
+                } else {
+                    assertThat(level).as(id + "." + level + " is not authorized yet")
+                            .isEqualTo("PR");
+                }
             } else {
                 assertThat(gate.get("commands").isArray()).isTrue();
                 assertThat(gate.get("commands")).as(id + "." + level + " commands").isEmpty();
@@ -120,7 +127,6 @@ class AcceptanceManifestSchemaTest {
             }
         }
 
-        assertThat(req.get("gates").get("RC").get("status").asText()).isEqualTo("NOT_RUN");
         assertThat(req.get("gates").get("RELEASE").get("status").asText()).isEqualTo("NOT_RUN");
     }
 

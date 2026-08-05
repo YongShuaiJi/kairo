@@ -1,0 +1,305 @@
+name: rc-certification
+
+# V1.7 M6-A (roadmap §13.2.1): the authoritative RC certification workflow.
+#
+# Freezes ONE immutable candidate commit (workflow_dispatch input candidate-sha), then runs the
+# upgrade/backup/restore/rollback rehearsal (Linux/JDK21/PostgreSQL16/Redis7/Docker), the 10,000-
+# cycle state-cycle gate, and the real PT2H RC soak for that exact SHA. The aggregate job binds
+# every sub-result to that one 40-hex buildId together with the final C01-C10 compatibility matrix
+# (produced by the EXISTING authoritative compatibility-matrix workflow for the same SHA - not a
+# second competing matrix) and the maintainer-owned defect inventory, and writes the single
+# target/v1.7/rc-certification-result.json.
+#
+# No test-clock acceleration, no shortened duration, no reduced cycles, no dev/dirty evidence is
+# authoritative. Does NOT publish packages/images/releases, sign final artifacts, create tags, or fill
+# LTS dates (those are M6-B). All third-party actions are pinned by immutable SHA; least permissions.
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate-sha:
+        description: "Full 40-hex candidate commit SHA to certify (frozen before execution)"
+        required: true
+
+permissions:
+  contents: read
+  actions: read   # gh: find + download the compatibility-matrix run/artifact for the candidate SHA
+
+env:
+  CANDIDATE_SHA: ${{ inputs['candidate-sha'] }}
+
+jobs:
+  resolve:
+    name: Resolve + freeze candidate commit
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.freeze.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs['candidate-sha'] }}
+          fetch-depth: 0
+      - name: Freeze + validate the candidate SHA
+        id: freeze
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse 'HEAD^{commit}')"
+          echo "$sha" | grep -Eq '^[0-9a-f]{40}$' || { echo "error: resolved HEAD is not 40-hex: $sha" >&2; exit 1; }
+          [ "$sha" = "$CANDIDATE_SHA" ] || { echo "error: checkout HEAD $sha != input $CANDIDATE_SHA" >&2; exit 1; }
+          [ -z "$(git status --porcelain)" ] || { echo "error: candidate checkout is dirty" >&2; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "==> frozen RC candidate: $sha"
+      - name: Validate M0-M5 PR entry gates and defect declaration
+        run: |
+          set -euo pipefail
+          jq -e '
+            (["V17-CONTRACT", "V17-RECOVERY", "V17-UPGRADE", "V17-SOAK",
+              "V17-PERF", "V17-COMPAT", "V17-OPS", "V17-SUPPLY", "V17-REGRESSION"] as $required
+             | ([.requirements[] | select(.id as $id | $required | index($id))
+                  | select(.gates.PR.status == "PASSED") | .id] | sort)
+               == ($required | sort))
+          ' v1.7-acceptance-manifest.json >/dev/null || {
+            echo "error: one or more required M0-M5 PR entry gates are not PASSED" >&2
+            exit 1
+          }
+          test "$(jq -r .status v1.7-defect-inventory.json)" = authoritative || {
+            echo "error: maintainer defect inventory is not authoritative" >&2
+            exit 1
+          }
+          test "$(jq -r .buildId v1.7-defect-inventory.json)" = '${CANDIDATE_SHA}' || {
+            echo "error: tracked defect inventory must carry the literal candidate binding token" >&2
+            exit 1
+          }
+
+  upgrade-rehearsal:
+    name: Upgrade / backup / restore / rollback rehearsal
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          # V1.6.0 is built in a detached worktree at its immutable tag; full history is required.
+          fetch-depth: 0
+      - uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Run upgrade rehearsal (V1.6.0 -> candidate, PostgreSQL16, Redis7)
+        run: |
+          ./scripts/v1.7/run-upgrade-rehearsal.sh \
+            --from V1.6.0 --to "${{ needs.resolve.outputs.sha }}" --database postgresql16 \
+            --output target/v1.7/upgrade
+      - name: Upload upgrade-rehearsal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: upgrade-rehearsal-evidence
+          path: target/v1.7/upgrade/
+          if-no-files-found: error
+
+  recovery:
+    name: M1 recovery closed-loop on frozen candidate
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: kairo-platform-web/package-lock.json
+      - name: Install frozen Web dependencies
+        working-directory: kairo-platform-web
+        run: npm ci
+      - name: Run M1 recovery acceptance on the frozen candidate
+        run: ./scripts/v1.7/run-m1-acceptance.sh
+      - name: Upload recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: recovery-evidence
+          path: |
+            target/v1.7/recovery-result.json
+            target/v1.7/runner-outcomes.jsonl
+          if-no-files-found: error
+
+  state-cycle:
+    name: 10,000-cycle state-cycle gate
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 1
+      - uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Run 10,000-cycle state-cycle gate
+        run: |
+          ./scripts/v1.7/run-state-cycle.sh --cycles 10000 --output target/v1.7
+      - name: Upload state-cycle evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: state-cycle-evidence
+          path: target/v1.7/state-cycle-result.json
+          if-no-files-found: error
+
+  soak:
+    name: Real PT2H RC soak
+    needs: resolve
+    runs-on: ubuntu-24.04
+    # 2h soak + build headroom; no acceleration.
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 1
+      - uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Run real PT2H RC soak
+        run: |
+          ./scripts/v1.7/run-soak.sh --duration PT2H --output target/v1.7/rc-soak
+      - name: Upload soak evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: soak-evidence
+          path: |
+            target/v1.7/rc-soak/soak-result.json
+            target/v1.7/rc-soak/soak-timeseries.jsonl
+          if-no-files-found: error
+
+  aggregate:
+    name: Aggregate RC certification (bind all evidence to the frozen SHA)
+    needs: [resolve, recovery, upgrade-rehearsal, state-cycle, soak]
+    if: ${{ always() && needs.resolve.result == 'success' }}
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          # verify-compatibility.sh builds the verifier at the candidate; full history is harmless.
+          fetch-depth: 0
+      - uses: actions/setup-java@d7793b545071e98d581d3bf084a51c3213318a07 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Download this run's recovery / upgrade / state-cycle / soak evidence
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          mkdir -p target/v1.7/upgrade target/v1.7/rc-soak
+          failed=0
+          gh run download "$GITHUB_RUN_ID" -n recovery-evidence           -D target/v1.7         || failed=1
+          gh run download "$GITHUB_RUN_ID" -n upgrade-rehearsal-evidence -D target/v1.7/upgrade || failed=1
+          gh run download "$GITHUB_RUN_ID" -n state-cycle-evidence       -D target/v1.7         || failed=1
+          gh run download "$GITHUB_RUN_ID" -n soak-evidence              -D target/v1.7/rc-soak || failed=1
+          test -f target/v1.7/recovery-result.json                    || failed=1
+          test -f target/v1.7/upgrade/upgrade-rehearsal-result.json   || failed=1
+          test -f target/v1.7/state-cycle-result.json                 || failed=1
+          test -f target/v1.7/rc-soak/soak-result.json                || failed=1
+          exit "$failed"
+
+      - name: Find + wait for the compatibility-matrix run for the candidate SHA
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # Reuse the EXISTING authoritative compatibility-matrix workflow output for this exact
+          # commit (do NOT run a second competing matrix). Fail closed if no run exists for the SHA.
+          run_id="$(gh run list -w compatibility-matrix.yml --commit "$CANDIDATE_SHA" \
+                    --json databaseId -q '.[0].databaseId' --limit 5 || true)"
+          if [ -z "$run_id" ]; then
+            echo "error: no compatibility-matrix run found for candidate $CANDIDATE_SHA" >&2
+            echo "       push the candidate to V1.7 so compatibility-matrix.yml runs for it, then retry." >&2
+            exit 1
+          fi
+          echo "==> compatibility-matrix run: $run_id (waiting for completion)"
+          gh run watch "$run_id" --exit-status
+          mkdir -p target/v1.7/compat-download
+          gh run download "$run_id" -n compatibility-result -D target/v1.7/compat-download
+          compat_source="$(find target/v1.7/compat-download -type f -name compatibility-result.json -print -quit)"
+          test -n "$compat_source" || {
+            echo "error: compatibility-result artifact did not contain compatibility-result.json" >&2
+            exit 1
+          }
+          cp "$compat_source" target/v1.7/compatibility-result.json
+          echo "COMPAT_RUN_ID=$run_id" >> "$GITHUB_ENV"
+
+      - name: Verify the compatibility matrix with the existing verifier
+        continue-on-error: true
+        run: |
+          ./scripts/v1.7/verify-compatibility.sh target/v1.7/compatibility-result.json
+
+      - name: Bind the maintainer defect inventory to the frozen candidate
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          test "$(jq -r .status v1.7-defect-inventory.json)" = authoritative || {
+            echo "error: maintainer defect inventory is not authoritative" >&2
+            exit 1
+          }
+          test "$(jq -r .buildId v1.7-defect-inventory.json)" = '${CANDIDATE_SHA}' || {
+            echo "error: tracked defect inventory contains an unexpected candidate binding" >&2
+            exit 1
+          }
+          jq --arg sha "${{ needs.resolve.outputs.sha }}" \
+            '.buildId = $sha | .generatedAt = (now | todateiso8601)' \
+            v1.7-defect-inventory.json > target/v1.7/defect-inventory.json
+
+      - name: Aggregate RC certification (bind every sub-result to the frozen buildId)
+        run: |
+          ./scripts/v1.7/aggregate-rc-certification.sh \
+            --build-id "${{ needs.resolve.outputs.sha }}" \
+            --recovery target/v1.7/recovery-result.json \
+            --upgrade target/v1.7/upgrade/upgrade-rehearsal-result.json \
+            --compatibility target/v1.7/compatibility-result.json \
+            --state-cycle target/v1.7/state-cycle-result.json \
+            --soak target/v1.7/rc-soak/soak-result.json \
+            --defects target/v1.7/defect-inventory.json \
+            --output target/v1.7/rc-certification-result.json \
+            --evidence-root target/v1.7
+
+      - name: Verify the aggregate RC certification result
+        run: |
+          ./scripts/v1.7/verify-rc-certification.sh target/v1.7/rc-certification-result.json
+
+      - name: Upload RC certification result + logs (even on failure)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rc-certification-result
+          path: |
+            target/v1.7/rc-certification-result.json
+            target/v1.7/recovery-result.json
+            target/v1.7/runner-outcomes.jsonl
+            target/v1.7/state-cycle-result.json
+            target/v1.7/defect-inventory.json
+            target/v1.7/compatibility-result.json
+            target/v1.7/upgrade/
+            target/v1.7/rc-soak/
+          if-no-files-found: warn

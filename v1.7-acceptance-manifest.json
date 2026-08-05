@@ -1,8 +1,8 @@
 {
   "schemaVersion": "2.0",
   "release": "V1.7.0",
-  "buildId": "44c40afc88b4201305826e40aaa30139ecd61ee0",
-  "generatedAt": "2026-07-26T04:03:20Z",
+  "buildId": "336685b4bc79576cba4ab94304d8e4085ac1fe84",
+  "generatedAt": "2026-08-04T22:54:08Z",
   "sourceBaseline": {
     "version": "V1.6.0",
     "commit": "113823b41981a2d8fb5473a772ae2d2938d9582e",
@@ -188,17 +188,31 @@
     },
     {
       "id": "V17-SOAK",
-      "codeAndTests": [],
+      "codeAndTests": [
+        "scripts/v1.7/run-soak.sh",
+        "scripts/v1.7/verify-performance-evidence.sh",
+        "kairo-integration-tests/src/test/java/com/example/kairo/perf/soak"
+      ],
       "gates": {
         "PR": {
-          "status": "NOT_RUN",
-          "environment": {},
-          "commands": [],
-          "reports": [],
-          "startedAt": null,
-          "endedAt": null,
+          "status": "PASSED",
+          "buildId": "95247b19cd76ea84cf6d1a9d0404143c60520e34",
+          "environment": {
+            "os": "Darwin arm64",
+            "java": "21"
+          },
+          "commands": [
+            "mvn -B -ntp -pl kairo-integration-tests -am test -Dtest='com.example.kairo.perf.soak.*' -Dsurefire.failIfNoSpecifiedTests=false",
+            "mvn -B -ntp -pl kairo-integration-tests -am test"
+          ],
+          "reports": [
+            "kairo-integration-tests/target/surefire-reports/TEST-com.example.kairo.perf.soak.*.xml"
+          ],
+          "startedAt": "2026-07-31T13:57:03Z",
+          "endedAt": "2026-07-31T13:57:03Z",
           "limitations": [
-            "Not a gate at this level (schema 1.0 gateLevel: RC,RELEASE)"
+            "Historical M2 short-soak PR acceptance is anchored to the Codex acceptance commit timestamp because the original wall-clock start was not retained",
+            "The real PT2H RC soak and P7D RELEASE soak remain separate non-accelerated gates"
           ]
         },
         "RC": {
@@ -208,8 +222,8 @@
           "reports": [],
           "startedAt": null,
           "endedAt": null,
-          "limitations": [
-            "Scheduled for M2 and M6"
+        "limitations": [
+            "Real PT2H candidate certification is owned by M6-A"
           ]
         },
         "RELEASE": {
@@ -220,7 +234,7 @@
           "startedAt": null,
           "endedAt": null,
           "limitations": [
-            "Scheduled for M2 and M6"
+            "Real P7D final soak is owned by M6-B"
           ]
         }
       }
@@ -294,18 +308,34 @@
     {
       "id": "V17-COMPAT",
       "codeAndTests": [
-        ".github/workflows/compatibility-matrix.yml"
+        ".github/workflows/compatibility-matrix.yml",
+        "scripts/v1.7/run-compatibility.sh",
+        "scripts/v1.7/aggregate-compatibility.sh",
+        "scripts/v1.7/verify-compatibility.sh",
+        "kairo-integration-tests/src/test/java/com/example/kairo/compatmatrix"
       ],
       "gates": {
         "PR": {
-          "status": "NOT_RUN",
-          "environment": {},
-          "commands": [],
-          "reports": [],
-          "startedAt": null,
-          "endedAt": null,
+          "status": "PASSED",
+          "buildId": "d7667842f4901966846dd031590cca40b2db7af8",
+          "environment": {
+            "orchestrator": "GitHub Actions compatibility-matrix",
+            "java": "17/21",
+            "matrix": "Linux amd64, macOS arm64"
+          },
+          "commands": [
+            "mvn -B -ntp -pl kairo-integration-tests -am test -Dtest='com.example.kairo.compatmatrix.*' -Dsurefire.failIfNoSpecifiedTests=false",
+            ".github/workflows/compatibility-matrix.yml"
+          ],
+          "reports": [
+            "target/v1.7/compatibility-result.json",
+            "*/target/surefire-reports/TEST-com.example.kairo.compatmatrix.*.xml"
+          ],
+          "startedAt": "2026-08-02T06:52:31Z",
+          "endedAt": "2026-08-02T06:52:31Z",
           "limitations": [
-            "Formal supported OS/JDK/framework/component matrix is scheduled for M3"
+            "Historical M3 PR acceptance is anchored to the Codex acceptance commit timestamp because the original CI wall-clock start was not retained",
+            "Final candidate C01-C10 evidence remains an RC gate owned by M6-A"
           ]
         },
         "RC": {
@@ -334,17 +364,34 @@
     },
     {
       "id": "V17-OPS",
-      "codeAndTests": [],
+      "codeAndTests": [
+        "scripts/v1.7/run-ops-drill.sh",
+        "kairo-platform-server/src/test/java/com/example/kairo/platform/health",
+        "kairo-platform-server/src/test/java/com/example/kairo/platform/metrics",
+        "kairo-platform-server/src/test/java/com/example/kairo/platform/support",
+        "docs/ops/v1.7-lts-runbook.md"
+      ],
       "gates": {
         "PR": {
-          "status": "NOT_RUN",
-          "environment": {},
-          "commands": [],
-          "reports": [],
-          "startedAt": null,
-          "endedAt": null,
+          "status": "PASSED",
+          "buildId": "35a4a03d701b622a1360feb407c547d027b8ac35",
+          "environment": {
+            "os": "Darwin arm64",
+            "java": "21"
+          },
+          "commands": [
+            "./scripts/v1.7/run-ops-drill.sh --output target/v1.7/ops",
+            "mvn -B -ntp test"
+          ],
+          "reports": [
+            "target/v1.7/ops-result.json",
+            "*/target/surefire-reports/TEST-*.xml"
+          ],
+          "startedAt": "2026-08-02T23:14:44Z",
+          "endedAt": "2026-08-02T23:14:44Z",
           "limitations": [
-            "Scheduled for M4"
+            "Historical M4 PR acceptance is anchored to the Codex acceptance commit timestamp because the original drill start was not retained",
+            "Production-topology outage recovery remains part of M6-A recovery and upgrade rehearsal"
           ]
         },
         "RC": {
@@ -373,17 +420,38 @@
     },
     {
       "id": "V17-SUPPLY",
-      "codeAndTests": [],
+      "codeAndTests": [
+        "scripts/v1.7/build-release.sh",
+        "scripts/v1.7/test-release-assembly.sh",
+        "scripts/v1.7/test-supply-chain.sh",
+        "scripts/v1.7/test-m5d-release-integrity.sh",
+        ".github/workflows/release-integrity.yml"
+      ],
       "gates": {
         "PR": {
-          "status": "NOT_RUN",
-          "environment": {},
-          "commands": [],
-          "reports": [],
-          "startedAt": null,
-          "endedAt": null,
+          "status": "PASSED",
+          "buildId": "336685b4bc79576cba4ab94304d8e4085ac1fe84",
+          "environment": {
+            "os": "Darwin arm64",
+            "java": "21",
+            "node": "24"
+          },
+          "commands": [
+            "./scripts/v1.7/test-m5d-release-integrity.sh",
+            "./scripts/v1.7/verify-release.sh target/v1.7/release-a/release-manifest.json --require-signature false",
+            "mvn -B -ntp test",
+            "npm ci && npm run lint && npm run typecheck && npm run test && npm run build"
+          ],
+          "reports": [
+            "target/v1.7/release-a/release-manifest.json",
+            "target/v1.7/release-a/release-integrity-result.json",
+            "target/v1.7/reproducibility-result.json"
+          ],
+          "startedAt": "2026-08-04T22:54:08Z",
+          "endedAt": "2026-08-04T22:54:08Z",
           "limitations": [
-            "Scheduled for M5 and M6"
+            "Historical M5 PR acceptance is anchored to the final Codex acceptance commit timestamp",
+            "M5 PR permits local unsigned provenance; final cosign signature remains an M6-B RELEASE gate"
           ]
         },
         "RC": {
