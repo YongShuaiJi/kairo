@@ -67,7 +67,7 @@ jobs:
           echo "GRYPE_BIN=$HOME/.local/bin/grype" >> "$GITHUB_ENV"
 
       - name: Install pinned cosign (keyless, OIDC)
-        uses: sigstore/cosign-installer@59c3f618c6a25f5a4f59e55f567068611a64bdf5 # v3.9.0
+        uses: sigstore/cosign-installer@fb28c2b6339dcd94da6e4cbcbc5e888961f6f8c3 # v3.9.0
         with:
           cosign-release: "v${{ env.COSIGN_VERSION }}"
 
