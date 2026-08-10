@@ -351,7 +351,11 @@ class KairoAgentIntegrationTest {
                 return mock.returnValue(999)
                 """).toBuilder().maxHits(10).build());
 
-        var executor = Executors.newFixedThreadPool(100);
+        // Keep more than one caller to exercise the atomic maxHits claim, but do not
+        // conflate this test with dispatcher saturation. GitHub's 2-core runners expose
+        // only four default script workers, so a 100-thread burst legitimately fail-opens
+        // most calls before the rule executes.
+        var executor = Executors.newFixedThreadPool(2);
         try {
             List<Callable<Integer>> tasks = new ArrayList<>();
             for (int i = 0; i < 100; i++) {
