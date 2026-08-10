@@ -509,12 +509,22 @@ REDIS_HOST_PORT="$(docker port "$REDIS_CONTAINER" 6379/tcp | sed -E 's/.*://; q'
 # Wait for PostgreSQL readiness (bounded).
 echo "==> waiting for PostgreSQL 16 readiness (host port $PG_HOST_PORT)"
 deadline=$(( $(date +%s) + 60 ))
+pg_ready_streak=0
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  if docker exec "$PG_CONTAINER" pg_isready -U kairo -d kairo >/dev/null 2>&1; then break; fi
-  sleep 2
+  # The official image briefly accepts connections while docker-entrypoint is still
+  # creating POSTGRES_DB, then performs a fast shutdown/restart. A single successful
+  # pg_isready in that window is not stable readiness. Require three consecutive probes
+  # so the rehearsal cannot race the initialization restart (observed on GitHub runners).
+  if docker exec "$PG_CONTAINER" pg_isready -U kairo -d kairo >/dev/null 2>&1; then
+    pg_ready_streak=$((pg_ready_streak + 1))
+    [ "$pg_ready_streak" -ge 3 ] && break
+  else
+    pg_ready_streak=0
+  fi
+  sleep 1
 done
-docker exec "$PG_CONTAINER" pg_isready -U kairo -d kairo >/dev/null 2>&1 \
-  || fail_scenario "start-postgres" "pg_isready never succeeded" 3
+[ "$pg_ready_streak" -ge 3 ] \
+  || fail_scenario "start-postgres" "pg_isready was not stable for three consecutive probes" 3
 
 # Verify the real PostgreSQL major version (fail closed on wrong major).
 PG_VERSION_FULL="$(docker exec "$PG_CONTAINER" psql -U kairo -d kairo -tAc 'SELECT version()' 2>/dev/null | head -1)"
