@@ -127,7 +127,7 @@ jobs:
       # --- M5-D: provenance + cosign keyless RC signature rehearsal ----------------------
       - name: Generate the in-toto provenance statement (deterministic)
         run: |
-          ./scripts/v1.7/lib/reprolib.py build-provenance \
+          python3 ./scripts/v1.7/lib/reprolib.py build-provenance \
             --manifest "$RELEASE_A_ROOT/target/v1.7/release/release-manifest.json" \
             --generator github-actions-oidc \
             --build-workflow "./scripts/v1.7/build-release.sh --version $RC_VERSION --output target/v1.7/release"
