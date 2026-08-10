@@ -148,7 +148,6 @@ public final class SoakHarness {
             ctx.processStartId = "soak-host:" + ProcessHandle.current().pid() + ":" + startedAt.toEpochMilli();
             ctx.platformLink = new SoakPlatformLink(ctx.runtime, "soak-agent", ctx.processStartId);
 
-            SoakBudgetChecker checker = new SoakBudgetChecker(BUDGET);
             setupPrimaryTarget(ctx);
             // Establish the original baseline bytes once; every full-unload must restore to them.
             ctx.originalBaseline = ctx.runtime.captureService().capture(ctx.clazz);
@@ -156,6 +155,18 @@ public final class SoakHarness {
             // Begin the continuous phase with the primary enhanced.
             enhanceContinuous(ctx);
             ctx.expectedPrimaryValue = 77;
+
+            // Prime every lifecycle path that otherwise first appears after the measurement
+            // baseline (the 5-minute batch and the 30-minute reconnect). Without this explicit
+            // cold-start phase, minute 1 is not a stable JVM baseline: the first reconnect alone
+            // lazily loads hundreds of harness/protocol classes and can look like a sustained
+            // Metaspace leak even when usage immediately plateaus. Warm-up uses cycle zero so its
+            // commands cannot collide with measured cycle ids, and the reset below excludes
+            // it from duration/cadence/evidence counts. Product budgets remain unchanged.
+            warmUpMeasurementPaths(ctx);
+            clock.reset();
+            startedAt = clock.now();
+            SoakBudgetChecker checker = new SoakBudgetChecker(BUDGET);
 
             Duration duration = opts.duration();
             Duration nextSummary = CADENCE.summaryInterval();
@@ -284,6 +295,45 @@ public final class SoakHarness {
         return 0;
     }
 
+    /** Exercise cold lifecycle and evidence paths once, then leave the runtime enhanced. */
+    private static void warmUpMeasurementPaths(Context ctx) throws Exception {
+        Failure batchFailure = runBatch(ctx, 0);
+        if (batchFailure != null) {
+            throw new AssertionFailure("warmup-" + batchFailure.phase,
+                    batchFailure.expected, batchFailure.actual, batchFailure.detail);
+        }
+        ctx.warmupBatchCompleted = true;
+
+        Failure disconnectFailure = runDisconnectRecovery(ctx, 0, false);
+        if (disconnectFailure != null) {
+            throw new AssertionFailure("warmup-" + disconnectFailure.phase,
+                    disconnectFailure.expected, disconnectFailure.actual, disconnectFailure.detail);
+        }
+        ctx.warmupDisconnectCompleted = true;
+
+        // Load the observation/Jackson path before minute 1 as well. The observation is not
+        // recorded; it exists solely to make the subsequent baseline a stable-window sample.
+        SoakObservation warmupObservation = captureSummary(ctx, new SoakBudgetChecker(BUDGET));
+        ObjectNode warmupJson = MAPPER.createObjectNode();
+        warmupJson.put("timestamp", warmupObservation.timestamp().toString());
+        warmupJson.put("metaspaceUsedBytes", warmupObservation.metaspaceUsedBytes());
+        warmupJson.put("loadedClassCount", warmupObservation.loadedClassCount());
+        MAPPER.writeValueAsString(warmupJson);
+        ctx.warmupResourceSampleCompleted = true;
+        try {
+            System.gc();
+            MEMORY_MX.gc();
+        } catch (RuntimeException ignored) {
+            // Best effort, identical to the per-summary retained-memory observation contract.
+        }
+
+        ctx.summaries = 0;
+        ctx.disconnectDetails.clear();
+        ctx.disconnectLastOutcome = null;
+        ctx.behaviorDriftStartedAtSeconds = -1L;
+        ctx.runtimeStateDriftStartedAtSeconds = -1L;
+    }
+
     // -------------------------------------------------------- primary target setup
 
     private static void setupPrimaryTarget(Context ctx) throws Exception {
@@ -355,7 +405,10 @@ public final class SoakHarness {
     // -------------------------------------------------------- 5-minute batch
 
     private static Failure runBatch(Context ctx) {
-        int cycle = ctx.batchesRun + 1;
+        return runBatch(ctx, ctx.batchesRun + 1);
+    }
+
+    private static Failure runBatch(Context ctx, int cycle) {
         try {
             MockRule a = rule("chain-a-" + cycle, ctx.method, EnhancementLocation.METHOD_RETURN, 30,
                     "return mock.replaceReturnValue(ctx.result() + 1)");
@@ -419,7 +472,10 @@ public final class SoakHarness {
     // -------------------------------------------------------- 30-minute disconnect/recovery
 
     private static Failure runDisconnectRecovery(Context ctx) {
-        int cycle = ctx.disconnectsRun + 1;
+        return runDisconnectRecovery(ctx, ctx.disconnectsRun + 1, true);
+    }
+
+    private static Failure runDisconnectRecovery(Context ctx, int cycle, boolean countAsMeasured) {
         try {
             // Precondition: the live JVM is currently enhanced.
             verify("disconnect-precondition", 77, ctx.instance.calculateScore(5));
@@ -442,7 +498,9 @@ public final class SoakHarness {
                         "REFRESH_RUNTIME_STATE lost the applied chain in cycle " + cycle);
             }
             verify("recovery-jvm-still-enhanced", 77, ctx.instance.calculateScore(5));
-            ctx.disconnectsRun++;
+            if (countAsMeasured) {
+                ctx.disconnectsRun++;
+            }
             ctx.disconnectDetails.add("cycle " + cycle + ": RECOVERED processStartId="
                     + snapshot.processStartId() + " rules=" + snapshot.rules().size()
                     + " chains=" + snapshot.chains().size());
@@ -746,6 +804,12 @@ public final class SoakHarness {
         cycles.put("summaries", ctx.summaries);
         cycles.put("failedBatches", ctx.failedBatches);
 
+        ObjectNode warmup = root.putObject("measurementWarmup");
+        warmup.put("enhanceUnloadBatch", ctx.warmupBatchCompleted);
+        warmup.put("disconnectRecovery", ctx.warmupDisconnectCompleted);
+        warmup.put("resourceSample", ctx.warmupResourceSampleCompleted);
+        warmup.put("excludedFromDurationAndCycles", true);
+
         ObjectNode budgets = root.putObject("budgets");
         budgets.put("maxHeapGrowthPct", BUDGET.maxHeapGrowthPct());
         budgets.put("maxMetaspaceGrowthPct", BUDGET.maxMetaspaceGrowthPct());
@@ -971,6 +1035,9 @@ public final class SoakHarness {
         long runtimeStateDriftStartedAtSeconds = -1L;
         boolean oomEvidence;
         boolean evidenceWriteFailure;
+        boolean warmupBatchCompleted;
+        boolean warmupDisconnectCompleted;
+        boolean warmupResourceSampleCompleted;
         Failure firstFailure;
         List<SoakObservation> observations = new ArrayList<>();
         List<String> disconnectDetails = new ArrayList<>();

@@ -46,14 +46,22 @@ public sealed interface SoakClock permits SoakClock.WallClock, SoakClock.Acceler
      */
     void tick();
 
+    /**
+     * Reset the measurement origin after the harness has exercised its cold startup paths.
+     * Warm-up work is real lifecycle work, but it is deliberately excluded from the requested
+     * soak duration and from the fixed cadence counters.
+     */
+    void reset();
+
     /** The production wall clock: real time, no synthetic advance. Used by {@code main} / RC / RELEASE. */
     final class WallClock implements SoakClock {
-        private final long startedNanos = System.nanoTime();
+        private long startedNanos = System.nanoTime();
         @Override public Instant now() { return Instant.now(); }
         @Override public Duration elapsed() {
             return Duration.ofNanos(Math.max(0L, System.nanoTime() - startedNanos));
         }
         @Override public void tick() { /* real time advances on its own; no synthetic step */ }
+        @Override public void reset() { startedNanos = System.nanoTime(); }
     }
 
     /**
@@ -87,5 +95,6 @@ public sealed interface SoakClock permits SoakClock.WallClock, SoakClock.Acceler
             current = current.plus(step);
             elapsed = elapsed.plus(step);
         }
+        @Override public void reset() { elapsed = Duration.ZERO; }
     }
 }

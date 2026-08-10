@@ -77,10 +77,18 @@ class SoakShortLifecycleTest {
         // The fixed cadence fired a full sequence over the accelerated virtual time.
         JsonNode cycles = result.path("cycles");
         assertThat(cycles.path("summaries").asInt()).as("per-minute summaries").isGreaterThanOrEqualTo(30);
-        assertThat(cycles.path("enhanceUnloadBatches").asInt()).as("5-minute batches").isGreaterThanOrEqualTo(6);
-        assertThat(cycles.path("disconnectRecoveries").asInt()).as("30-minute disconnect/recovery").isGreaterThanOrEqualTo(1);
+        assertThat(cycles.path("enhanceUnloadBatches").asInt()).as("5-minute measured batches")
+                .isEqualTo(6);
+        assertThat(cycles.path("disconnectRecoveries").asInt()).as("30-minute measured disconnect/recovery")
+                .isEqualTo(1);
         assertThat(cycles.path("continuousInvocations").asLong()).as("continuous real invocations").isGreaterThan(0L);
         assertThat(cycles.path("failedBatches").asInt()).isZero();
+
+        JsonNode warmup = result.path("measurementWarmup");
+        assertThat(warmup.path("enhanceUnloadBatch").asBoolean()).isTrue();
+        assertThat(warmup.path("disconnectRecovery").asBoolean()).isTrue();
+        assertThat(warmup.path("resourceSample").asBoolean()).isTrue();
+        assertThat(warmup.path("excludedFromDurationAndCycles").asBoolean()).isTrue();
 
         // The fixed cadence is recorded verbatim (production default unchanged).
         JsonNode cadence = result.path("cadence");
@@ -91,6 +99,8 @@ class SoakShortLifecycleTest {
         // The disconnect/recovery really ran and recovered.
         JsonNode dr = result.path("disconnectRecovery");
         assertThat(dr.path("count").asInt()).isGreaterThanOrEqualTo(1);
+        assertThat(dr.path("details")).as("cycle-zero warm-up must not leak into measured evidence")
+                .hasSize(1);
         assertThat(dr.path("lastOutcome").asText()).isEqualTo("RECOVERED");
 
         // The raw time-series file exists at the recorded in-repo/local path.

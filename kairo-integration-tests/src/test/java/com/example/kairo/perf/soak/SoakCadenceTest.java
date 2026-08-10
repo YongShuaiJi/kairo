@@ -73,6 +73,10 @@ class SoakCadenceTest {
         accelerated.tick();
         assertThat(accelerated.now()).isEqualTo(start.plus(Duration.ofMinutes(2)));
         assertThat(accelerated.elapsed()).isEqualTo(Duration.ofMinutes(2));
+        accelerated.reset();
+        assertThat(accelerated.elapsed()).as("warm-up time is excluded from measurement").isZero();
+        assertThat(accelerated.now()).as("reset never moves the evidence clock backward")
+                .isEqualTo(start.plus(Duration.ofMinutes(2)));
     }
 
     @Test
