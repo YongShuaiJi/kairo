@@ -177,8 +177,9 @@ reactor_classes() {
   echo "${out#:}"
 }
 EXTDEPS_FILE="$(mktemp -t kairo-leakcheck-deps-XXXXXX)"
-if ! (cd "$REPO_ROOT" && $MVN -B -ntp -pl kairo-integration-tests \
-      dependency:build-classpath -Dmdep.outputFile="$EXTDEPS_FILE" -q >/dev/null 2>&1); then
+if ! (cd "$REPO_ROOT" && $MVN -B -ntp -pl kairo-integration-tests -am \
+      package -DskipTests dependency:build-classpath \
+      -Dmdep.outputFile="$EXTDEPS_FILE" -DincludeScope=test -q); then
   echo "error: dependency:build-classpath failed" >&2
   rm -f "$EXTDEPS_FILE"
   exit 2

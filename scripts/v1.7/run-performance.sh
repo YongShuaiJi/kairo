@@ -222,8 +222,9 @@ reactor_classes() {
 build_extdeps() {
   # Writes the external dependency classpath to stdout for the given worktree.
   local wt="$1" outfile="$2"
-  "$MVN" -B -ntp -f "$wt/pom.xml" -pl kairo-integration-tests \
-    dependency:build-classpath -Dmdep.outputFile="$outfile" -q >/dev/null 2>&1 || {
+  "$MVN" -B -ntp -f "$wt/pom.xml" -pl kairo-integration-tests -am \
+    package -DskipTests dependency:build-classpath \
+    -Dmdep.outputFile="$outfile" -DincludeScope=test -q || {
     echo "error: dependency:build-classpath failed for $wt" >&2
     return 1
   }
