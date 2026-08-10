@@ -31,8 +31,6 @@ jobs:
       GRYPE_VERSION: "0.116.1"
       RC_VERSION: "1.7.0-rc.1"
       COSIGN_VERSION: "2.5.0"
-      RELEASE_A_ROOT: ${{ runner.temp }}/kairo-release-a
-      RELEASE_B_ROOT: ${{ runner.temp }}/kairo-release-b
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -55,16 +53,17 @@ jobs:
       - name: Install pinned Grype 0.116.1 (release binary + official checksum)
         run: |
           set -euo pipefail
+          TOOLS_DIR="$RUNNER_TEMP/kairo-tools/grype-${GRYPE_VERSION}"
+          mkdir -p "$TOOLS_DIR" "$HOME/.local/bin"
           GRYPE_TAR="grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
           base="https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}"
-          curl -fsSL -o "$GRYPE_TAR" "${base}/${GRYPE_TAR}"
-          curl -fsSL -o checksums.txt "${base}/grype_${GRYPE_VERSION}_checksums.txt"
-          expected="$(grep -E " ${GRYPE_TAR}\$" checksums.txt | awk '{print $1}' | head -1)"
+          curl -fsSL -o "$TOOLS_DIR/$GRYPE_TAR" "${base}/${GRYPE_TAR}"
+          curl -fsSL -o "$TOOLS_DIR/checksums.txt" "${base}/grype_${GRYPE_VERSION}_checksums.txt"
+          expected="$(grep -E " ${GRYPE_TAR}\$" "$TOOLS_DIR/checksums.txt" | awk '{print $1}' | head -1)"
           [ -n "$expected" ] || { echo "checksum for $GRYPE_TAR not found" >&2; exit 1; }
-          actual="$(sha256sum "$GRYPE_TAR" | awk '{print $1}')"
+          actual="$(sha256sum "$TOOLS_DIR/$GRYPE_TAR" | awk '{print $1}')"
           [ "$actual" = "$expected" ] || { echo "grype checksum mismatch: expected=$expected actual=$actual" >&2; exit 1; }
-          mkdir -p "$HOME/.local/bin"
-          tar -xzf "$GRYPE_TAR" -C "$HOME/.local/bin" grype
+          tar -xzf "$TOOLS_DIR/$GRYPE_TAR" -C "$HOME/.local/bin" grype
           echo "GRYPE_BIN=$HOME/.local/bin/grype" >> "$GITHUB_ENV"
 
       - name: Install pinned cosign (keyless, OIDC)
@@ -78,6 +77,11 @@ jobs:
           path: |
             ~/.cache/grype/db
           key: grype-db-${{ env.GRYPE_VERSION }}-${{ runner.os }}
+
+      - name: Configure isolated release worktrees
+        run: |
+          echo "RELEASE_A_ROOT=$RUNNER_TEMP/kairo-release-a" >> "$GITHUB_ENV"
+          echo "RELEASE_B_ROOT=$RUNNER_TEMP/kairo-release-b" >> "$GITHUB_ENV"
 
       # The two builds must come from distinct clean checkouts, not two output directories in the
       # same checkout. Linked detached worktrees preserve the exact GITHUB_SHA while isolating all

@@ -144,10 +144,17 @@ echo "==> head=$HEAD_ID"
 
 # -----------------------------------------------------------------------------
 # Build the runner in place at HEAD. Single side; no worktree, no dirty.
+# The classpath goal runs in the same reactor invocation after upstream modules
+# have been packaged. A separate single-module invocation cannot resolve this
+# project's CI-friendly ${revision} reactor POMs from a fresh Maven repository.
 # -----------------------------------------------------------------------------
+EXTDEPS_FILE="$(mktemp -t kairo-compat-deps-XXXXXX)"
 echo "==> building runner at $REPO_ROOT"
-if ! (cd "$REPO_ROOT" && $MVN -B -ntp -pl kairo-integration-tests -am test-compile -q); then
+if ! (cd "$REPO_ROOT" && $MVN -B -ntp -pl kairo-integration-tests -am \
+      package -DskipTests dependency:build-classpath \
+      -Dmdep.outputFile="$EXTDEPS_FILE" -DincludeScope=test -q); then
   echo "error: runner build failed" >&2
+  rm -f "$EXTDEPS_FILE"
   exit 2
 fi
 
@@ -273,13 +280,6 @@ reactor_classes() {
   done
   echo "${out#:}"
 }
-EXTDEPS_FILE="$(mktemp -t kairo-compat-deps-XXXXXX)"
-if ! (cd "$REPO_ROOT" && $MVN -B -ntp -pl kairo-integration-tests \
-      dependency:build-classpath -Dmdep.outputFile="$EXTDEPS_FILE" -q >/dev/null 2>&1); then
-  echo "error: dependency:build-classpath failed" >&2
-  rm -f "$EXTDEPS_FILE"
-  exit 2
-fi
 EXTDEPS="$(cat "$EXTDEPS_FILE")"
 rm -f "$EXTDEPS_FILE"
 CP="$REPO_ROOT/kairo-integration-tests/target/test-classes:$(reactor_classes):$EXTDEPS"

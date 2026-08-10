@@ -202,10 +202,6 @@ JAVA_MAJOR="$("$JAVA_BIN" -version 2>&1 | head -1 | sed -nE 's/.*version "([0-9]
 # Wrong Java major fails closed (the app targets JDK 21; no JDK 8/11 support).
 [ "$JAVA_MAJOR" = "$JAVA_MAJOR_REQUIRED" ] || fail_closed "Java major $JAVA_MAJOR != required $JAVA_MAJOR_REQUIRED (V1.7 targets JDK 21 only)"
 
-# Docker must be present and responsive.
-command -v docker >/dev/null 2>&1 || fail_closed "docker not found on PATH; required for the isolated PostgreSQL/Redis stack"
-docker info >/dev/null 2>&1 || fail_closed "docker daemon not reachable (docker info failed)"
-
 # Dirty-tree detection. Authoritative evidence refuses a dirty tree; --allow-dirty
 # is a clearly-marked development-only escape (mode=dev, authoritative=false).
 DIRTY="false"
@@ -227,6 +223,11 @@ MODE="pr"
 if [ "$AUTHORITATIVE" != "true" ] || [ "$ALLOW_DIRTY" = "true" ]; then
   MODE="dev"
 fi
+
+# Validate candidate provenance before consulting external infrastructure so a
+# dirty candidate can never be misreported as merely a Docker availability issue.
+command -v docker >/dev/null 2>&1 || fail_closed "docker not found on PATH; required for the isolated PostgreSQL/Redis stack"
+docker info >/dev/null 2>&1 || fail_closed "docker daemon not reachable (docker info failed)"
 
 # Per-run state; clear ONLY this runner's prior result + state, then recreate.
 rm -rf "$OUTPUT_DIR/state"

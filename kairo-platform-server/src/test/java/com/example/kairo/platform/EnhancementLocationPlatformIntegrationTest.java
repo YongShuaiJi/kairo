@@ -49,6 +49,7 @@ class EnhancementLocationPlatformIntegrationTest {
 
     private String instanceId;
     private String agentId;
+    private String environmentId;
     private RequestContext admin;
     private RequestContext agentCtx;
 
@@ -60,12 +61,16 @@ class EnhancementLocationPlatformIntegrationTest {
         long n = COUNTER.incrementAndGet();
         instanceId = "instance-loc-" + n;
         agentId = "agent-loc-" + n;
+        environmentId = "env-loc-" + n;
+        jdbc.update("insert into environment(id, application_id, name, type, created_at) "
+                + "values (?, 'app-default', ?, 'dev', current_timestamp)",
+                environmentId, "loc-" + n);
         jdbc.update("""
                 insert into instance(id, application_id, environment_id, nickname, hostname, process_id, runtime,
                   status, labels_json, created_at, updated_at)
-                values (?, 'app-default', 'env-dev', 'loc', 'localhost', '1', 'java',
+                values (?, 'app-default', ?, ?, 'localhost', '1', 'java',
                   'ACTIVE', '{}', current_timestamp, current_timestamp)
-                """, instanceId);
+                """, instanceId, environmentId, "loc-" + n);
         jdbc.update("""
                 insert into agent_instance(id, instance_id, status, agent_version, bootstrap_version,
                   listen_host, listen_port, token_hash, capabilities_json, created_at, updated_at)
@@ -79,12 +84,14 @@ class EnhancementLocationPlatformIntegrationTest {
     @AfterEach
     void tearDown() {
         jdbc.update("delete from agent_command where agent_id = ?", agentId);
+        jdbc.update("delete from rule_runtime_status where rule_id in (select id from rule where created_by = ?)", admin.actor());
         jdbc.update("delete from rule_target where rule_version_id in (select rv.id from rule_version rv join rule r on r.id = rv.rule_id where r.created_by = ?)", admin.actor());
         jdbc.update("delete from rule_capability where rule_version_id in (select rv.id from rule_version rv join rule r on r.id = rv.rule_id where r.created_by = ?)", admin.actor());
         jdbc.update("delete from rule_version where rule_id in (select id from rule where created_by = ?)", admin.actor());
         jdbc.update("delete from rule where created_by = ?", admin.actor());
         jdbc.update("delete from agent_instance where id = ?", agentId);
         jdbc.update("delete from instance where id = ?", instanceId);
+        jdbc.update("delete from environment where id = ?", environmentId);
     }
 
     // -------------------------------------------------------- persistence + legacy mapping
@@ -198,7 +205,7 @@ class EnhancementLocationPlatformIntegrationTest {
         Map<String, Object> ctor = memberTarget("<init>", "()V", "CONSTRUCTOR", true, false, true);
         Map<String, Object> method = memberTarget("query", "()Ljava/lang/String;", "METHOD", false, false, false);
         List<Map<String, Object>> result = runWithAck(
-                () -> targetDiscoveryService.search(admin, "Target", "app-default", "env-dev"),
+                () -> targetDiscoveryService.search(admin, "Target", "app-default", environmentId),
                 Map.of("targets", List.of(ctor, method), "truncated", false));
         assertThat(result).hasSize(2);
         Map<String, Object> constructor = result.stream()
@@ -211,14 +218,14 @@ class EnhancementLocationPlatformIntegrationTest {
     void listCallSitesReturnsCandidatesFromAgent() {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("applicationId", "app-default");
-        body.put("environmentId", "env-dev");
+        body.put("environmentId", environmentId);
         body.put("classId", "com.example.Target");
         body.put("callerMethodName", "invoke");
         body.put("callerMethodDescriptor", "()V");
         Map<String, Object> candidate = Map.of("owner", "com.example.Callee", "name", "run",
                 "descriptor", "()V", "opcode", "INVOKEVIRTUAL", "occurrenceIndex", 1, "fingerprint", "fp-1");
         Map<String, Object> result = runWithAck(
-                () -> targetDiscoveryService.listCallSites(admin, "app-default", "env-dev", body),
+                () -> targetDiscoveryService.listCallSites(admin, "app-default", environmentId, body),
                 Map.of("candidates", List.of(candidate), "count", 1, "className", "com.example.Target"));
         assertThat(result.get("agentAvailable")).isEqualTo(true);
         assertThat(result.get("count")).isEqualTo(1);
@@ -239,7 +246,7 @@ class EnhancementLocationPlatformIntegrationTest {
         Map<String, Object> resolvedIdentity = new LinkedHashMap<>(callSiteSelector(1));
         resolvedIdentity.put("fingerprint", "fp-preview");
         Map<String, Object> result = runWithAck(
-                () -> resolutionService.resolve(admin, "app-default", "env-dev", target),
+                () -> resolutionService.resolve(admin, "app-default", environmentId, target),
                 Map.of("status", "MATCHED", "matchedCount", 1, "risk", "MEDIUM",
                         "occurrenceCount", 3, "occurrenceIndex", 1, "resolvedIdentity", resolvedIdentity));
         assertThat(result.get("status")).isEqualTo("MATCHED");
@@ -264,7 +271,7 @@ class EnhancementLocationPlatformIntegrationTest {
         }
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("applicationId", "app-default");
-        request.put("environmentId", "env-dev");
+        request.put("environmentId", environmentId);
         request.put("name", name);
         request.put("riskLevel", "LOW");
         request.put("script", Map.of("phase", "RETURN", "script", "return mock.proceed()"));
@@ -346,7 +353,7 @@ class EnhancementLocationPlatformIntegrationTest {
         ackResult.put("bootstrapLoaderId", "bootstrap");
 
         Map<String, Object> result = runWithAck(
-                () -> targetDiscoveryService.listLoaders(admin, "app-default", "env-dev"),
+                () -> targetDiscoveryService.listLoaders(admin, "app-default", environmentId),
                 ackResult);
 
         assertThat(result.get("agentAvailable")).isEqualTo(true);
@@ -386,7 +393,7 @@ class EnhancementLocationPlatformIntegrationTest {
         Map<String, Object> ackResult = Map.of("targets", List.of(targetA, targetB), "truncated", false);
 
         List<Map<String, Object>> result = runWithAck(
-                () -> targetDiscoveryService.search(admin, "OrderService", "app-default", "env-dev"),
+                () -> targetDiscoveryService.search(admin, "OrderService", "app-default", environmentId),
                 ackResult);
 
         // Two same-name classes in two loaders -> two distinct entries.

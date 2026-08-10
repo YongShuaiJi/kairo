@@ -106,10 +106,17 @@ echo "==> input=$INPUT output=$OUTPUT"
 
 # -----------------------------------------------------------------------------
 # Build the aggregator in place at HEAD. Single side; no worktree, no dirty.
+# Generate its classpath in the same reactor invocation after upstream modules
+# are packaged; a fresh CI Maven repository cannot independently resolve the
+# child POMs whose parent uses the CI-friendly ${revision} placeholder.
 # -----------------------------------------------------------------------------
+EXTDEPS_FILE="$(mktemp -t kairo-compatagg-deps-XXXXXX)"
 echo "==> building aggregator at $REPO_ROOT"
-if ! (cd "$REPO_ROOT" && $MVN -B -ntp -pl kairo-integration-tests -am test-compile -q); then
+if ! (cd "$REPO_ROOT" && $MVN -B -ntp -pl kairo-integration-tests -am \
+      package -DskipTests dependency:build-classpath \
+      -Dmdep.outputFile="$EXTDEPS_FILE" -DincludeScope=test -q); then
   echo "error: aggregator build failed" >&2
+  rm -f "$EXTDEPS_FILE"
   exit 2
 fi
 
@@ -124,13 +131,6 @@ reactor_classes() {
   done
   echo "${out#:}"
 }
-EXTDEPS_FILE="$(mktemp -t kairo-compatagg-deps-XXXXXX)"
-if ! (cd "$REPO_ROOT" && $MVN -B -ntp -pl kairo-integration-tests \
-      dependency:build-classpath -Dmdep.outputFile="$EXTDEPS_FILE" -q >/dev/null 2>&1); then
-  echo "error: dependency:build-classpath failed" >&2
-  rm -f "$EXTDEPS_FILE"
-  exit 2
-fi
 EXTDEPS="$(cat "$EXTDEPS_FILE")"
 rm -f "$EXTDEPS_FILE"
 CP="$REPO_ROOT/kairo-integration-tests/target/test-classes:$(reactor_classes):$EXTDEPS"

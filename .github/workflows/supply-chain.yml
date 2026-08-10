@@ -50,18 +50,19 @@ jobs:
       - name: Install pinned Grype 0.116.1 (release binary + official checksum)
         run: |
           set -euo pipefail
+          TOOLS_DIR="$RUNNER_TEMP/kairo-tools/grype-${GRYPE_VERSION}"
+          mkdir -p "$TOOLS_DIR" "$HOME/.local/bin"
           GRYPE_TAR="grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
           base="https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}"
-          curl -fsSL -o "$GRYPE_TAR" "${base}/${GRYPE_TAR}"
+          curl -fsSL -o "$TOOLS_DIR/$GRYPE_TAR" "${base}/${GRYPE_TAR}"
           # Official checksums file for the pinned release (TLS-served from the official GitHub release).
-          curl -fsSL -o checksums.txt "${base}/grype_${GRYPE_VERSION}_checksums.txt"
+          curl -fsSL -o "$TOOLS_DIR/checksums.txt" "${base}/grype_${GRYPE_VERSION}_checksums.txt"
           # Verify the tarball sha256 against the official checksums file.
-          expected="$(grep -E " ${GRYPE_TAR}\$" checksums.txt | awk '{print $1}' | head -1)"
+          expected="$(grep -E " ${GRYPE_TAR}\$" "$TOOLS_DIR/checksums.txt" | awk '{print $1}' | head -1)"
           [ -n "$expected" ] || { echo "checksum for $GRYPE_TAR not found in official checksums.txt" >&2; exit 1; }
-          actual="$(sha256sum "$GRYPE_TAR" | awk '{print $1}')"
+          actual="$(sha256sum "$TOOLS_DIR/$GRYPE_TAR" | awk '{print $1}')"
           [ "$actual" = "$expected" ] || { echo "grype checksum mismatch: expected=$expected actual=$actual" >&2; exit 1; }
-          mkdir -p "$HOME/.local/bin"
-          tar -xzf "$GRYPE_TAR" -C "$HOME/.local/bin" grype
+          tar -xzf "$TOOLS_DIR/$GRYPE_TAR" -C "$HOME/.local/bin" grype
           "$HOME/.local/bin/grype" version
           echo "GRYPE_BIN=$HOME/.local/bin/grype" >> "$GITHUB_ENV"
 
