@@ -1,8 +1,8 @@
 {
   "schemaVersion": "2.0",
   "release": "V1.7.0",
-  "buildId": "336685b4bc79576cba4ab94304d8e4085ac1fe84",
-  "generatedAt": "2026-08-04T22:54:08Z",
+  "buildId": "e5507d5a6d5fc55c8700ca7bf3207b64fe7435b2",
+  "generatedAt": "2026-08-10T16:45:20.724379501Z",
   "sourceBaseline": {
     "version": "V1.6.0",
     "commit": "113823b41981a2d8fb5473a772ae2d2938d9582e",
@@ -109,14 +109,31 @@
           ]
         },
         "RC": {
-          "status": "NOT_RUN",
-          "environment": {},
-          "commands": [],
-          "reports": [],
-          "startedAt": null,
-          "endedAt": null,
+          "status": "PASSED",
+          "buildId": "e5507d5a6d5fc55c8700ca7bf3207b64fe7435b2",
+          "environment": {
+            "os": "Linux",
+            "java": "21",
+            "database": "postgresql16",
+            "redis": "7"
+          },
+          "commands": [
+            "scripts/v1.7/aggregate-rc-certification.sh ..."
+          ],
+          "reports": [
+            "target/v1.7/rc-certification-result.json",
+            "target/v1.7/recovery-result.json",
+            "target/v1.7/upgrade/upgrade-rehearsal-result.json",
+            "target/v1.7/compatibility-result.json",
+            "target/v1.7/state-cycle-result.json",
+            "target/v1.7/rc-soak/soak-result.json",
+            "target/v1.7/defect-inventory.json"
+          ],
+          "startedAt": "2026-08-10T14:45:03Z",
+          "endedAt": "2026-08-10T16:45:20.724379501Z",
           "limitations": [
-            "Scheduled for M1"
+            "M6-A RC certified on candidate commit e5507d5a6d5fc55c8700ca7bf3207b64fe7435b2; RELEASE remains NOT_RUN pending M6-B",
+            "Promotion is transactional and fail-closed; historical PR/RELEASE facts are preserved"
           ]
         },
         "RELEASE": {
@@ -163,14 +180,31 @@
           ]
         },
         "RC": {
-          "status": "NOT_RUN",
-          "environment": {},
-          "commands": [],
-          "reports": [],
-          "startedAt": null,
-          "endedAt": null,
+          "status": "PASSED",
+          "buildId": "e5507d5a6d5fc55c8700ca7bf3207b64fe7435b2",
+          "environment": {
+            "os": "Linux",
+            "java": "21",
+            "database": "postgresql16",
+            "redis": "7"
+          },
+          "commands": [
+            "scripts/v1.7/aggregate-rc-certification.sh ..."
+          ],
+          "reports": [
+            "target/v1.7/rc-certification-result.json",
+            "target/v1.7/recovery-result.json",
+            "target/v1.7/upgrade/upgrade-rehearsal-result.json",
+            "target/v1.7/compatibility-result.json",
+            "target/v1.7/state-cycle-result.json",
+            "target/v1.7/rc-soak/soak-result.json",
+            "target/v1.7/defect-inventory.json"
+          ],
+          "startedAt": "2026-08-10T14:45:03Z",
+          "endedAt": "2026-08-10T16:45:20.724379501Z",
           "limitations": [
-            "Not a gate at this level (schema 1.0 gateLevel: PR)"
+            "M6-A RC certified on candidate commit e5507d5a6d5fc55c8700ca7bf3207b64fe7435b2; RELEASE remains NOT_RUN pending M6-B",
+            "Promotion is transactional and fail-closed; historical PR/RELEASE facts are preserved"
           ]
         },
         "RELEASE": {
@@ -216,14 +250,31 @@
           ]
         },
         "RC": {
-          "status": "NOT_RUN",
-          "environment": {},
-          "commands": [],
-          "reports": [],
-          "startedAt": null,
-          "endedAt": null,
-        "limitations": [
-            "Real PT2H candidate certification is owned by M6-A"
+          "status": "PASSED",
+          "buildId": "e5507d5a6d5fc55c8700ca7bf3207b64fe7435b2",
+          "environment": {
+            "os": "Linux",
+            "java": "21",
+            "database": "postgresql16",
+            "redis": "7"
+          },
+          "commands": [
+            "scripts/v1.7/aggregate-rc-certification.sh ..."
+          ],
+          "reports": [
+            "target/v1.7/rc-certification-result.json",
+            "target/v1.7/recovery-result.json",
+            "target/v1.7/upgrade/upgrade-rehearsal-result.json",
+            "target/v1.7/compatibility-result.json",
+            "target/v1.7/state-cycle-result.json",
+            "target/v1.7/rc-soak/soak-result.json",
+            "target/v1.7/defect-inventory.json"
+          ],
+          "startedAt": "2026-08-10T14:45:03Z",
+          "endedAt": "2026-08-10T16:45:20.724379501Z",
+          "limitations": [
+            "M6-A RC certified on candidate commit e5507d5a6d5fc55c8700ca7bf3207b64fe7435b2; RELEASE remains NOT_RUN pending M6-B",
+            "Promotion is transactional and fail-closed; historical PR/RELEASE facts are preserved"
           ]
         },
         "RELEASE": {
@@ -282,14 +333,31 @@
           ]
         },
         "RC": {
-          "status": "NOT_RUN",
-          "environment": {},
-          "commands": [],
-          "reports": [],
-          "startedAt": null,
-          "endedAt": null,
+          "status": "PASSED",
+          "buildId": "e5507d5a6d5fc55c8700ca7bf3207b64fe7435b2",
+          "environment": {
+            "os": "Linux",
+            "java": "21",
+            "database": "postgresql16",
+            "redis": "7"
+          },
+          "commands": [
+            "scripts/v1.7/aggregate-rc-certification.sh ..."
+          ],
+          "reports": [
+            "target/v1.7/rc-certification-result.json",
+            "target/v1.7/recovery-result.json",
+            "target/v1.7/upgrade/upgrade-rehearsal-result.json",
+            "target/v1.7/compatibility-result.json",
+            "target/v1.7/state-cycle-result.json",
+            "target/v1.7/rc-soak/soak-result.json",
+            "target/v1.7/defect-inventory.json"
+          ],
+          "startedAt": "2026-08-10T14:45:03Z",
+          "endedAt": "2026-08-10T16:45:20.724379501Z",
           "limitations": [
-            "Scheduled for M2"
+            "M6-A RC certified on candidate commit e5507d5a6d5fc55c8700ca7bf3207b64fe7435b2; RELEASE remains NOT_RUN pending M6-B",
+            "Promotion is transactional and fail-closed; historical PR/RELEASE facts are preserved"
           ]
         },
         "RELEASE": {
@@ -339,14 +407,31 @@
           ]
         },
         "RC": {
-          "status": "NOT_RUN",
-          "environment": {},
-          "commands": [],
-          "reports": [],
-          "startedAt": null,
-          "endedAt": null,
+          "status": "PASSED",
+          "buildId": "e5507d5a6d5fc55c8700ca7bf3207b64fe7435b2",
+          "environment": {
+            "os": "Linux",
+            "java": "21",
+            "database": "postgresql16",
+            "redis": "7"
+          },
+          "commands": [
+            "scripts/v1.7/aggregate-rc-certification.sh ..."
+          ],
+          "reports": [
+            "target/v1.7/rc-certification-result.json",
+            "target/v1.7/recovery-result.json",
+            "target/v1.7/upgrade/upgrade-rehearsal-result.json",
+            "target/v1.7/compatibility-result.json",
+            "target/v1.7/state-cycle-result.json",
+            "target/v1.7/rc-soak/soak-result.json",
+            "target/v1.7/defect-inventory.json"
+          ],
+          "startedAt": "2026-08-10T14:45:03Z",
+          "endedAt": "2026-08-10T16:45:20.724379501Z",
           "limitations": [
-            "Formal supported OS/JDK/framework/component matrix is scheduled for M3"
+            "M6-A RC certified on candidate commit e5507d5a6d5fc55c8700ca7bf3207b64fe7435b2; RELEASE remains NOT_RUN pending M6-B",
+            "Promotion is transactional and fail-closed; historical PR/RELEASE facts are preserved"
           ]
         },
         "RELEASE": {
