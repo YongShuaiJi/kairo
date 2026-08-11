@@ -14,6 +14,8 @@ import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -84,6 +86,48 @@ class LeakDefectReproTest {
         }
     }
 
+    @Test
+    void hotInvokedGroovyRuleReleasesClassLoaderWhileRuntimeRemainsOpen() throws Exception {
+        try (LeakFixtureCompiler fixtures = LeakFixtureCompiler.compile()) {
+            AgentRuntime runtime = new AgentRuntime(ByteBuddyAgent.install());
+            runtime.start();
+            try {
+                WeakReference<ClassLoader> ref =
+                        publishHotInvokeRemove(fixtures, runtime, "hot-invoke", 30_000);
+                gcLoop(15);
+                assertThat(ref.get())
+                        .as("a JIT-hot Groovy rule and its specialized call sites must not pin"
+                                + " the business ClassLoader while the Agent remains open")
+                        .isNull();
+            } finally {
+                runtime.close();
+            }
+        }
+    }
+
+    @Test
+    void repeatedHotRuleReplacementDoesNotAccumulateLoaders() throws Exception {
+        try (LeakFixtureCompiler fixtures = LeakFixtureCompiler.compile()) {
+            AgentRuntime runtime = new AgentRuntime(ByteBuddyAgent.install());
+            runtime.start();
+            try {
+                List<WeakReference<ClassLoader>> retired = new ArrayList<>();
+                for (int cycle = 0; cycle < 12; cycle++) {
+                    retired.add(publishHotInvokeRemove(
+                            fixtures, runtime, "hot-cycle-" + cycle, 20_000));
+                }
+                gcLoop(20);
+                for (int cycle = 0; cycle < retired.size(); cycle++) {
+                    assertThat(retired.get(cycle).get())
+                            .as("hot replacement cycle %s must not remain behind the live runtime", cycle)
+                            .isNull();
+                }
+            } finally {
+                runtime.close();
+            }
+        }
+    }
+
     // -------------------------------------------------------- helpers
 
     private static URLClassLoader newUrlLoader(LeakFixtureCompiler fixtures) throws Exception {
@@ -131,6 +175,31 @@ class LeakDefectReproTest {
         runtime.publish(echo, ruleFor(ruleId, clazz, echo, loader, SAFE_RULE_SCRIPT), "repro");
         // Invoke the enhanced method: this runs the bridge + the Groovy script.
         assertThat(echo.invoke(inst, "x")).isEqualTo("REPRO");
+        runtime.remove(ruleId, "repro");
+        assertThat(echo.invoke(inst, "x")).isEqualTo("echo:x");
+        WeakReference<ClassLoader> ref = new WeakReference<>(loader);
+        loader.close();
+        return ref;
+    }
+
+    private static WeakReference<ClassLoader> publishHotInvokeRemove(LeakFixtureCompiler fixtures,
+                                                                      AgentRuntime runtime, String tag,
+                                                                      int invocations) throws Exception {
+        URLClassLoader loader = newUrlLoader(fixtures);
+        Class<?> clazz = Class.forName(fixtures.binaryName(LeakFixtureCompiler.LEAK_SERVICE), true, loader);
+        Method echo = clazz.getMethod("echo", String.class);
+        Object inst = clazz.getDeclaredConstructor().newInstance();
+        String ruleId = "repro-" + tag;
+        String warmRuleId = ruleId + "-warm";
+        runtime.publish(echo, ruleFor(warmRuleId, clazz, echo, loader, SAFE_RULE_SCRIPT), "repro");
+        echo.invoke(inst, "warm");
+        runtime.remove(warmRuleId, "repro");
+        runtime.publish(echo, ruleFor(ruleId, clazz, echo, loader, SAFE_RULE_SCRIPT), "repro");
+        for (int i = 0; i < invocations; i++) {
+            if (!"REPRO".equals(echo.invoke(inst, "x"))) {
+                throw new AssertionError("hot enhanced invocation drifted at " + i);
+            }
+        }
         runtime.remove(ruleId, "repro");
         assertThat(echo.invoke(inst, "x")).isEqualTo("echo:x");
         WeakReference<ClassLoader> ref = new WeakReference<>(loader);

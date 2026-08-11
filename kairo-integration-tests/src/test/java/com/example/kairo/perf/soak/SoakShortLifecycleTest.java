@@ -16,9 +16,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Short real lifecycle test for the M2-D soak harness (the PR gate, &sect;9.6 "V17-SOAK.PR").
  * Runs the harness in-process with a test-only {@link SoakClock.AcceleratedClock} (step =
- * {@code PT1M}) over a short virtual duration ({@code PT31M}) so the fixed 1m/5m/30m cadence
- * fires a full sequence (summaries + enhance/update/partial-unload/full-unload batches + one
- * Agent/Platform disconnect/recovery) in a few seconds of real time, while every cadence
+ * {@code PT1M}) over a virtual duration ({@code PT321M}) so the fixed 1m/5m/30m cadence
+ * fires 64 enhance/update/partial-unload/full-unload batches and 10 Agent/Platform
+ * disconnect/recoveries in a few seconds of real time, while every cadence
  * boundary performs REAL lifecycle work against a real ByteBuddyAgent + AgentRuntime.
  *
  * <p>The fixed cadence and the production {@link SoakClock.WallClock} default are unchanged;
@@ -36,7 +36,7 @@ class SoakShortLifecycleTest {
 
     @Test
     void acceleratedShortRunPassesAllCadenceGates() throws Exception {
-        Duration duration = Duration.ofMinutes(31); // covers one 30m disconnect/recovery
+        Duration duration = Duration.ofMinutes(321); // reproduce 64 lifecycle batches from the failed P7D
         SoakArgumentParser.Options opts = SoakArgumentParser.parse(new String[]{
                 "--duration", duration.toString(),
                 "--output", outputDir.toString(),
@@ -78,9 +78,9 @@ class SoakShortLifecycleTest {
         JsonNode cycles = result.path("cycles");
         assertThat(cycles.path("summaries").asInt()).as("per-minute summaries").isGreaterThanOrEqualTo(30);
         assertThat(cycles.path("enhanceUnloadBatches").asInt()).as("5-minute measured batches")
-                .isEqualTo(6);
+                .isEqualTo(64);
         assertThat(cycles.path("disconnectRecoveries").asInt()).as("30-minute measured disconnect/recovery")
-                .isEqualTo(1);
+                .isEqualTo(10);
         assertThat(cycles.path("continuousInvocations").asLong()).as("continuous real invocations").isGreaterThan(0L);
         assertThat(cycles.path("failedBatches").asInt()).isZero();
 
@@ -100,7 +100,7 @@ class SoakShortLifecycleTest {
         JsonNode dr = result.path("disconnectRecovery");
         assertThat(dr.path("count").asInt()).isGreaterThanOrEqualTo(1);
         assertThat(dr.path("details")).as("cycle-zero warm-up must not leak into measured evidence")
-                .hasSize(1);
+                .hasSize(10);
         assertThat(dr.path("lastOutcome").asText()).isEqualTo("RECOVERED");
 
         // The raw time-series file exists at the recorded in-repo/local path.
