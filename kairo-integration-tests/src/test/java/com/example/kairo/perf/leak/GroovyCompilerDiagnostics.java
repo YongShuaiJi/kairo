@@ -15,7 +15,7 @@ import java.util.concurrent.ConcurrentMap;
  * Test-only diagnostics that observe the <em>real</em> {@code GroovyScriptCompiler} state
  * owned by a live (or closed) {@link AgentRuntime}, without adding or changing any public
  * production API. Reflection is used because the compiler, its weak-reference cache, its
- * per-loader generations and the {@code KairoGroovyClassLoader} instances are all package-
+ * per-artifact generations and the {@code KairoGroovyClassLoader} instances are all package-
  * or class-private by design.
  *
  * <p><b>Fail-closed contract (&sect;9.3):</b> every reflection step is mandatory. If the
@@ -30,10 +30,11 @@ import java.util.concurrent.ConcurrentMap;
  * <ul>
  *   <li>{@code cacheEntries} - the live compile-cache size (the weak-reference map of
  *       compiled scripts);</li>
- *   <li>{@code generationCount} - the number of <em>live</em> per-loader generation
- *       holders (stale/cleared weak references are not counted);</li>
- *   <li>{@code maxClassesInGeneration} - the highest {@code classesInGeneration} across
- *       live generations (the rotation cap is enforced per generation);</li>
+ *   <li>{@code generationCount} - the number of reachable per-artifact generations
+ *       (stale weak references are not counted). A just-released artifact remains observable
+ *       until collection so the harness can register its real loader for residual checks;</li>
+ *   <li>{@code maxClassesInGeneration} - the highest real loaded-class count across
+ *       live generations;</li>
  *   <li>{@code liveGroovyLoaders} - the real {@code KairoGroovyClassLoader} instances held
  *       by live generations, de-duplicated by identity, for weak-reference tracking.</li>
  * </ul>
@@ -75,38 +76,43 @@ public final class GroovyCompilerDiagnostics {
             ConcurrentMap<?, ?> cache = readMap(compiler, "cache");
             int cacheEntries = cache.size();
 
-            ConcurrentMap<?, ?> generations = readMap(compiler, "generations");
-            List<Object> liveHolders = new ArrayList<>();
-            for (Object ref : generations.values()) {
+            List<Object> liveScripts = new ArrayList<>();
+            for (Object ref : cache.values()) {
                 if (!(ref instanceof WeakReference<?> weak)) {
                     continue;
                 }
-                Object holder = weak.get();
-                if (holder != null) {
-                    liveHolders.add(holder);
+                Object script = weak.get();
+                if (script != null) {
+                    liveScripts.add(script);
                 }
             }
 
             int maxClasses = 0;
             Map<ClassLoader, Boolean> dedup = new IdentityHashMap<>();
             List<ClassLoader> liveGroovyLoaders = new ArrayList<>();
-            for (Object holder : liveHolders) {
-                int classes = readInt(holder, "classesInGeneration");
-                if (classes > maxClasses) {
-                    maxClasses = classes;
-                }
-                Object generation = readObject(holder, "generation");
+            int generationCount = 0;
+            Map<Object, Boolean> generationDedup = new IdentityHashMap<>();
+            for (Object script : liveScripts) {
+                Object generation = readObject(script, "generation");
                 if (generation == null) {
                     continue;
                 }
+                if (generationDedup.putIfAbsent(generation, Boolean.TRUE) == null) {
+                    generationCount++;
+                }
                 Method gcl = generation.getClass().getDeclaredMethod("groovyClassLoader");
                 gcl.setAccessible(true);
-                ClassLoader groovyLoader = (ClassLoader) gcl.invoke(generation);
+                Object groovyLoaderObject = gcl.invoke(generation);
+                ClassLoader groovyLoader = (ClassLoader) groovyLoaderObject;
+                Method definedClassCount = generation.getClass().getDeclaredMethod("definedClassCount");
+                definedClassCount.setAccessible(true);
+                int classes = (int) definedClassCount.invoke(generation);
+                maxClasses = Math.max(maxClasses, classes);
                 if (groovyLoader != null && dedup.putIfAbsent(groovyLoader, Boolean.TRUE) == null) {
                     liveGroovyLoaders.add(groovyLoader);
                 }
             }
-            return new GroovyDiagnostics(cacheEntries, liveHolders.size(), maxClasses, liveGroovyLoaders);
+            return new GroovyDiagnostics(cacheEntries, generationCount, maxClasses, liveGroovyLoaders);
         } catch (GroovyDiagnosticUnavailableException e) {
             throw e;
         } catch (Throwable t) {
@@ -139,14 +145,4 @@ public final class GroovyCompilerDiagnostics {
         }
     }
 
-    private static int readInt(Object target, String fieldName) {
-        try {
-            Field field = target.getClass().getDeclaredField(fieldName);
-            field.setAccessible(true);
-            return field.getInt(target);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new GroovyDiagnosticUnavailableException(
-                    "cannot read int field '" + fieldName + "' on " + target.getClass().getName(), e);
-        }
-    }
 }

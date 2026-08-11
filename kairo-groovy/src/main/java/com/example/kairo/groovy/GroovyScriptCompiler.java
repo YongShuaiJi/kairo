@@ -16,13 +16,10 @@ import java.util.concurrent.ConcurrentMap;
 
 public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable {
 
-    private static final int MAX_CLASSES_PER_GENERATION = 256;
     private static final int MAX_CACHE_ENTRIES = 1024;
 
     private final ConcurrentMap<ScriptCacheKey, CompiledScriptReference> cache = new ConcurrentHashMap<>();
-    private final ConcurrentMap<GenerationKey, GenerationHolderReference> generations = new ConcurrentHashMap<>();
     private final ReferenceQueue<CompiledMockScript> cacheReferenceQueue = new ReferenceQueue<>();
-    private final ReferenceQueue<GenerationHolder> generationReferenceQueue = new ReferenceQueue<>();
     private final ClassLoader defaultParentClassLoader;
 
     public GroovyScriptCompiler() {
@@ -50,10 +47,10 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
      *
      * <p>The cache key bundles the script hash, capability tier, target ClassLoader id, policy
      * revision and Groovy version (alongside the rule id and version). The policy revision is
-     * load-bearing: a new revision invalidates the cached script <em>and</em> the per-loader
-     * generation, so a tightened EXTENDED allow-list or a reissued policy actually takes effect
-     * rather than silently serving the previously compiled class. The Groovy version is constant
-     * within a JVM and guards against cross-version reuse.
+     * load-bearing: a new revision invalidates the cached script, so a tightened EXTENDED
+     * allow-list or a reissued policy actually takes effect rather than silently serving the
+     * previously compiled class. The Groovy version is constant within a JVM and guards against
+     * cross-version reuse.
      */
     public CompiledMockScript compile(String ruleId, long version, String script, ScriptCompilationContext context) {
         Objects.requireNonNull(ruleId, "ruleId");
@@ -74,9 +71,13 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
         CompiledMockScript[] resultHolder = new CompiledMockScript[1];
         cache.compute(key, (cacheKey, existingRef) -> {
             CompiledMockScript existing = existingRef == null ? null : existingRef.get();
-            if (existing != null) {
+            if (existing != null && (!(existing instanceof GroovyCompiledMockScript groovy)
+                    || !groovy.released())) {
                 resultHolder[0] = existing;
                 return existingRef;
+            }
+            if (existingRef != null) {
+                existingRef.releaseClassLoaderCaches();
             }
             CompiledMockScript fresh = compileNew(ruleId, version, scriptHash, script, context, policy);
             resultHolder[0] = fresh;
@@ -87,18 +88,35 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
 
     private CompiledMockScript compileNew(String ruleId, long version, String scriptHash, String script,
                                           ScriptCompilationContext context, ScriptSecurityPolicy policy) {
-        GenerationHolder holder = generationFor(context, policy);
+        ScriptLoaderGeneration generation = new ScriptLoaderGeneration(
+                context.targetClassLoader(), buildConfiguration(policy));
         ClassAndBytes compiled;
         try {
-            compiled = holder.parseClass(script);
+            KairoGroovyClassLoader loader = generation.groovyClassLoader();
+            Class<?> type;
+            try {
+                type = loader.parseClass(script, "KairoRule_0.groovy");
+            } catch (RuntimeException e) {
+                loader.consumeArtifactBytes();
+                throw e;
+            }
+            compiled = new ClassAndBytes(type, loader.consumeArtifactBytes());
+            generation.captureDefinedClassCount();
         } catch (RuntimeException e) {
+            generation.close();
             throw new IllegalArgumentException("Invalid or forbidden Groovy script: " + rootMessage(e), e);
         }
         Class<?> scriptType = compiled.type();
         if (!KairoScript.class.isAssignableFrom(scriptType)) {
+            generation.close();
             throw new IllegalStateException("Compiled script does not extend " + KairoScript.class.getName());
         }
-        context.enforceArtifactSize(compiled.artifactBytes());
+        try {
+            context.enforceArtifactSize(compiled.artifactBytes());
+        } catch (RuntimeException e) {
+            generation.close();
+            throw e;
+        }
         @SuppressWarnings("unchecked")
         Class<? extends KairoScript> typedScript = (Class<? extends KairoScript>) scriptType;
         GroovyCompilationMetadata metadata = new GroovyCompilationMetadata(
@@ -108,25 +126,7 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
                 GroovySystem.getVersion(),
                 context.targetClassLoaderId(),
                 compiled.artifactBytes());
-        return new GroovyCompiledMockScript(ruleId, version, metadata, typedScript);
-    }
-
-    private GenerationHolder generationFor(ScriptCompilationContext context, ScriptSecurityPolicy policy) {
-        GenerationKey key = new GenerationKey(context.profile(), context.targetClassLoaderId(),
-                context.policyRevision());
-        evictStaleGenerations();
-        GenerationHolder[] holderBox = new GenerationHolder[1];
-        generations.compute(key, (generationKey, existingRef) -> {
-            GenerationHolder existing = existingRef == null ? null : existingRef.get();
-            if (existing != null) {
-                holderBox[0] = existing;
-                return existingRef;
-            }
-            GenerationHolder created = new GenerationHolder(context.targetClassLoader(), policy);
-            holderBox[0] = created;
-            return new GenerationHolderReference(created, generationKey, generationReferenceQueue);
-        });
-        return holderBox[0];
+        return new GroovyCompiledMockScript(ruleId, version, metadata, typedScript, generation);
     }
 
     private void evictStaleCacheEntries() {
@@ -134,19 +134,6 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
         while ((ref = (CompiledScriptReference) cacheReferenceQueue.poll()) != null) {
             if (cache.remove(ref.key(), ref)) {
                 ref.releaseClassLoaderCaches();
-            }
-        }
-    }
-
-    private void evictStaleGenerations() {
-        GenerationHolderReference ref;
-        while ((ref = (GenerationHolderReference) generationReferenceQueue.poll()) != null) {
-            GenerationHolderReference removed = generations.remove(ref.key(), ref) ? ref : null;
-            if (removed != null) {
-                GenerationHolder holder = removed.get();
-                if (holder != null) {
-                    holder.close();
-                }
             }
         }
     }
@@ -188,19 +175,12 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
 
     @Override
     public synchronized void close() {
-        generations.values().forEach(ref -> {
-            GenerationHolder holder = ref.get();
-            if (holder != null) {
-                holder.close();
-            }
-        });
-        generations.clear();
         cache.values().forEach(CompiledScriptReference::releaseClassLoaderCaches);
         cache.clear();
     }
 
     /**
-     * V1.5 &sect;3.2: drop every cached compiled script and generation whose
+     * V1.5 &sect;3.2: drop every cached compiled script whose
      * target ClassLoader id matches the collected loader. The cache weakly
      * references the compiled script and the generation's loader, so the loader
      * can be reclaimed even without this call; this proactively frees the
@@ -214,7 +194,6 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
             return 0;
         }
         evictStaleCacheEntries();
-        evictStaleGenerations();
         int removed = 0;
         var cacheIt = cache.entrySet().iterator();
         while (cacheIt.hasNext()) {
@@ -225,27 +204,12 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
                 removed++;
             }
         }
-        var genIt = generations.entrySet().iterator();
-        while (genIt.hasNext()) {
-            var entry = genIt.next();
-            if (classLoaderId.equals(entry.getKey().targetClassLoaderId())) {
-                GenerationHolder holder = entry.getValue().get();
-                if (holder != null) {
-                    holder.close();
-                }
-                genIt.remove();
-            }
-        }
         return removed;
     }
 
     private record ScriptCacheKey(String ruleId, long version, String scriptHash,
                                   CapabilityProfile profile, String targetClassLoaderId,
                                   ScriptPolicyRevision policyRevision, String groovyVersion) {
-    }
-
-    private record GenerationKey(CapabilityProfile profile, String targetClassLoaderId,
-                                 ScriptPolicyRevision policyRevision) {
     }
 
     private record ClassAndBytes(Class<?> type, int artifactBytes) {
@@ -286,77 +250,4 @@ public final class GroovyScriptCompiler implements ScriptCompiler, AutoCloseable
         }
     }
 
-    /**
-     * Weak reference from a generation key to its holder. Letting the holder be reclaimed
-     * releases the per-loader {@link KairoGroovyClassLoader} (and thus the target ClassLoader
-     * it delegates to) once no compiled script keeps it alive.
-     */
-    private static final class GenerationHolderReference extends WeakReference<GenerationHolder> {
-        private final GenerationKey key;
-
-        GenerationHolderReference(GenerationHolder referent, GenerationKey key,
-                                  ReferenceQueue<GenerationHolder> queue) {
-            super(referent, queue);
-            this.key = key;
-        }
-
-        GenerationKey key() {
-            return key;
-        }
-    }
-
-    /**
-     * Holds the {@link ScriptLoaderGeneration} for one (profile, target ClassLoader) pair,
-     * rotating it when the per-generation class cap is reached.
-     */
-    private static final class GenerationHolder {
-        private final ClassLoader parent;
-        private final CompilerConfiguration configuration;
-        private volatile ScriptLoaderGeneration generation;
-        private int classesInGeneration;
-
-        GenerationHolder(ClassLoader parent, ScriptSecurityPolicy policy) {
-            this.parent = parent;
-            this.configuration = buildConfiguration(policy);
-            this.generation = new ScriptLoaderGeneration(parent, configuration);
-        }
-
-        synchronized ClassAndBytes parseClass(String script) {
-            rotateIfNeeded();
-            KairoGroovyClassLoader loader = generation.groovyClassLoader();
-            Class<?> type;
-            try {
-                /*
-                 * Groovy derives the generated class name from this file name. Keep the
-                 * name space bounded to the generation's 0..255 slots instead of embedding
-                 * a rule id/hash. JDK parallel-capable parent ClassLoaders permanently retain
-                 * a lock entry for each distinct delegated class name, including JavaBeans
-                 * BeanInfo/Customizer probes that bypass the Groovy loader. A bounded slot
-                 * name therefore makes repeated rule/loader churn memory-stable; a rotated
-                 * generation has a new defining loader and can safely reuse the same slots.
-                 */
-                type = loader.parseClass(script, "KairoRule_" + classesInGeneration + ".groovy");
-            } catch (RuntimeException e) {
-                loader.consumeArtifactBytes();
-                throw e;
-            }
-            int bytes = loader.consumeArtifactBytes();
-            classesInGeneration++;
-            return new ClassAndBytes(type, bytes);
-        }
-
-        private void rotateIfNeeded() {
-            if (classesInGeneration < MAX_CLASSES_PER_GENERATION) {
-                return;
-            }
-            ScriptLoaderGeneration previous = generation;
-            generation = new ScriptLoaderGeneration(parent, configuration);
-            classesInGeneration = 0;
-            previous.close();
-        }
-
-        synchronized void close() {
-            generation.close();
-        }
-    }
 }

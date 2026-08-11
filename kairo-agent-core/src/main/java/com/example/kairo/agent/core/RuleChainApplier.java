@@ -169,8 +169,15 @@ public final class RuleChainApplier {
         long newTransformationRevision = current.transformationRevision();
         String newTransformationHash = current.transformationHash();
         boolean retransformed = false;
-        PlanChange planChange = applyPlanAndMeasure(
-                declaringClass, target, current.isEmpty(), desired.desiredState());
+        PlanChange planChange;
+        try {
+            planChange = applyPlanAndMeasure(
+                    declaringClass, target, current.isEmpty(), desired.desiredState());
+        } catch (RuntimeException e) {
+            releaseCompiledRules(compiledRules);
+            return finish(request, ApplyChainResult.failed(request.commandId(),
+                    ApplyChainStatus.TRANSFORM_FAILED, current.revision(), e.getMessage()));
+        }
         boolean footprintChanged = planChange.footprintChanged();
         if (footprintChanged) {
             try {
@@ -181,6 +188,7 @@ public final class RuleChainApplier {
                 // a successful removal of Kairo advice, not a verification failure. Only an
                 // explicit FAILED result (or a thrown exception) rolls back.
                 if (result != null && result.status() != TransformationStatus.SUCCEEDED) {
+                    releaseCompiledRules(compiledRules);
                     rollbackPlan(target, planChange.mutation());
                     transformerManager.retransform(declaringClass);
                     String msg = result.toString();
@@ -192,6 +200,7 @@ public final class RuleChainApplier {
                         ? result.outputHash() : "";
                 retransformed = true;
             } catch (RuntimeException e) {
+                releaseCompiledRules(compiledRules);
                 rollbackPlan(target, planChange.mutation());
                 transformerManager.retransform(declaringClass);
                 return finish(request, ApplyChainResult.failed(request.commandId(),
@@ -203,18 +212,30 @@ public final class RuleChainApplier {
         // fenced desired hash (the content authority verified in step 5), not a
         // recomputed hash, so Platform desired and Agent actual reconcile by the
         // same content hash.
-        RuleChainSnapshot next = desired.desiredState() == ChainDesiredState.EMPTY
-                ? RuleChainSnapshot.empty()
-                : new RuleChainSnapshot(
-                        new RuleChainRevision(desired.revision(), desired.hash()),
-                        desired.chainId(),
-                        desired.hash(),
-                        compiledRules, target, newTransformationRevision, newTransformationHash,
-                        System.currentTimeMillis(), null);
+        RuleChainSnapshot next;
+        try {
+            next = desired.desiredState() == ChainDesiredState.EMPTY
+                    ? RuleChainSnapshot.empty()
+                    : new RuleChainSnapshot(
+                            new RuleChainRevision(desired.revision(), desired.hash()),
+                            desired.chainId(),
+                            desired.hash(),
+                            compiledRules, target, newTransformationRevision, newTransformationHash,
+                            System.currentTimeMillis(), null);
+        } catch (RuntimeException e) {
+            releaseCompiledRules(compiledRules);
+            rollbackPlan(target, planChange.mutation());
+            if (footprintChanged) {
+                transformerManager.retransform(declaringClass);
+            }
+            return finish(request, ApplyChainResult.failed(request.commandId(),
+                    ApplyChainStatus.TRANSFORM_FAILED, current.revision(), e.getMessage()));
+        }
         boolean swapped = ruleRegistry.casReplace(methodKey, target, current, next);
         if (!swapped) {
             // Lost a concurrent apply: always roll back this command's registry
             // ownership, even when another owner kept the weave footprint unchanged.
+            releaseCompiledRules(compiledRules);
             rollbackPlan(target, planChange.mutation());
             if (footprintChanged) {
                 transformerManager.retransform(declaringClass);
@@ -302,19 +323,35 @@ public final class RuleChainApplier {
     private List<CompiledRule> compileChain(Class<?> declaringClass, EnhancementLocation location,
                                             List<MockRule> rules) {
         List<CompiledRule> compiled = new ArrayList<>(rules.size());
-        for (MockRule rule : rules) {
-            CompiledMockScript script;
-            if (location.isConstructorLocation()) {
-                Constructor<?> ctor = resolveConstructor(declaringClass, rule);
-                script = scriptCompilerFactory.compile(ctor, rule);
-            } else {
-                Method method = resolveMethod(declaringClass, rule);
-                script = scriptCompilerFactory.compile(method, rule);
+        try {
+            for (MockRule rule : rules) {
+                CompiledMockScript script;
+                if (location.isConstructorLocation()) {
+                    Constructor<?> ctor = resolveConstructor(declaringClass, rule);
+                    script = scriptCompilerFactory.compile(ctor, rule);
+                } else {
+                    Method method = resolveMethod(declaringClass, rule);
+                    script = scriptCompilerFactory.compile(method, rule);
+                }
+                MockRule withHash = rule.toBuilder().scriptHash(script.scriptHash()).build();
+                compiled.add(new CompiledRule(withHash, script));
             }
-            MockRule withHash = rule.toBuilder().scriptHash(script.scriptHash()).build();
-            compiled.add(new CompiledRule(withHash, script));
+            return compiled;
+        } catch (RuntimeException e) {
+            releaseCompiledRules(compiled);
+            throw e;
         }
-        return compiled;
+    }
+
+    /** Release scripts compiled by an apply attempt that never transferred ownership to the registry. */
+    private static void releaseCompiledRules(List<CompiledRule> compiledRules) {
+        for (CompiledRule compiledRule : compiledRules) {
+            try {
+                compiledRule.script().releaseClassLoaderCaches();
+            } catch (RuntimeException ignored) {
+                // Best-effort cleanup must not replace the command's original failure.
+            }
+        }
     }
 
     private Method resolveMethod(Class<?> declaringClass, MockRule rule) {
