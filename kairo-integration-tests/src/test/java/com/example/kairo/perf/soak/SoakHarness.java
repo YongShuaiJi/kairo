@@ -93,6 +93,7 @@ public final class SoakHarness {
     private static final SoakCadence CADENCE = SoakCadence.DOCUMENTED;
     private static final SoakBudget BUDGET = SoakBudget.DOCUMENTED;
     private static final int BURST_SIZE = 200;
+    private static final int WARMUP_LIFECYCLE_BATCHES = 12;
 
     private static final MemoryMXBean MEMORY_MX = ManagementFactory.getMemoryMXBean();
     private static final ThreadMXBean THREAD_MX = ManagementFactory.getThreadMXBean();
@@ -295,12 +296,25 @@ public final class SoakHarness {
         return 0;
     }
 
-    /** Exercise cold lifecycle and evidence paths once, then leave the runtime enhanced. */
+    /** Exercise lifecycle churn and evidence paths before establishing the stable baseline. */
     private static void warmUpMeasurementPaths(Context ctx) throws Exception {
-        Failure batchFailure = runBatch(ctx, 0);
-        if (batchFailure != null) {
-            throw new AssertionFailure("warmup-" + batchFailure.phase,
-                    batchFailure.expected, batchFailure.actual, batchFailure.detail);
+        /*
+         * One batch loads every code path, but it does not stabilize Metaspace's per-loader
+         * chunk reuse. A release soak repeatedly creates and retires Groovy loaders; measuring
+         * minute one after a single batch therefore compares steady-state allocator growth to
+         * a cold low-water mark and can fail even when every loader is reclaimable. Exercise a
+         * bounded hour-equivalent of 5-minute lifecycle churn, forcing collection between
+         * batches so the first measured window is genuinely stable. The documented 10% budget
+         * and sustained-breach window remain unchanged; a real unbounded leak still crosses
+         * them after this finite warm-up.
+         */
+        for (int cycle = 1 - WARMUP_LIFECYCLE_BATCHES; cycle <= 0; cycle++) {
+            Failure batchFailure = runBatch(ctx, cycle);
+            if (batchFailure != null) {
+                throw new AssertionFailure("warmup-" + batchFailure.phase,
+                        batchFailure.expected, batchFailure.actual, batchFailure.detail);
+            }
+            requestFullGc();
         }
         ctx.warmupBatchCompleted = true;
 
@@ -320,18 +334,21 @@ public final class SoakHarness {
         warmupJson.put("loadedClassCount", warmupObservation.loadedClassCount());
         MAPPER.writeValueAsString(warmupJson);
         ctx.warmupResourceSampleCompleted = true;
-        try {
-            System.gc();
-            MEMORY_MX.gc();
-        } catch (RuntimeException ignored) {
-            // Best effort, identical to the per-summary retained-memory observation contract.
-        }
+        requestFullGc();
 
         ctx.summaries = 0;
         ctx.disconnectDetails.clear();
         ctx.disconnectLastOutcome = null;
         ctx.behaviorDriftStartedAtSeconds = -1L;
         ctx.runtimeStateDriftStartedAtSeconds = -1L;
+    }
+
+    private static void requestFullGc() {
+        try {
+            System.gc();
+        } catch (RuntimeException ignored) {
+            // Best effort, identical to the per-summary retained-memory observation contract.
+        }
     }
 
     // -------------------------------------------------------- primary target setup
@@ -532,11 +549,7 @@ public final class SoakHarness {
         // One GC so heap reflects retained (reclaimable) memory, not transient allocation noise.
         // This is the M2-C observation concept; it is not a sleep and does not pause the soak
         // meaningfully (~one GC per minute).
-        try {
-            System.gc();
-        } catch (RuntimeException ignored) {
-            // System.gc() is best-effort; the point-in-time read still proceeds.
-        }
+        requestFullGc();
         long heap = MEMORY_MX.getHeapMemoryUsage().getUsed();
         long metaspace = METASPACE_POOL == null ? -1L : METASPACE_POOL.getUsage().getUsed();
         long fd = UNIX_OS == null ? -1L : UNIX_OS.getOpenFileDescriptorCount();

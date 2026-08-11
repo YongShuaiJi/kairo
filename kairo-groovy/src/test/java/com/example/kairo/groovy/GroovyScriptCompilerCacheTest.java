@@ -192,6 +192,7 @@ class GroovyScriptCompilerCacheTest {
                 GroovyCompiledMockScript transientScript = (GroovyCompiledMockScript) compiler.compile(
                         "transient-" + i, 1, "return mock.returnValue(" + i + ")", context);
                 retiredLoaders[i] = new WeakReference<>(transientScript.scriptType().getClassLoader());
+                assertThat(transientScript.execute(fakeContext()).returnValue()).isEqualTo(i);
                 transientScript.releaseClassLoaderCaches();
                 transientScript = null;
             }
@@ -200,6 +201,37 @@ class GroovyScriptCompilerCacheTest {
             assertThat(forceGc(retiredLoaders[0])).as("first transient loader should unload").isTrue();
             assertThat(forceGc(retiredLoaders[149])).as("middle transient loader should unload").isTrue();
             assertThat(forceGc(retiredLoaders[299])).as("last transient loader should unload").isTrue();
+        }
+    }
+
+    @Test
+    void hotExecutedTransientScriptsReleaseSpecializedCallSites() throws Exception {
+        ClassLoader target = GroovyScriptCompiler.class.getClassLoader();
+        ScriptCompilationContext context = ScriptCompilationContext.builder()
+                .profile(CapabilityProfile.SAFE)
+                .policyRevision(REVISION)
+                .targetClassLoader(target)
+                .build();
+
+        try (GroovyScriptCompiler compiler = new GroovyScriptCompiler(target)) {
+            @SuppressWarnings("unchecked")
+            WeakReference<ClassLoader>[] retiredLoaders = new WeakReference[12];
+            for (int i = 0; i < retiredLoaders.length; i++) {
+                GroovyCompiledMockScript script = (GroovyCompiledMockScript) compiler.compile(
+                        "hot-transient-" + i, 1, "return mock.returnValue(" + i + ")", context);
+                retiredLoaders[i] = new WeakReference<>(script.scriptType().getClassLoader());
+                for (int invocation = 0; invocation < 30_000; invocation++) {
+                    assertThat(script.execute(fakeContext()).returnValue()).isEqualTo(i);
+                }
+                script.releaseClassLoaderCaches();
+                script = null;
+            }
+
+            for (int i = 0; i < retiredLoaders.length; i++) {
+                assertThat(forceGc(retiredLoaders[i]))
+                        .as("hot transient loader %s should unload with its specialized call sites", i)
+                        .isTrue();
+            }
         }
     }
 
