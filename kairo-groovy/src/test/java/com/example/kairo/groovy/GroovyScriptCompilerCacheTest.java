@@ -151,7 +151,7 @@ class GroovyScriptCompilerCacheTest {
     }
 
     @Test
-    void generatedRuleClassNamesUseBoundedGenerationSlots() {
+    void eachCompiledArtifactHasAnIndependentLoader() {
         ClassLoader target = GroovyScriptCompiler.class.getClassLoader();
         ScriptCompilationContext context = ScriptCompilationContext.builder()
                 .profile(CapabilityProfile.SAFE)
@@ -166,7 +166,82 @@ class GroovyScriptCompilerCacheTest {
                     "unbounded-user-rule-id-b", 1, "return mock.returnValue('b')", context);
 
             assertThat(first.scriptType().getName()).isEqualTo("KairoRule_0");
-            assertThat(second.scriptType().getName()).isEqualTo("KairoRule_1");
+            assertThat(second.scriptType().getName()).isEqualTo("KairoRule_0");
+            assertThat(second.scriptType().getClassLoader())
+                    .as("one active rule must not pin unloaded rules from a shared generation")
+                    .isNotSameAs(first.scriptType().getClassLoader());
+        }
+    }
+
+    @Test
+    void releasingTransientScriptsDoesNotAccumulateBehindLongLivedRule() throws Exception {
+        ClassLoader target = GroovyScriptCompiler.class.getClassLoader();
+        ScriptCompilationContext context = ScriptCompilationContext.builder()
+                .profile(CapabilityProfile.SAFE)
+                .policyRevision(REVISION)
+                .targetClassLoader(target)
+                .build();
+
+        try (GroovyScriptCompiler compiler = new GroovyScriptCompiler(target)) {
+            GroovyCompiledMockScript longLived = (GroovyCompiledMockScript) compiler.compile(
+                    "continuous-rule", 1, "return mock.proceed()", context);
+            @SuppressWarnings("unchecked")
+            WeakReference<ClassLoader>[] retiredLoaders = new WeakReference[300];
+
+            for (int i = 0; i < retiredLoaders.length; i++) {
+                GroovyCompiledMockScript transientScript = (GroovyCompiledMockScript) compiler.compile(
+                        "transient-" + i, 1, "return mock.returnValue(" + i + ")", context);
+                retiredLoaders[i] = new WeakReference<>(transientScript.scriptType().getClassLoader());
+                transientScript.releaseClassLoaderCaches();
+                transientScript = null;
+            }
+
+            assertThat(longLived.execute(fakeContext()).type()).isEqualTo(MockDecision.Type.PROCEED);
+            assertThat(forceGc(retiredLoaders[0])).as("first transient loader should unload").isTrue();
+            assertThat(forceGc(retiredLoaders[149])).as("middle transient loader should unload").isTrue();
+            assertThat(forceGc(retiredLoaders[299])).as("last transient loader should unload").isTrue();
+        }
+    }
+
+    @Test
+    void releasedCacheEntryIsNeverReturnedAgain() {
+        ClassLoader loader = GroovyScriptCompiler.class.getClassLoader();
+        ScriptCompilationContext context = ScriptCompilationContext.builder()
+                .profile(CapabilityProfile.SAFE)
+                .policyRevision(REVISION)
+                .targetClassLoader(loader)
+                .build();
+
+        try (GroovyScriptCompiler compiler = new GroovyScriptCompiler(loader)) {
+            GroovyCompiledMockScript first = (GroovyCompiledMockScript) compiler.compile(
+                    "released-cache", 1, "return mock.proceed()", context);
+            first.releaseClassLoaderCaches();
+
+            GroovyCompiledMockScript second = (GroovyCompiledMockScript) compiler.compile(
+                    "released-cache", 1, "return mock.proceed()", context);
+            assertThat(second).isNotSameAs(first);
+            assertThat(second.scriptType().getClassLoader())
+                    .isNotSameAs(first.scriptType().getClassLoader());
+            assertThat(second.execute(fakeContext()).type()).isEqualTo(MockDecision.Type.PROCEED);
+        }
+    }
+
+    @Test
+    void inFlightSnapshotCanStillExecuteAfterRelease() {
+        ClassLoader loader = GroovyScriptCompiler.class.getClassLoader();
+        ScriptCompilationContext context = ScriptCompilationContext.builder()
+                .profile(CapabilityProfile.SAFE)
+                .policyRevision(REVISION)
+                .targetClassLoader(loader)
+                .build();
+
+        try (GroovyScriptCompiler compiler = new GroovyScriptCompiler(loader)) {
+            GroovyCompiledMockScript script = (GroovyCompiledMockScript) compiler.compile(
+                    "in-flight", 1, "return mock.returnValue('still-runs')", context);
+            script.releaseClassLoaderCaches();
+            script.releaseClassLoaderCaches();
+
+            assertThat(script.execute(fakeContext()).returnValue()).isEqualTo("still-runs");
         }
     }
 

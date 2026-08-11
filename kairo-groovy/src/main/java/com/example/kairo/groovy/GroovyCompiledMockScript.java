@@ -12,15 +12,18 @@ final class GroovyCompiledMockScript implements CompiledMockScript {
     private final long version;
     private final GroovyCompilationMetadata metadata;
     private final Class<? extends KairoScript> scriptType;
+    private final ScriptLoaderGeneration generation;
     private final AtomicBoolean released = new AtomicBoolean();
 
     GroovyCompiledMockScript(String ruleId, long version,
                              GroovyCompilationMetadata metadata,
-                             Class<? extends KairoScript> scriptType) {
+                             Class<? extends KairoScript> scriptType,
+                             ScriptLoaderGeneration generation) {
         this.ruleId = ruleId;
         this.version = version;
         this.metadata = metadata;
         this.scriptType = scriptType;
+        this.generation = generation;
     }
 
     @Override
@@ -76,11 +79,16 @@ final class GroovyCompiledMockScript implements CompiledMockScript {
 
     @Override
     public void releaseClassLoaderCaches() {
-        released.set(true);
-        Introspector.flushFromCaches(scriptType);
+        if (released.compareAndSet(false, true)) {
+            generation.close();
+        }
     }
 
     Class<? extends KairoScript> scriptType() {
         return scriptType;
+    }
+
+    boolean released() {
+        return released.get();
     }
 }

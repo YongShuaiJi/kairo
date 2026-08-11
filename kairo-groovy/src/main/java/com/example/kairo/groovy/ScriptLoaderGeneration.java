@@ -7,6 +7,7 @@ import java.beans.Introspector;
 public final class ScriptLoaderGeneration implements AutoCloseable {
 
     private final KairoGroovyClassLoader groovyClassLoader;
+    private volatile int definedClassCount;
 
     public ScriptLoaderGeneration(ClassLoader parentClassLoader, CompilerConfiguration configuration) {
         this.groovyClassLoader = new KairoGroovyClassLoader(parentClassLoader, configuration);
@@ -14,6 +15,14 @@ public final class ScriptLoaderGeneration implements AutoCloseable {
 
     KairoGroovyClassLoader groovyClassLoader() {
         return groovyClassLoader;
+    }
+
+    void captureDefinedClassCount() {
+        definedClassCount = Math.max(definedClassCount, groovyClassLoader.getLoadedClasses().length);
+    }
+
+    int definedClassCount() {
+        return definedClassCount;
     }
 
     @Override
