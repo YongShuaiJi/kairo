@@ -34,8 +34,10 @@ class SoakResultValidatorTest {
               "environment": { "jdkVersion": "21.0.11", "osName": "Mac OS X", "osArch": "aarch64", "availableProcessors": 10 },
               "duration": { "requested": "PT2M", "requestedSeconds": 120, "completedSeconds": 120.0, "completedIso": "PT2M", "completed": true },
               "cadence": { "summaryInterval": "PT1M", "batchInterval": "PT5M", "disconnectInterval": "PT30M" },
+              "workloadTopology": { "continuousTargetClass": "com.example.demo.OrderService", "lifecycleTargetClass": "com.example.demo.SoakLifecycleTarget", "classSeparated": true, "lifecycleClassLoaderPerBatch": true, "continuousTargetParticipatesInLifecycleBatches": false, "lifecycleTargetReceivesContinuousTraffic": false },
+              "measurementWarmup": { "strategy": "bounded-adaptive-metaspace-plateau", "enhanceUnloadBatch": true, "disconnectRecovery": true, "resourceSample": true, "excludedFromDurationAndCycles": true, "minimumLifecycleBatches": 128, "maximumLifecycleBatches": 512, "sampleEveryBatches": 32, "plateauWindowBatches": 128, "maxWindowMetaspaceGrowthPct": 2.0, "batchesRun": 256, "steadyStateEstablished": true, "initialMetaspaceUsedBytes": 38000000, "finalMetaspaceUsedBytes": 41000000, "observedWindowMetaspaceGrowthPct": 1.2, "lifecycleLoadersCreated": 256, "lifecycleLoadersCollected": 224, "lifecycleLoadersOutstanding": 32, "eligibleLifecycleLoaders": 224, "eligibleLifecycleLoadersOutstanding": 0, "latestCohortGraceLoaders": 32, "allowedOutstandingLifecycleLoaders": 2, "samples": [{"lifecycleBatches":128,"metaspaceUsedBytes":40500000},{"lifecycleBatches":256,"metaspaceUsedBytes":41000000}] },
               "budgets": { "maxHeapGrowthPct": 15, "maxMetaspaceGrowthPct": 10, "maxThreadDelta": 2, "maxFdDelta": 5, "driftThresholdSeconds": 300, "sustainedBreachWindowSeconds": 300 },
-              "cycles": { "continuousInvocations": 1000000, "enhanceUnloadBatches": 0, "disconnectRecoveries": 0, "summaries": 2, "failedBatches": 0 },
+              "cycles": { "continuousInvocations": 1000000, "continuousTargetEnhanceApplications": 1, "enhanceUnloadBatches": 0, "disconnectRecoveries": 0, "summaries": 2, "failedBatches": 0 },
               "timeSeries": { "rawPath": "target/v1.7/soak-timeseries.jsonl", "format": "jsonl", "count": 2, "summaryIntervalSeconds": 60 },
               "observations": [
                 { "minuteIndex": 1, "timestamp": "2026-07-31T00:01:00Z", "elapsedSeconds": 60, "heapUsedBytes": 100, "metaspaceUsedBytes": 10, "threadCount": 10, "openFdCount": 50, "loadedClassCount": 1000, "publishedRuleCount": 1, "snapshotCount": 0, "journalRecordCount": 0, "instrumentationTypeCount": 0, "instrumentationMethodCount": 0, "continuousInvocations": 1000, "batchesRun": 0, "disconnectsRun": 0, "driftDetected": false, "driftPersistentSeconds": 0, "heapBreach": false, "metaspaceBreach": false, "threadBreach": false, "fdBreach": false, "sustainedBreach": false },
@@ -111,6 +113,45 @@ class SoakResultValidatorTest {
         ObjectNode r = valid();
         ((ObjectNode) r.path("budgets")).put("maxHeapGrowthPct", 50);
         assertThat(validate(r)).anyMatch(e -> e.contains("maxHeapGrowthPct"));
+    }
+
+    @Test
+    void sameHotAndLifecycleClassFailsClosed() throws Exception {
+        ObjectNode r = valid();
+        ObjectNode topology = (ObjectNode) r.path("workloadTopology");
+        topology.put("lifecycleTargetClass", topology.path("continuousTargetClass").asText());
+        topology.put("classSeparated", false);
+        assertThat(validate(r)).anyMatch(e -> e.contains("different classes"));
+        assertThat(validate(r)).anyMatch(e -> e.contains("classSeparated"));
+    }
+
+    @Test
+    void retransformedHotTargetEvidenceFailsClosed() throws Exception {
+        ObjectNode r = valid();
+        ((ObjectNode) r.path("cycles")).put("continuousTargetEnhanceApplications", 2);
+        assertThat(validate(r)).anyMatch(e -> e.contains("enhance the continuous target exactly once"));
+    }
+
+    @Test
+    void unprovenWarmupSteadyStateFailsClosed() throws Exception {
+        ObjectNode r = valid();
+        ((ObjectNode) r.path("measurementWarmup")).put("steadyStateEstablished", false);
+        assertThat(validate(r)).anyMatch(e -> e.contains("steadyStateEstablished"));
+    }
+
+    @Test
+    void unreclaimedLifecycleLoadersFailClosed() throws Exception {
+        ObjectNode r = valid();
+        ObjectNode warmup = (ObjectNode) r.path("measurementWarmup");
+        warmup.put("eligibleLifecycleLoadersOutstanding", 3);
+        assertThat(validate(r)).anyMatch(e -> e.contains("unreclaimed lifecycle ClassLoaders"));
+    }
+
+    @Test
+    void inconsistentLifecycleLoaderTotalsFailClosed() throws Exception {
+        ObjectNode r = valid();
+        ((ObjectNode) r.path("measurementWarmup")).put("lifecycleLoadersCollected", 200);
+        assertThat(validate(r)).anyMatch(e -> e.contains("totals do not reconcile"));
     }
 
     @Test

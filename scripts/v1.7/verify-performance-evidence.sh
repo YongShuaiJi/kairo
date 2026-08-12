@@ -119,6 +119,36 @@ def resolve_raw(evidence_dir, raw):
 
 def check_soak(label, root, evidence_dir, errors):
     check_standard(label, root, errors)
+    warmup = root.get("measurementWarmup")
+    if not isinstance(warmup, dict):
+        errors.append(f"{label}: measurementWarmup object is required")
+    else:
+        if warmup.get("strategy") != "bounded-adaptive-metaspace-plateau":
+            errors.append(f"{label}: measurementWarmup.strategy must be bounded-adaptive-metaspace-plateau")
+        for key in ("enhanceUnloadBatch", "disconnectRecovery", "resourceSample",
+                    "excludedFromDurationAndCycles", "steadyStateEstablished"):
+            if warmup.get(key) is not True:
+                errors.append(f"{label}: measurementWarmup.{key} must be true")
+        batches = warmup.get("batchesRun")
+        minimum = warmup.get("minimumLifecycleBatches")
+        maximum = warmup.get("maximumLifecycleBatches")
+        if not all(isinstance(value, int) for value in (batches, minimum, maximum)) \
+                or not minimum <= batches <= maximum:
+            errors.append(f"{label}: measurementWarmup.batchesRun must be inside its bounded range")
+        observed = warmup.get("observedWindowMetaspaceGrowthPct")
+        allowed = warmup.get("maxWindowMetaspaceGrowthPct")
+        if not all(isinstance(value, (int, float)) for value in (observed, allowed)) \
+                or observed > allowed:
+            errors.append(f"{label}: measurementWarmup Metaspace plateau is not proven")
+        outstanding = warmup.get("eligibleLifecycleLoadersOutstanding")
+        allowed_outstanding = warmup.get("allowedOutstandingLifecycleLoaders")
+        if not all(isinstance(value, int) for value in (outstanding, allowed_outstanding)) \
+                or outstanding > allowed_outstanding:
+            errors.append(f"{label}: measurementWarmup lifecycle ClassLoader reclamation is not proven")
+        grace = warmup.get("latestCohortGraceLoaders")
+        sample_every = warmup.get("sampleEveryBatches")
+        if not all(isinstance(value, int) for value in (grace, sample_every)) or grace > sample_every:
+            errors.append(f"{label}: measurementWarmup ClassLoader grace exceeds one sample cohort")
     cadence = root.get("cadence")
     if not isinstance(cadence, dict):
         errors.append(f"{label}: cadence object is required but missing")

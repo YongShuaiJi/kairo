@@ -2,7 +2,9 @@ package com.example.kairo.perf.soak;
 
 import com.example.demo.OrderService;
 import com.example.kairo.agent.core.AgentRuntime;
-import com.example.kairo.agent.core.bytecode.BytecodeCaptureService.CaptureResult;
+import com.example.kairo.agent.core.bytecode.BytecodeHash;
+import com.example.kairo.agent.core.bytecode.BytecodeSnapshotKey;
+import com.example.kairo.agent.core.bytecode.ClassIdentities;
 import com.example.kairo.api.ApplyChainRequest;
 import com.example.kairo.api.ApplyChainResult;
 import com.example.kairo.api.ApplyChainStatus;
@@ -17,6 +19,8 @@ import com.example.kairo.api.RuleChainRevision;
 import com.example.kairo.api.RuleChainSpec;
 import com.example.kairo.api.bytecode.BytecodeDiffResult;
 import com.example.kairo.api.bytecode.BytecodeSnapshotKind;
+import com.example.kairo.api.bytecode.ClassIdentity;
+import com.example.kairo.api.bytecode.TransformationRevision;
 import com.example.kairo.api.snapshot.AgentRuntimeSnapshot;
 import com.example.kairo.agent.server.SoakPlatformLink;
 import com.example.kairo.core.ClassLoaderIdentity;
@@ -29,6 +33,10 @@ import net.bytebuddy.agent.ByteBuddyAgent;
 
 import javax.tools.ToolProvider;
 import java.lang.instrument.Instrumentation;
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.ref.Reference;
+import java.lang.ref.ReferenceQueue;
+import java.lang.ref.WeakReference;
 import java.lang.management.ClassLoadingMXBean;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
@@ -40,6 +48,7 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.ProtectionDomain;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -58,7 +67,8 @@ import com.sun.management.UnixOperatingSystemMXBean;
  *
  * <p><b>Cadence (fixed, &sect;9.4).</b> Every 1 minute a time-series summary is captured;
  * continuous real enhanced-target invocations run between cadence events; every 5 minutes a
- * real enhance / update / partial-unload / full-unload batch runs (reusing the M2-B
+ * second, classloader-isolated target performs a real enhance / update / partial-unload / full-unload
+ * batch (reusing the M2-B
  * {@code chainCycle} lifecycle and the precise-unload hash-restore proof); every 30 minutes an
  * Agent/Platform command-channel disconnect/recovery runs. The live {@link AgentRuntime} and
  * enhanced target stay alive while the real agent-side Platform poller is closed. Reconnect uses
@@ -77,7 +87,12 @@ import com.sun.management.UnixOperatingSystemMXBean;
  * exits non-zero: abnormal exit (any uncaught {@link Throwable}), OOME evidence (a caught
  * {@link OutOfMemoryError}), leaked business exceptions (an enhanced invocation throwing),
  * persistent state drift (&gt; 5 min), a sustained resource-budget breach (&gt; 5 min), and
- * inability to perform a precise unload (hash not restored / rules not cleared). The harness
+ * inability to perform a precise unload (hash not restored / lifecycle rules not cleared). The
+ * continuous and lifecycle targets intentionally use different classes, and every lifecycle
+ * batch owns a disposable ClassLoader: retransformation is class-wide, and repeatedly redefining
+ * one long-lived class would make HotSpot retain obsolete method metadata and cause the harness
+ * to measure its own test topology instead of Kairo's retained state.
+ * The harness
  * does not inflate timeouts, does not sleep to fake a lifecycle, does not continue on error,
  * and does not weaken assertions. A summary's heap read follows one {@code System.gc()} so it
  * measures retained (reclaimable) heap, not transient allocation noise - this is the same
@@ -93,7 +108,12 @@ public final class SoakHarness {
     private static final SoakCadence CADENCE = SoakCadence.DOCUMENTED;
     private static final SoakBudget BUDGET = SoakBudget.DOCUMENTED;
     private static final int BURST_SIZE = 200;
-    private static final int WARMUP_LIFECYCLE_BATCHES = 12;
+    private static final int WARMUP_MIN_LIFECYCLE_BATCHES = 128;
+    private static final int WARMUP_MAX_LIFECYCLE_BATCHES = 512;
+    private static final int WARMUP_SAMPLE_EVERY_BATCHES = 32;
+    private static final int WARMUP_PLATEAU_WINDOW_SAMPLES = 5;
+    private static final double WARMUP_MAX_WINDOW_METASPACE_GROWTH_PCT = 2.0;
+    private static final int WARMUP_ALLOWED_OUTSTANDING_LOADERS = 2;
 
     private static final MemoryMXBean MEMORY_MX = ManagementFactory.getMemoryMXBean();
     private static final ThreadMXBean THREAD_MX = ManagementFactory.getThreadMXBean();
@@ -149,10 +169,7 @@ public final class SoakHarness {
             ctx.processStartId = "soak-host:" + ProcessHandle.current().pid() + ":" + startedAt.toEpochMilli();
             ctx.platformLink = new SoakPlatformLink(ctx.runtime, "soak-agent", ctx.processStartId);
 
-            setupPrimaryTarget(ctx);
-            // Establish the original baseline bytes once; every full-unload must restore to them.
-            ctx.originalBaseline = ctx.runtime.captureService().capture(ctx.clazz);
-            verifyBaseline(ctx, 10);
+            setupContinuousTarget(ctx);
             // Begin the continuous phase with the primary enhanced.
             enhanceContinuous(ctx);
             ctx.expectedPrimaryValue = 77;
@@ -296,28 +313,14 @@ public final class SoakHarness {
         return 0;
     }
 
-    /** Exercise lifecycle churn and evidence paths before establishing the stable baseline. */
+    /**
+     * Exercise every measured path and establish a bounded, evidenced steady-state baseline.
+     * The release budget still starts at the first measured minute and remains 10%; calibration
+     * only prevents JVM class-metadata allocator ramp-up from being mistaken for retained Kairo
+     * state. A non-plateauing process or non-reclaimable lifecycle loader fails setup instead of
+     * silently extending warm-up or relaxing the budget.
+     */
     private static void warmUpMeasurementPaths(Context ctx) throws Exception {
-        /*
-         * One batch loads every code path, but it does not stabilize Metaspace's per-loader
-         * chunk reuse. A release soak repeatedly creates and retires Groovy loaders; measuring
-         * minute one after a single batch therefore compares steady-state allocator growth to
-         * a cold low-water mark and can fail even when every loader is reclaimable. Exercise a
-         * bounded hour-equivalent of 5-minute lifecycle churn, forcing collection between
-         * batches so the first measured window is genuinely stable. The documented 10% budget
-         * and sustained-breach window remain unchanged; a real unbounded leak still crosses
-         * them after this finite warm-up.
-         */
-        for (int cycle = 1 - WARMUP_LIFECYCLE_BATCHES; cycle <= 0; cycle++) {
-            Failure batchFailure = runBatch(ctx, cycle);
-            if (batchFailure != null) {
-                throw new AssertionFailure("warmup-" + batchFailure.phase,
-                        batchFailure.expected, batchFailure.actual, batchFailure.detail);
-            }
-            requestFullGc();
-        }
-        ctx.warmupBatchCompleted = true;
-
         Failure disconnectFailure = runDisconnectRecovery(ctx, 0, false);
         if (disconnectFailure != null) {
             throw new AssertionFailure("warmup-" + disconnectFailure.phase,
@@ -334,7 +337,37 @@ public final class SoakHarness {
         warmupJson.put("loadedClassCount", warmupObservation.loadedClassCount());
         MAPPER.writeValueAsString(warmupJson);
         ctx.warmupResourceSampleCompleted = true;
-        requestFullGc();
+
+        recordWarmupSample(ctx, 0);
+        for (int batch = 1; batch <= WARMUP_MAX_LIFECYCLE_BATCHES; batch++) {
+            Failure batchFailure = runBatch(ctx, -batch);
+            if (batchFailure != null) {
+                throw new AssertionFailure("warmup-" + batchFailure.phase,
+                        batchFailure.expected, batchFailure.actual, batchFailure.detail);
+            }
+            ctx.warmupBatchesRun = batch;
+            if (batch % WARMUP_SAMPLE_EVERY_BATCHES == 0) {
+                recordWarmupSample(ctx, batch);
+                if (batch >= WARMUP_MIN_LIFECYCLE_BATCHES && warmupPlateauEstablished(ctx)) {
+                    ctx.warmupSteadyStateEstablished = true;
+                    ctx.warmupLifecycleLoadersCreated = ctx.lifecycleLoadersCreated;
+                    ctx.warmupLifecycleLoadersCollected = ctx.lifecycleLoadersCollected;
+                    break;
+                }
+            }
+        }
+        ctx.warmupBatchCompleted = ctx.warmupBatchesRun > 0;
+        if (!ctx.warmupSteadyStateEstablished) {
+            throw new AssertionFailure("warmup-steady-state",
+                    "metaspace growth <= " + WARMUP_MAX_WINDOW_METASPACE_GROWTH_PCT
+                            + "% across bounded window and lifecycle loaders reclaimed",
+                    "batches=" + ctx.warmupBatchesRun
+                            + ",windowGrowthPct=" + ctx.warmupWindowGrowthPct
+                            + ",created=" + ctx.lifecycleLoadersCreated
+                            + ",collected=" + ctx.lifecycleLoadersCollected,
+                    "JVM did not reach a reclaimable lifecycle steady state within "
+                            + WARMUP_MAX_LIFECYCLE_BATCHES + " batches; refusing to establish a low-water baseline");
+        }
 
         ctx.summaries = 0;
         ctx.disconnectDetails.clear();
@@ -351,14 +384,68 @@ public final class SoakHarness {
         }
     }
 
-    // -------------------------------------------------------- primary target setup
+    private static void recordWarmupSample(Context ctx, int batches) {
+        requestFullGc();
+        drainCollectedLifecycleLoaders(ctx);
+        long metaspace = METASPACE_POOL == null ? -1L : METASPACE_POOL.getUsage().getUsed();
+        if (metaspace < 0) {
+            throw new AssertionFailure("warmup-metaspace-observation", "supported Metaspace MXBean", "unsupported",
+                    "cannot establish a fail-closed Metaspace baseline on this JVM");
+        }
+        WarmupSample sample = new WarmupSample(batches, metaspace, CLASSLOAD_MX.getLoadedClassCount(),
+                ctx.lifecycleLoadersCreated, ctx.lifecycleLoadersCollected);
+        ctx.warmupSamples.add(sample);
+        if (ctx.warmupSamples.size() == 1) {
+            ctx.warmupInitialMetaspaceBytes = metaspace;
+        }
+        ctx.warmupFinalMetaspaceBytes = metaspace;
+        ctx.warmupLifecycleLoadersCreated = ctx.lifecycleLoadersCreated;
+        ctx.warmupLifecycleLoadersCollected = ctx.lifecycleLoadersCollected;
+    }
 
-    private static void setupPrimaryTarget(Context ctx) throws Exception {
-        Method method = OrderService.class.getMethod("calculateScore", int.class);
-        ctx.method = method;
-        ctx.clazz = OrderService.class;
-        ctx.target = targetOf(method, EnhancementLocation.METHOD_RETURN);
-        ctx.instance = new OrderService();
+    private static boolean warmupPlateauEstablished(Context ctx) {
+        int size = ctx.warmupSamples.size();
+        if (size < WARMUP_PLATEAU_WINDOW_SAMPLES) {
+            return false;
+        }
+        WarmupSample oldest = ctx.warmupSamples.get(size - WARMUP_PLATEAU_WINDOW_SAMPLES);
+        WarmupSample newest = ctx.warmupSamples.get(size - 1);
+        long growth = Math.max(0L, newest.metaspaceUsedBytes() - oldest.metaspaceUsedBytes());
+        ctx.warmupWindowGrowthPct = oldest.metaspaceUsedBytes() <= 0 ? Double.POSITIVE_INFINITY
+                : ((double) growth / oldest.metaspaceUsedBytes()) * 100.0;
+        // HotSpot can retire the newest redefinition cohort only at the following class-unloading
+        // safepoint. Exclude exactly that newest sampling cohort, but fail closed on every older
+        // loader that has already crossed a full observation/GC boundary.
+        WarmupSample previous = ctx.warmupSamples.get(size - 2);
+        ctx.warmupEligibleLifecycleLoaders = previous.lifecycleLoadersCreated();
+        ctx.warmupEligibleLoadersOutstanding = (int) ctx.lifecycleLoaderReferences.values().stream()
+                .filter(ordinal -> ordinal <= ctx.warmupEligibleLifecycleLoaders)
+                .count();
+        ctx.warmupLatestCohortGraceLoaders = Math.max(0,
+                newest.lifecycleLoadersCreated() - ctx.warmupEligibleLifecycleLoaders);
+        return ctx.warmupWindowGrowthPct <= WARMUP_MAX_WINDOW_METASPACE_GROWTH_PCT
+                && ctx.warmupEligibleLoadersOutstanding <= WARMUP_ALLOWED_OUTSTANDING_LOADERS;
+    }
+
+    private static void drainCollectedLifecycleLoaders(Context ctx) {
+        Reference<? extends ClassLoader> ref;
+        while ((ref = ctx.lifecycleLoaderQueue.poll()) != null) {
+            if (ctx.lifecycleLoaderReferences.remove(ref) != null) {
+                ctx.lifecycleLoadersCollected++;
+            }
+        }
+        if (ctx.runtime != null) {
+            ctx.runtime.classLoaderRepository().pollCollected();
+        }
+    }
+
+    // -------------------------------------------------------- independent soak targets
+
+    private static void setupContinuousTarget(Context ctx) throws Exception {
+        ctx.continuousMethod = OrderService.class.getMethod("calculateScore", int.class);
+        ctx.continuousClass = OrderService.class;
+        ctx.continuousTarget = targetOf(ctx.continuousMethod, EnhancementLocation.METHOD_RETURN);
+        ctx.continuousInstance = new OrderService();
     }
 
     private static void enhanceContinuous(Context ctx) {
@@ -366,20 +453,20 @@ public final class SoakHarness {
         // commandId / idempotencyKey per call avoids the platform's duplicate-command dedup
         // ("previous result returned") while the rule id "soak-cont" stays stable.
         ctx.continuousApplySeq++;
-        MockRule cont = rule("soak-cont", ctx.method, EnhancementLocation.METHOD_RETURN, 10,
+        MockRule cont = rule("soak-cont", ctx.continuousMethod, EnhancementLocation.METHOD_RETURN, 10,
                 "return mock.returnValue(77)");
         ApplyChainResult result = applyChain(ctx, "cmd-soak-cont-" + ctx.continuousApplySeq,
                 "key-soak-cont-" + ctx.continuousApplySeq,
-                ctx.primaryRevision, ctx.primaryRevision.value() + 1, ctx.target,
+                ctx.continuousRevision, ctx.continuousRevision.value() + 1, ctx.continuousTarget,
                 List.of(cont), ChainDesiredState.ACTIVE);
-        ctx.primaryRevision = result.applied();
+        ctx.continuousRevision = result.applied();
     }
 
-    private static void verifyBaseline(Context ctx, int expected) {
-        int v = ctx.instance.calculateScore(5);
+    private static void verifyLifecycleBaseline(LifecycleTarget lifecycle, int expected) throws Exception {
+        int v = invokeLifecycle(lifecycle);
         if (v != expected) {
             throw new AssertionFailure("baseline-behavior", String.valueOf(expected), String.valueOf(v),
-                    "primary target baseline behaviour mismatch");
+                    "lifecycle target baseline behaviour mismatch");
         }
     }
 
@@ -389,7 +476,7 @@ public final class SoakHarness {
         try {
             boolean drifted = false;
             for (int i = 0; i < BURST_SIZE; i++) {
-                int v = ctx.instance.calculateScore(5);
+                int v = ctx.continuousInstance.calculateScore(5);
                 if (v != ctx.expectedPrimaryValue) {
                     drifted = true;
                 }
@@ -427,50 +514,71 @@ public final class SoakHarness {
 
     private static Failure runBatch(Context ctx, int cycle) {
         try {
-            MockRule a = rule("chain-a-" + cycle, ctx.method, EnhancementLocation.METHOD_RETURN, 30,
+            LifecycleTarget lifecycle = newLifecycleTarget(ctx);
+            verifyLifecycleBaseline(lifecycle, 10);
+            MockRule a = rule("chain-a-" + cycle, lifecycle.method(), EnhancementLocation.METHOD_RETURN, 30,
                     "return mock.replaceReturnValue(ctx.result() + 1)");
-            MockRule b = rule("chain-b-" + cycle, ctx.method, EnhancementLocation.METHOD_RETURN, 20,
+            MockRule b = rule("chain-b-" + cycle, lifecycle.method(), EnhancementLocation.METHOD_RETURN, 20,
                     "return mock.replaceReturnValue(ctx.result() + 10)");
-            MockRule c = rule("chain-c-" + cycle, ctx.method, EnhancementLocation.METHOD_RETURN, 10,
+            MockRule c = rule("chain-c-" + cycle, lifecycle.method(), EnhancementLocation.METHOD_RETURN, 10,
                     "return mock.replaceReturnValue(ctx.result() + 100)");
 
             // Enhance chain [a,b,c].
             ApplyChainResult applied = applyChain(ctx, "cmd-batch-" + cycle + "-e", "key-batch-" + cycle + "-e",
-                    ctx.primaryRevision, ctx.primaryRevision.value() + 1, ctx.target,
+                    RuleChainRevision.initial(), 1, lifecycle.target(),
                     List.of(a, b, c), ChainDesiredState.ACTIVE);
-            ctx.primaryRevision = applied.applied();
-            verify("batch-enhanced", 121, ctx.instance.calculateScore(5));
+            RuleChainRevision lifecycleRevision = applied.applied();
+            verify("batch-enhanced", 121, invokeLifecycle(lifecycle));
+            verify("continuous-isolation-after-enhance", 77, ctx.continuousInstance.calculateScore(5));
+            byte[] baselineBytes = retransformInputBytes(ctx, lifecycle.type());
 
             // Partial unload: drop b, keep a and c.
             ApplyChainResult partial = applyChain(ctx, "cmd-batch-" + cycle + "-p", "key-batch-" + cycle + "-p",
-                    ctx.primaryRevision, ctx.primaryRevision.value() + 1, ctx.target,
+                    lifecycleRevision, lifecycleRevision.value() + 1, lifecycle.target(),
                     List.of(a, c), ChainDesiredState.ACTIVE);
-            ctx.primaryRevision = partial.applied();
-            verify("batch-partial-unload", 111, ctx.instance.calculateScore(5));
+            lifecycleRevision = partial.applied();
+            verify("batch-partial-unload", 111, invokeLifecycle(lifecycle));
+            verify("continuous-isolation-after-update", 77, ctx.continuousInstance.calculateScore(5));
 
             // Full unload.
-            unloadChain(ctx, "cmd-batch-" + cycle + "-x", "key-batch-" + cycle + "-x", ctx.target);
-            ctx.primaryRevision = RuleChainRevision.initial();
-            verify("batch-full-unload", 10, ctx.instance.calculateScore(5));
-            if (!ctx.runtime.rules().isEmpty()) {
-                throw new AssertionFailure("batch-rules-cleared", "true", "false",
-                        "rules remained registered after full unload in batch " + cycle);
+            RetransformOutputCapture unloadCapture = new RetransformOutputCapture(lifecycle.type());
+            ctx.instrumentation.addTransformer(unloadCapture, true);
+            try {
+                unloadChain(ctx, "cmd-batch-" + cycle + "-x", "key-batch-" + cycle + "-x",
+                        lifecycle.target(), lifecycleRevision);
+            } finally {
+                ctx.instrumentation.removeTransformer(unloadCapture);
             }
-            CaptureResult after = ctx.runtime.captureService().capture(ctx.clazz);
-            boolean normIdentical = normalizedIdentical(ctx, ctx.originalBaseline, after);
-            boolean hashRestored = ctx.originalBaseline.appliedHash().equals(after.appliedHash()) && normIdentical;
+            verify("batch-full-unload", 10, invokeLifecycle(lifecycle));
+            verify("continuous-isolation-after-unload", 77, ctx.continuousInstance.calculateScore(5));
+            boolean lifecycleEmpty = ctx.runtime.chainApplier().snapshot(lifecycle.target()).isEmpty();
+            boolean continuousActive = !ctx.runtime.chainApplier().snapshot(ctx.continuousTarget).isEmpty();
+            if (!lifecycleEmpty || !continuousActive) {
+                throw new AssertionFailure("batch-lifecycle-rules-cleared",
+                        "lifecycleEmpty=true,continuousActive=true",
+                        "lifecycleEmpty=" + lifecycleEmpty + ",continuousActive=" + continuousActive,
+                        "lifecycle rules remained registered after full unload in batch " + cycle);
+            }
+            byte[] afterBytes = unloadCapture.bytes();
+            if (afterBytes == null) {
+                throw new AssertionFailure("precise-unload-capture", "captured bytes", "null",
+                        "full-unload retransform did not expose final JVM bytes in batch " + cycle);
+            }
+            boolean normIdentical = normalizedIdentical(ctx, lifecycle.type(), baselineBytes, afterBytes);
+            String baselineHash = BytecodeHash.sha256Hex(baselineBytes);
+            String afterHash = BytecodeHash.sha256Hex(afterBytes);
+            boolean hashRestored = baselineHash.equals(afterHash) && normIdentical;
             if (!hashRestored) {
                 throw new AssertionFailure("precise-unload",
                         "afterUnloadHash==baselineHash && normalizedIdentical",
-                        "baseline=" + ctx.originalBaseline.appliedHash() + " after=" + after.appliedHash()
+                        "baseline=" + baselineHash + " after=" + afterHash
                                 + " normalizedIdentical=" + normIdentical,
                         "bytecode hash not restored to baseline after full unload in batch " + cycle
                                 + " (§9.4 inability to perform precise unload)");
             }
 
-            // Re-enhance the continuous rule so the continuous phase keeps exercising the enhanced path.
-            enhanceContinuous(ctx);
-            verify("batch-re-enhanced", 77, ctx.instance.calculateScore(5));
+            // The continuously hot class was never retransformed by this lifecycle batch.
+            verify("batch-continuous-still-enhanced", 77, ctx.continuousInstance.calculateScore(5));
             ctx.expectedPrimaryValue = 77;
             return null;
         } catch (AssertionFailure af) {
@@ -486,6 +594,31 @@ public final class SoakHarness {
         }
     }
 
+    private static LifecycleTarget newLifecycleTarget(Context ctx) throws Exception {
+        LifecycleClassLoader loader = new LifecycleClassLoader(SoakHarness.class.getClassLoader());
+        int ordinal = ++ctx.lifecycleLoadersCreated;
+        WeakReference<ClassLoader> loaderReference = new WeakReference<>(loader, ctx.lifecycleLoaderQueue);
+        ctx.lifecycleLoaderReferences.put(loaderReference, ordinal);
+        Class<?> type = Class.forName(LIFECYCLE_TARGET_CLASS, true, loader);
+        Method method = type.getMethod("calculateScore", int.class);
+        Object instance = type.getDeclaredConstructor().newInstance();
+        EnhancementTarget target = targetOf(method, EnhancementLocation.METHOD_RETURN);
+        return new LifecycleTarget(type, method, instance, target);
+    }
+
+    private static byte[] retransformInputBytes(Context ctx, Class<?> type) {
+        ClassIdentity identity = ClassIdentities.of(type);
+        TransformationRevision revision = ctx.runtime.transformationJournal().currentRevision(identity);
+        BytecodeSnapshotKey key = new BytecodeSnapshotKey(identity, revision, BytecodeSnapshotKind.INPUT);
+        return ctx.runtime.snapshotRepository().bytes(key).orElseThrow(() ->
+                new AssertionFailure("baseline-capture", "first-transform INPUT snapshot", "missing",
+                        "Kairo did not retain the JVM input bytes for " + identity));
+    }
+
+    private static int invokeLifecycle(LifecycleTarget lifecycle) throws Exception {
+        return ((Number) lifecycle.method().invoke(lifecycle.instance(), 5)).intValue();
+    }
+
     // -------------------------------------------------------- 30-minute disconnect/recovery
 
     private static Failure runDisconnectRecovery(Context ctx) {
@@ -495,11 +628,11 @@ public final class SoakHarness {
     private static Failure runDisconnectRecovery(Context ctx, int cycle, boolean countAsMeasured) {
         try {
             // Precondition: the live JVM is currently enhanced.
-            verify("disconnect-precondition", 77, ctx.instance.calculateScore(5));
+            verify("disconnect-precondition", 77, ctx.continuousInstance.calculateScore(5));
             // Disconnect only the Platform command channel. The AgentRuntime and enhanced JVM
             // must stay alive; turning this into a runtime restart would test the wrong lifecycle.
             ctx.platformLink.disconnect();
-            verify("disconnect-jvm-stays-enhanced", 77, ctx.instance.calculateScore(5));
+            verify("disconnect-jvm-stays-enhanced", 77, ctx.continuousInstance.calculateScore(5));
 
             // Reconnect through a fresh real poller and read the actual state through the same
             // REFRESH_RUNTIME_STATE command path used by the Platform protocol.
@@ -514,7 +647,7 @@ public final class SoakHarness {
                         "rules=" + snapshot.rules().size() + ",chains=" + snapshot.chains().size(),
                         "REFRESH_RUNTIME_STATE lost the applied chain in cycle " + cycle);
             }
-            verify("recovery-jvm-still-enhanced", 77, ctx.instance.calculateScore(5));
+            verify("recovery-jvm-still-enhanced", 77, ctx.continuousInstance.calculateScore(5));
             if (countAsMeasured) {
                 ctx.disconnectsRun++;
             }
@@ -550,6 +683,7 @@ public final class SoakHarness {
         // This is the M2-C observation concept; it is not a sleep and does not pause the soak
         // meaningfully (~one GC per minute).
         requestFullGc();
+        drainCollectedLifecycleLoaders(ctx);
         long heap = MEMORY_MX.getHeapMemoryUsage().getUsed();
         long metaspace = METASPACE_POOL == null ? -1L : METASPACE_POOL.getUsage().getUsed();
         long fd = UNIX_OS == null ? -1L : UNIX_OS.getOpenFileDescriptorCount();
@@ -677,10 +811,10 @@ public final class SoakHarness {
     }
 
     private static void unloadChain(Context ctx, String commandId, String idempotencyKey,
-                                    EnhancementTarget target) {
+                                    EnhancementTarget target, RuleChainRevision currentRevision) {
         RuleChainSpec spec = RuleChainSpec.builder()
                 .chainId(target.method().className() + "#" + target.method().methodName())
-                .revision(ctx.primaryRevision.value() + 1)
+                .revision(currentRevision.value() + 1)
                 .target(target)
                 .entries(List.of())
                 .desiredState(ChainDesiredState.EMPTY)
@@ -688,7 +822,7 @@ public final class SoakHarness {
         ApplyChainRequest request = ApplyChainRequest.builder()
                 .commandId(commandId)
                 .idempotencyKey(idempotencyKey)
-                .expected(ctx.primaryRevision)
+                .expected(currentRevision)
                 .desired(spec)
                 .rules(List.of())
                 .target(target)
@@ -761,11 +895,12 @@ public final class SoakHarness {
                 .build();
     }
 
-    private static boolean normalizedIdentical(Context ctx, CaptureResult base, CaptureResult after) {
+    private static boolean normalizedIdentical(Context ctx, Class<?> targetClass,
+                                               byte[] baselineBytes, byte[] afterBytes) {
         BytecodeDiffResult diff = ctx.runtime.diffService().diff(
-                com.example.kairo.agent.core.bytecode.ClassIdentities.of(ctx.clazz),
-                base.appliedBytes(), base.revision(), BytecodeSnapshotKind.INPUT,
-                after.appliedBytes(), after.revision(), BytecodeSnapshotKind.APPLIED);
+                ClassIdentities.of(targetClass),
+                baselineBytes, TransformationRevision.INITIAL, BytecodeSnapshotKind.INPUT,
+                afterBytes, TransformationRevision.INITIAL, BytecodeSnapshotKind.APPLIED);
         return diff.identical();
     }
 
@@ -810,18 +945,56 @@ public final class SoakHarness {
         cadence.put("batchInterval", CADENCE.batchInterval().toString());
         cadence.put("disconnectInterval", CADENCE.disconnectInterval().toString());
 
+        ObjectNode topology = root.putObject("workloadTopology");
+        topology.put("continuousTargetClass", ctx.continuousClass.getName());
+        topology.put("lifecycleTargetClass", LIFECYCLE_TARGET_CLASS);
+        topology.put("classSeparated", !ctx.continuousClass.getName().equals(LIFECYCLE_TARGET_CLASS));
+        topology.put("lifecycleClassLoaderPerBatch", true);
+        topology.put("continuousTargetParticipatesInLifecycleBatches", false);
+        topology.put("lifecycleTargetReceivesContinuousTraffic", false);
+
         ObjectNode cycles = root.putObject("cycles");
         cycles.put("continuousInvocations", ctx.continuousInvocations);
+        cycles.put("continuousTargetEnhanceApplications", ctx.continuousApplySeq);
         cycles.put("enhanceUnloadBatches", ctx.batchesRun);
         cycles.put("disconnectRecoveries", ctx.disconnectsRun);
         cycles.put("summaries", ctx.summaries);
         cycles.put("failedBatches", ctx.failedBatches);
 
         ObjectNode warmup = root.putObject("measurementWarmup");
+        warmup.put("strategy", "bounded-adaptive-metaspace-plateau");
         warmup.put("enhanceUnloadBatch", ctx.warmupBatchCompleted);
         warmup.put("disconnectRecovery", ctx.warmupDisconnectCompleted);
         warmup.put("resourceSample", ctx.warmupResourceSampleCompleted);
         warmup.put("excludedFromDurationAndCycles", true);
+        warmup.put("minimumLifecycleBatches", WARMUP_MIN_LIFECYCLE_BATCHES);
+        warmup.put("maximumLifecycleBatches", WARMUP_MAX_LIFECYCLE_BATCHES);
+        warmup.put("sampleEveryBatches", WARMUP_SAMPLE_EVERY_BATCHES);
+        warmup.put("plateauWindowBatches",
+                (WARMUP_PLATEAU_WINDOW_SAMPLES - 1) * WARMUP_SAMPLE_EVERY_BATCHES);
+        warmup.put("maxWindowMetaspaceGrowthPct", WARMUP_MAX_WINDOW_METASPACE_GROWTH_PCT);
+        warmup.put("batchesRun", ctx.warmupBatchesRun);
+        warmup.put("steadyStateEstablished", ctx.warmupSteadyStateEstablished);
+        warmup.put("initialMetaspaceUsedBytes", ctx.warmupInitialMetaspaceBytes);
+        warmup.put("finalMetaspaceUsedBytes", ctx.warmupFinalMetaspaceBytes);
+        warmup.put("observedWindowMetaspaceGrowthPct", ctx.warmupWindowGrowthPct);
+        warmup.put("lifecycleLoadersCreated", ctx.warmupLifecycleLoadersCreated);
+        warmup.put("lifecycleLoadersCollected", ctx.warmupLifecycleLoadersCollected);
+        warmup.put("lifecycleLoadersOutstanding",
+                Math.max(0, ctx.warmupLifecycleLoadersCreated - ctx.warmupLifecycleLoadersCollected));
+        warmup.put("eligibleLifecycleLoaders", ctx.warmupEligibleLifecycleLoaders);
+        warmup.put("eligibleLifecycleLoadersOutstanding", ctx.warmupEligibleLoadersOutstanding);
+        warmup.put("latestCohortGraceLoaders", ctx.warmupLatestCohortGraceLoaders);
+        warmup.put("allowedOutstandingLifecycleLoaders", WARMUP_ALLOWED_OUTSTANDING_LOADERS);
+        ArrayNode warmupSamples = warmup.putArray("samples");
+        for (WarmupSample sample : ctx.warmupSamples) {
+            ObjectNode node = warmupSamples.addObject();
+            node.put("lifecycleBatches", sample.lifecycleBatches());
+            node.put("metaspaceUsedBytes", sample.metaspaceUsedBytes());
+            node.put("loadedClassCount", sample.loadedClassCount());
+            node.put("lifecycleLoadersCreated", sample.lifecycleLoadersCreated());
+            node.put("lifecycleLoadersCollected", sample.lifecycleLoadersCollected());
+        }
 
         ObjectNode budgets = root.putObject("budgets");
         budgets.put("maxHeapGrowthPct", BUDGET.maxHeapGrowthPct());
@@ -1031,12 +1204,11 @@ public final class SoakHarness {
         AgentRuntime runtime;
         SoakPlatformLink platformLink;
         String processStartId;
-        Method method;
-        Class<?> clazz;
-        EnhancementTarget target;
-        OrderService instance;
-        CaptureResult originalBaseline;
-        RuleChainRevision primaryRevision = RuleChainRevision.initial();
+        Method continuousMethod;
+        Class<?> continuousClass;
+        EnhancementTarget continuousTarget;
+        OrderService continuousInstance;
+        RuleChainRevision continuousRevision = RuleChainRevision.initial();
         int continuousApplySeq;
         int expectedPrimaryValue = 10;
         long continuousInvocations;
@@ -1051,11 +1223,92 @@ public final class SoakHarness {
         boolean warmupBatchCompleted;
         boolean warmupDisconnectCompleted;
         boolean warmupResourceSampleCompleted;
+        int warmupBatchesRun;
+        boolean warmupSteadyStateEstablished;
+        long warmupInitialMetaspaceBytes = -1L;
+        long warmupFinalMetaspaceBytes = -1L;
+        double warmupWindowGrowthPct = -1.0;
+        int lifecycleLoadersCreated;
+        int lifecycleLoadersCollected;
+        int warmupLifecycleLoadersCreated;
+        int warmupLifecycleLoadersCollected;
+        int warmupEligibleLifecycleLoaders;
+        int warmupEligibleLoadersOutstanding;
+        int warmupLatestCohortGraceLoaders;
+        ReferenceQueue<ClassLoader> lifecycleLoaderQueue = new ReferenceQueue<>();
+        Map<WeakReference<ClassLoader>, Integer> lifecycleLoaderReferences = new LinkedHashMap<>();
+        List<WarmupSample> warmupSamples = new ArrayList<>();
         Failure firstFailure;
         List<SoakObservation> observations = new ArrayList<>();
         List<String> disconnectDetails = new ArrayList<>();
         String disconnectLastOutcome;
         java.io.BufferedWriter timeSeriesWriter;
         Path timeSeriesPath;
+    }
+
+    private static final String LIFECYCLE_TARGET_CLASS = "com.example.demo.SoakLifecycleTarget";
+    private static final String LIFECYCLE_TARGET_RESOURCE = "com/example/demo/SoakLifecycleTarget.class";
+
+    private record LifecycleTarget(Class<?> type, Method method, Object instance,
+                                   EnhancementTarget target) {
+    }
+
+    private record WarmupSample(int lifecycleBatches, long metaspaceUsedBytes, int loadedClassCount,
+                                int lifecycleLoadersCreated, int lifecycleLoadersCollected) {
+    }
+
+    /** Captures the bytes produced by all earlier transformers during the physical unload itself. */
+    private static final class RetransformOutputCapture implements ClassFileTransformer {
+        private final Class<?> target;
+        private volatile byte[] bytes;
+
+        RetransformOutputCapture(Class<?> target) {
+            this.target = target;
+        }
+
+        @Override
+        public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined,
+                                ProtectionDomain protectionDomain, byte[] classfileBuffer) {
+            if (classBeingRedefined == target) {
+                bytes = classfileBuffer.clone();
+            }
+            return null;
+        }
+
+        byte[] bytes() {
+            return bytes == null ? null : bytes.clone();
+        }
+    }
+
+    /** Child-first only for the lifecycle fixture; all API/agent types remain parent-owned. */
+    private static final class LifecycleClassLoader extends ClassLoader {
+        LifecycleClassLoader(ClassLoader parent) {
+            super(parent);
+        }
+
+        @Override
+        protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            if (!LIFECYCLE_TARGET_CLASS.equals(name)) {
+                return super.loadClass(name, resolve);
+            }
+            synchronized (getClassLoadingLock(name)) {
+                Class<?> loaded = findLoadedClass(name);
+                if (loaded == null) {
+                    try (java.io.InputStream in = getParent().getResourceAsStream(LIFECYCLE_TARGET_RESOURCE)) {
+                        if (in == null) {
+                            throw new ClassNotFoundException("missing " + LIFECYCLE_TARGET_RESOURCE);
+                        }
+                        byte[] bytes = in.readAllBytes();
+                        loaded = defineClass(name, bytes, 0, bytes.length);
+                    } catch (java.io.IOException e) {
+                        throw new ClassNotFoundException(name, e);
+                    }
+                }
+                if (resolve) {
+                    resolveClass(loaded);
+                }
+                return loaded;
+            }
+        }
     }
 }

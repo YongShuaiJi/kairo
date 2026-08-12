@@ -185,6 +185,10 @@ base_soak={
   "buildId":FIX,"command":"run-soak.sh","mode":"pr","workingTreeDirty":False,"jvmArgs":["-Xms1g"],
   "environment":{"jdkVersion":"21.0.11","osName":"Linux","osArch":"amd64","availableProcessors":4,"javaHome":"/j","pid":1},
   "duration":{"requested":"PT2H","requestedSeconds":7200,"completedSeconds":7202.0,"completedIso":"PT2H2S","completed":True},
+  "measurementWarmup":{"strategy":"bounded-adaptive-metaspace-plateau","steadyStateEstablished":True,
+    "observedWindowMetaspaceGrowthPct":1.0,"maxWindowMetaspaceGrowthPct":2.0,
+    "eligibleLifecycleLoadersOutstanding":1,"allowedOutstandingLifecycleLoaders":2,
+    "latestCohortGraceLoaders":32,"sampleEveryBatches":32},
   "overall":"PASSED","firstFailure":None,"timeSeries":{"rawPath":"soak-timeseries.jsonl","format":"jsonl","count":120}
 }
 base_defects={"schemaVersion":"1.0","status":"authoritative","buildId":FIX,"generatedAt":"x","defects":[]}
@@ -256,6 +260,13 @@ expect_fail("short soak (wall-clock timestamps < 7200)", "timestamp interval mus
 # --- wrong duration.requested ---
 s=copy.deepcopy(base_soak); s["duration"]["requested"]="PT1H"
 expect_fail("short soak (requested PT1H)", "duration.requested must be PT2H", soak=s)
+# --- soak steady-state / disposable-loader proof is mandatory ---
+s=copy.deepcopy(base_soak); s["measurementWarmup"]["steadyStateEstablished"]=False
+expect_fail("soak without steady-state proof", "steadyStateEstablished must be true", soak=s)
+s=copy.deepcopy(base_soak); s["measurementWarmup"]["eligibleLifecycleLoadersOutstanding"]=3
+expect_fail("soak with unreclaimed lifecycle loader", "reclamation was not proven", soak=s)
+s=copy.deepcopy(base_soak); s["measurementWarmup"]["latestCohortGraceLoaders"]=33
+expect_fail("soak with oversized loader grace cohort", "grace exceeds one sample cohort", soak=s)
 
 # --- reduced cycle count ---
 c=copy.deepcopy(base_cycle); c["cycles"]["requested"]=5000
