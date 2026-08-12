@@ -36,7 +36,7 @@ class SoakShortLifecycleTest {
 
     @Test
     void acceleratedShortRunPassesAllCadenceGates() throws Exception {
-        Duration duration = Duration.ofMinutes(321); // reproduce 64 lifecycle batches from the failed P7D
+        Duration duration = Duration.ofMinutes(321);
         SoakArgumentParser.Options opts = SoakArgumentParser.parse(new String[]{
                 "--duration", duration.toString(),
                 "--output", outputDir.toString(),
@@ -76,19 +76,38 @@ class SoakShortLifecycleTest {
 
         // The fixed cadence fired a full sequence over the accelerated virtual time.
         JsonNode cycles = result.path("cycles");
+        assertThat(cycles.path("continuousTargetEnhanceApplications").asInt())
+                .as("the hot target must not be retransformed by lifecycle batches").isEqualTo(1);
         assertThat(cycles.path("summaries").asInt()).as("per-minute summaries").isGreaterThanOrEqualTo(30);
         assertThat(cycles.path("enhanceUnloadBatches").asInt()).as("5-minute measured batches")
-                .isEqualTo(64);
+                .isEqualTo((int) (duration.toMinutes() / 5));
         assertThat(cycles.path("disconnectRecoveries").asInt()).as("30-minute measured disconnect/recovery")
-                .isEqualTo(10);
+                .isEqualTo((int) (duration.toMinutes() / 30));
         assertThat(cycles.path("continuousInvocations").asLong()).as("continuous real invocations").isGreaterThan(0L);
         assertThat(cycles.path("failedBatches").asInt()).isZero();
+
+        JsonNode topology = result.path("workloadTopology");
+        assertThat(topology.path("classSeparated").asBoolean()).isTrue();
+        assertThat(topology.path("lifecycleClassLoaderPerBatch").asBoolean()).isTrue();
+        assertThat(topology.path("continuousTargetClass").asText())
+                .isNotEqualTo(topology.path("lifecycleTargetClass").asText());
+        assertThat(topology.path("continuousTargetParticipatesInLifecycleBatches").asBoolean()).isFalse();
+        assertThat(topology.path("lifecycleTargetReceivesContinuousTraffic").asBoolean()).isFalse();
 
         JsonNode warmup = result.path("measurementWarmup");
         assertThat(warmup.path("enhanceUnloadBatch").asBoolean()).isTrue();
         assertThat(warmup.path("disconnectRecovery").asBoolean()).isTrue();
         assertThat(warmup.path("resourceSample").asBoolean()).isTrue();
         assertThat(warmup.path("excludedFromDurationAndCycles").asBoolean()).isTrue();
+        assertThat(warmup.path("strategy").asText()).isEqualTo("bounded-adaptive-metaspace-plateau");
+        assertThat(warmup.path("steadyStateEstablished").asBoolean()).isTrue();
+        assertThat(warmup.path("batchesRun").asInt()).isBetween(128, 512);
+        assertThat(warmup.path("observedWindowMetaspaceGrowthPct").asDouble()).isLessThanOrEqualTo(2.0);
+        assertThat(warmup.path("eligibleLifecycleLoadersOutstanding").asInt())
+                .isLessThanOrEqualTo(warmup.path("allowedOutstandingLifecycleLoaders").asInt());
+        assertThat(warmup.path("latestCohortGraceLoaders").asInt())
+                .isLessThanOrEqualTo(warmup.path("sampleEveryBatches").asInt());
+        assertThat(warmup.path("samples").size()).isGreaterThanOrEqualTo(5);
 
         // The fixed cadence is recorded verbatim (production default unchanged).
         JsonNode cadence = result.path("cadence");
@@ -100,7 +119,7 @@ class SoakShortLifecycleTest {
         JsonNode dr = result.path("disconnectRecovery");
         assertThat(dr.path("count").asInt()).isGreaterThanOrEqualTo(1);
         assertThat(dr.path("details")).as("cycle-zero warm-up must not leak into measured evidence")
-                .hasSize(10);
+                .hasSize((int) (duration.toMinutes() / 30));
         assertThat(dr.path("lastOutcome").asText()).isEqualTo("RECOVERED");
 
         // The raw time-series file exists at the recorded in-repo/local path.
@@ -116,4 +135,5 @@ class SoakShortLifecycleTest {
         assertThat(result.path("duration").path("completed").asBoolean()).isTrue();
         assertThat(result.path("oomEvidence").asBoolean()).isFalse();
     }
+
 }

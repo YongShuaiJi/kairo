@@ -323,6 +323,26 @@ def validate_soak(node, expected_build_id):
             raise CertError(f"{ctx}: {k}={node[k]!r} indicates accelerated-clock evidence (rejected)")
     if node.get("firstFailure") is not None:
         raise CertError(f"{ctx}: firstFailure must be null for PASSED evidence")
+    warmup = _require(node, "measurementWarmup", ctx)
+    if warmup.get("strategy") != "bounded-adaptive-metaspace-plateau":
+        raise CertError(f"{ctx}: measurementWarmup.strategy must prove bounded adaptive plateau")
+    if warmup.get("steadyStateEstablished") is not True:
+        raise CertError(f"{ctx}: measurementWarmup.steadyStateEstablished must be true")
+    outstanding = warmup.get("eligibleLifecycleLoadersOutstanding")
+    allowed_outstanding = warmup.get("allowedOutstandingLifecycleLoaders")
+    if not isinstance(outstanding, int) or not isinstance(allowed_outstanding, int) \
+            or outstanding < 0 or allowed_outstanding < 0 or outstanding > allowed_outstanding:
+        raise CertError(f"{ctx}: lifecycle ClassLoader reclamation was not proven")
+    grace = warmup.get("latestCohortGraceLoaders")
+    sample_every = warmup.get("sampleEveryBatches")
+    if not isinstance(grace, int) or not isinstance(sample_every, int) \
+            or grace < 0 or grace > sample_every:
+        raise CertError(f"{ctx}: lifecycle ClassLoader grace exceeds one sample cohort")
+    observed_growth = warmup.get("observedWindowMetaspaceGrowthPct")
+    allowed_growth = warmup.get("maxWindowMetaspaceGrowthPct")
+    if not isinstance(observed_growth, (int, float)) or not isinstance(allowed_growth, (int, float)) \
+            or observed_growth < 0 or allowed_growth < 0 or observed_growth > allowed_growth:
+        raise CertError(f"{ctx}: warm-up Metaspace plateau was not proven")
     return {"duration": dur, "startedAt": node.get("startedAt"), "endedAt": node.get("endedAt")}
 
 

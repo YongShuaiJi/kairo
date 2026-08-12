@@ -74,6 +74,8 @@ public final class SoakResultValidator {
         validateEnvironment(errors, root.path("environment"));
         validateDuration(errors, root.path("duration"), requestedDuration, passing);
         validateCadence(errors, root.path("cadence"));
+        validateWorkloadTopology(errors, root.path("workloadTopology"));
+        validateMeasurementWarmup(errors, root.path("measurementWarmup"), passing);
         validateBudgets(errors, root.path("budgets"));
         validateCycles(errors, root.path("cycles"), requestedDuration, passing);
         validateTimeSeries(errors, root.path("timeSeries"), root.path("observations"),
@@ -202,6 +204,110 @@ public final class SoakResultValidator {
         checkInt(errors, budgets, "sustainedBreachWindowSeconds", SoakBudget.DOCUMENTED.sustainedBreachWindowSeconds());
     }
 
+    private void validateWorkloadTopology(List<String> errors, JsonNode topology) {
+        if (!topology.isObject()) {
+            errors.add("missing workloadTopology object");
+            return;
+        }
+        String continuous = textOrNull(topology, "continuousTargetClass");
+        String lifecycle = textOrNull(topology, "lifecycleTargetClass");
+        if (continuous == null || continuous.isBlank()) {
+            errors.add("workloadTopology.continuousTargetClass must be non-blank");
+        }
+        if (lifecycle == null || lifecycle.isBlank()) {
+            errors.add("workloadTopology.lifecycleTargetClass must be non-blank");
+        }
+        if (continuous != null && continuous.equals(lifecycle)) {
+            errors.add("continuous and lifecycle targets must be different classes");
+        }
+        requireBoolean(errors, topology, "classSeparated", true);
+        requireBoolean(errors, topology, "lifecycleClassLoaderPerBatch", true);
+        requireBoolean(errors, topology, "continuousTargetParticipatesInLifecycleBatches", false);
+        requireBoolean(errors, topology, "lifecycleTargetReceivesContinuousTraffic", false);
+    }
+
+    private void validateMeasurementWarmup(List<String> errors, JsonNode warmup, boolean passing) {
+        if (!warmup.isObject()) {
+            errors.add("missing measurementWarmup object");
+            return;
+        }
+        requireText(errors, warmup, "strategy", "bounded-adaptive-metaspace-plateau");
+        requireBoolean(errors, warmup, "excludedFromDurationAndCycles", true);
+        for (String field : List.of("enhanceUnloadBatch", "disconnectRecovery", "resourceSample",
+                "steadyStateEstablished")) {
+            if (!warmup.path(field).isBoolean()) {
+                errors.add("measurementWarmup." + field + " must be boolean");
+            }
+        }
+        for (String field : List.of("minimumLifecycleBatches", "maximumLifecycleBatches",
+                "sampleEveryBatches", "plateauWindowBatches", "batchesRun",
+                "lifecycleLoadersCreated", "lifecycleLoadersCollected",
+                "lifecycleLoadersOutstanding", "eligibleLifecycleLoaders",
+                "eligibleLifecycleLoadersOutstanding", "latestCohortGraceLoaders",
+                "allowedOutstandingLifecycleLoaders")) {
+            if (!warmup.path(field).isInt() || warmup.path(field).asInt() < 0) {
+                errors.add("measurementWarmup." + field + " must be a non-negative int");
+            }
+        }
+        for (String field : List.of("initialMetaspaceUsedBytes", "finalMetaspaceUsedBytes")) {
+            if (!warmup.path(field).isIntegralNumber()) {
+                errors.add("measurementWarmup." + field + " must be an integer");
+            }
+        }
+        if (!warmup.path("maxWindowMetaspaceGrowthPct").isNumber()
+                || warmup.path("maxWindowMetaspaceGrowthPct").asDouble() < 0) {
+            errors.add("measurementWarmup.maxWindowMetaspaceGrowthPct must be a non-negative number");
+        }
+        if (!warmup.path("observedWindowMetaspaceGrowthPct").isNumber()
+                || !Double.isFinite(warmup.path("observedWindowMetaspaceGrowthPct").asDouble())) {
+            errors.add("measurementWarmup.observedWindowMetaspaceGrowthPct must be finite");
+        }
+        JsonNode samples = warmup.path("samples");
+        if (!samples.isArray()) {
+            errors.add("measurementWarmup.samples must be an array");
+        }
+        if (passing) {
+            requireBoolean(errors, warmup, "enhanceUnloadBatch", true);
+            requireBoolean(errors, warmup, "disconnectRecovery", true);
+            requireBoolean(errors, warmup, "resourceSample", true);
+            requireBoolean(errors, warmup, "steadyStateEstablished", true);
+            int batches = warmup.path("batchesRun").asInt(-1);
+            int minimum = warmup.path("minimumLifecycleBatches").asInt(Integer.MAX_VALUE);
+            int maximum = warmup.path("maximumLifecycleBatches").asInt(-1);
+            if (batches < minimum || batches > maximum) {
+                errors.add("passing measurementWarmup.batchesRun must be within its bounded calibration range");
+            }
+            double observed = warmup.path("observedWindowMetaspaceGrowthPct").asDouble(Double.POSITIVE_INFINITY);
+            double allowed = warmup.path("maxWindowMetaspaceGrowthPct").asDouble(-1.0);
+            if (observed > allowed) {
+                errors.add("passing measurementWarmup observed Metaspace growth exceeds plateau limit");
+            }
+            int outstanding = warmup.path("eligibleLifecycleLoadersOutstanding").asInt(Integer.MAX_VALUE);
+            int allowedOutstanding = warmup.path("allowedOutstandingLifecycleLoaders").asInt(-1);
+            if (outstanding > allowedOutstanding) {
+                errors.add("passing measurementWarmup has unreclaimed lifecycle ClassLoaders");
+            }
+            int created = warmup.path("lifecycleLoadersCreated").asInt(-1);
+            int collected = warmup.path("lifecycleLoadersCollected").asInt(-1);
+            int totalOutstanding = warmup.path("lifecycleLoadersOutstanding").asInt(-1);
+            int eligible = warmup.path("eligibleLifecycleLoaders").asInt(-1);
+            int grace = warmup.path("latestCohortGraceLoaders").asInt(-1);
+            if (created < collected || totalOutstanding != created - collected) {
+                errors.add("passing measurementWarmup lifecycle ClassLoader totals do not reconcile");
+            }
+            if (eligible < 0 || eligible > created || grace != created - eligible) {
+                errors.add("passing measurementWarmup eligible/grace ClassLoader cohorts do not reconcile");
+            }
+            if (warmup.path("latestCohortGraceLoaders").asInt(Integer.MAX_VALUE)
+                    > warmup.path("sampleEveryBatches").asInt(-1)) {
+                errors.add("passing measurementWarmup ClassLoader grace cohort exceeds one sample interval");
+            }
+            if (!samples.isArray() || samples.size() < 2) {
+                errors.add("passing measurementWarmup.samples must contain plateau evidence");
+            }
+        }
+    }
+
     private void validateCycles(List<String> errors, JsonNode cycles, Duration requestedDuration,
                                 boolean passing) {
         if (!cycles.isObject()) {
@@ -210,6 +316,10 @@ public final class SoakResultValidator {
         }
         if (!cycles.path("continuousInvocations").isIntegralNumber() || cycles.path("continuousInvocations").asLong() < 0) {
             errors.add("cycles.continuousInvocations must be a non-negative integer");
+        }
+        if (!cycles.path("continuousTargetEnhanceApplications").isInt()
+                || cycles.path("continuousTargetEnhanceApplications").asInt() < 0) {
+            errors.add("cycles.continuousTargetEnhanceApplications must be a non-negative integer");
         }
         if (!cycles.path("enhanceUnloadBatches").isInt() || cycles.path("enhanceUnloadBatches").asInt() < 0) {
             errors.add("cycles.enhanceUnloadBatches must be >= 0");
@@ -235,6 +345,10 @@ public final class SoakResultValidator {
             if (!cycles.path("continuousInvocations").isIntegralNumber()
                     || cycles.path("continuousInvocations").asLong() <= 0) {
                 errors.add("passing evidence must contain at least one real continuous invocation");
+            }
+            if (cycles.path("continuousTargetEnhanceApplications").asInt() != 1) {
+                errors.add("passing evidence must enhance the continuous target exactly once; lifecycle batches"
+                        + " must use the class-isolated target");
             }
         }
     }
@@ -396,6 +510,15 @@ public final class SoakResultValidator {
         JsonNode n = parent.path(field);
         if (!n.isTextual() || n.asText().isBlank()) {
             errors.add(field + " must be a non-blank string");
+        }
+    }
+
+    private static void requireBoolean(List<String> errors, JsonNode parent, String field,
+                                       boolean expected) {
+        JsonNode n = parent.path(field);
+        if (!n.isBoolean() || n.asBoolean() != expected) {
+            errors.add("workloadTopology." + field + " must equal " + expected + " (got: "
+                    + (n.isBoolean() ? n.asBoolean() : "missing") + ")");
         }
     }
 
