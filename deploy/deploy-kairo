@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly DEPLOY_DIR="/opt/kairo"
+readonly COMPOSE_FILE="$DEPLOY_DIR/compose.yml"
+readonly ENV_FILE="$DEPLOY_DIR/.env"
+readonly STATE_DIR="/var/lib/kairo-deploy"
+readonly BACKUP_DIR="$STATE_DIR/backups"
+readonly PREVIOUS_RELEASE_FILE="$STATE_DIR/previous-release"
+readonly LOCK_FILE="/run/lock/kairo-deploy.lock"
+readonly PLATFORM_CONTAINER="kairo-platform"
+readonly WEB_CONTAINER="kairo-platform-web"
+readonly PLATFORM_HEALTH_URL="http://127.0.0.1:18280/actuator/health/readiness"
+readonly WEB_HEALTH_URL="http://127.0.0.1:18380/api/health"
+readonly PLATFORM_PATTERN='^ghcr\.io/yongshuaiji/kairo-platform-server@sha256:[0-9a-f]{64}$'
+readonly WEB_PATTERN='^ghcr\.io/yongshuaiji/kairo-platform-web@sha256:[0-9a-f]{64}$'
+readonly SHA_PATTERN='^[0-9a-f]{40}$'
+
+env_backup=""
+database_backup=""
+
+log() {
+    printf '[kairo-deploy] %s\n' "$*"
+}
+
+fail() {
+    log "ERROR: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ -n "$env_backup" && -e "$env_backup" ]]; then
+        rm -f -- "$env_backup"
+    fi
+}
+
+trap cleanup EXIT
+
+[[ "${EUID}" -eq 0 ]] || fail "must run as root through the restricted sudo rule"
+
+target_platform="${1:-}"
+target_web="${2:-}"
+target_sha="${3:-}"
+[[ "$target_platform" =~ $PLATFORM_PATTERN ]] || fail "invalid or mutable Platform image reference"
+[[ "$target_web" =~ $WEB_PATTERN ]] || fail "invalid or mutable Web image reference"
+[[ "$target_sha" =~ $SHA_PATTERN ]] || fail "candidate SHA must contain exactly 40 lowercase hex characters"
+
+for command_name in docker curl flock awk mktemp openssl; do
+    command -v "$command_name" >/dev/null 2>&1 || fail "missing required command: $command_name"
+done
+[[ -f "$COMPOSE_FILE" ]] || fail "missing Compose file: $COMPOSE_FILE"
+[[ -f "$ENV_FILE" ]] || fail "missing environment file: $ENV_FILE"
+
+exec 9>"$LOCK_FILE"
+flock -n 9 || fail "another Kairo deployment is already running"
+
+read_env_value() {
+    local key="$1"
+    awk -F= -v key="$key" '$1 == key { print substr($0, index($0, "=") + 1); exit }' "$ENV_FILE"
+}
+
+compose() {
+    docker compose \
+        --project-directory "$DEPLOY_DIR" \
+        --env-file "$ENV_FILE" \
+        -f "$COMPOSE_FILE" "$@"
+}
+
+containers_healthy() {
+    local name
+    local status
+    for name in kairo-postgres kairo-redis "$PLATFORM_CONTAINER" "$WEB_CONTAINER"; do
+        status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$name" 2>/dev/null || true)"
+        [[ "$status" == "healthy" ]] || return 1
+    done
+    curl --fail --silent --show-error "$PLATFORM_HEALTH_URL" >/dev/null \
+        && curl --fail --silent --show-error "$WEB_HEALTH_URL" >/dev/null
+}
+
+wait_for_health() {
+    local attempt
+    for attempt in $(seq 1 90); do
+        if containers_healthy; then
+            return 0
+        fi
+        sleep 2
+    done
+    return 1
+}
+
+write_release() {
+    local platform_ref="$1"
+    local web_ref="$2"
+    local candidate_sha="$3"
+    local temp_env
+    temp_env="$(mktemp "$DEPLOY_DIR/.env.tmp.XXXXXX")"
+    awk -v platform_ref="$platform_ref" -v web_ref="$web_ref" -v candidate_sha="$candidate_sha" '
+        BEGIN { p = 0; w = 0; s = 0 }
+        /^KAIRO_PLATFORM_IMAGE=/ { print "KAIRO_PLATFORM_IMAGE=" platform_ref; p = 1; next }
+        /^KAIRO_WEB_IMAGE=/ { print "KAIRO_WEB_IMAGE=" web_ref; w = 1; next }
+        /^KAIRO_CANDIDATE_SHA=/ { print "KAIRO_CANDIDATE_SHA=" candidate_sha; s = 1; next }
+        { print }
+        END {
+            if (!p) print "KAIRO_PLATFORM_IMAGE=" platform_ref
+            if (!w) print "KAIRO_WEB_IMAGE=" web_ref
+            if (!s) print "KAIRO_CANDIDATE_SHA=" candidate_sha
+        }
+    ' "$ENV_FILE" > "$temp_env"
+    chown root:root "$temp_env"
+    chmod 600 "$temp_env"
+    mv -f -- "$temp_env" "$ENV_FILE"
+}
+
+backup_database() {
+    local db_name
+    local db_user
+    if ! docker inspect kairo-postgres >/dev/null 2>&1; then
+        return 0
+    fi
+    if ! docker exec kairo-postgres pg_isready >/dev/null 2>&1; then
+        fail "existing PostgreSQL container is not ready; refusing deployment without a backup"
+    fi
+    db_name="$(read_env_value KAIRO_DB_NAME)"
+    db_user="$(read_env_value KAIRO_DB_USER)"
+    db_name="${db_name:-kairo}"
+    db_user="${db_user:-kairo}"
+    install -d -m 700 -o root -g root "$BACKUP_DIR"
+    database_backup="$BACKUP_DIR/kairo-${target_sha}-$(date -u +%Y%m%dT%H%M%SZ).dump"
+    log "creating PostgreSQL pre-deploy backup"
+    if ! docker exec kairo-postgres pg_dump -U "$db_user" -d "$db_name" --format=custom > "$database_backup"; then
+        rm -f -- "$database_backup"
+        fail "PostgreSQL backup failed"
+    fi
+    chmod 600 "$database_backup"
+    find "$BACKUP_DIR" -type f -name 'kairo-*.dump' -printf '%T@ %p\n' \
+        | sort -nr | awk 'NR > 7 { sub(/^[^ ]+ /, ""); print }' \
+        | xargs -r rm -f --
+}
+
+verify_image_identity() {
+    local ref="$1"
+    local actual
+    actual="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref")"
+    [[ "$actual" == "$target_sha" ]] || fail "image revision $actual does not match candidate $target_sha"
+}
+
+rollback() {
+    if [[ -z "$env_backup" ]]; then
+        log "initial deployment failed; stopping the incomplete topology"
+        compose down --remove-orphans || true
+        return
+    fi
+    log "deployment failed; restoring previous image configuration"
+    cp -f -- "$env_backup" "$ENV_FILE"
+    chown root:root "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    if compose up -d --no-build --pull never --remove-orphans && wait_for_health; then
+        log "image rollback completed"
+    else
+        log "CRITICAL: previous images did not become healthy" >&2
+    fi
+    if [[ -n "$database_backup" ]]; then
+        log "database backup retained at $database_backup; Flyway rollback requires an explicit restore"
+    fi
+}
+
+current_platform="$(read_env_value KAIRO_PLATFORM_IMAGE)"
+current_web="$(read_env_value KAIRO_WEB_IMAGE)"
+current_sha="$(read_env_value KAIRO_CANDIDATE_SHA)"
+
+if [[ "$current_platform" == "$target_platform" \
+      && "$current_web" == "$target_web" \
+      && "$current_sha" == "$target_sha" ]] \
+      && containers_healthy; then
+    log "requested candidate is already healthy; nothing to do"
+    exit 0
+fi
+
+log "pulling approved immutable image digests"
+docker pull "$target_platform"
+docker pull "$target_web"
+verify_image_identity "$target_platform"
+verify_image_identity "$target_web"
+
+backup_database
+
+if [[ -n "$current_platform" && -n "$current_web" ]]; then
+    env_backup="$(mktemp "$DEPLOY_DIR/.env.rollback.XXXXXX")"
+    cp -f -- "$ENV_FILE" "$env_backup"
+    chmod 600 "$env_backup"
+fi
+
+write_release "$target_platform" "$target_web" "$target_sha"
+
+if ! compose up -d --no-build --pull never --remove-orphans || ! wait_for_health; then
+    rollback
+    exit 1
+fi
+
+install -d -m 700 -o root -g root "$STATE_DIR"
+{
+    printf 'candidate=%s\n' "$target_sha"
+    printf 'platform=%s\n' "$target_platform"
+    printf 'web=%s\n' "$target_web"
+    printf 'deployedAt=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    [[ -z "$database_backup" ]] || printf 'databaseBackup=%s\n' "$database_backup"
+} > "$PREVIOUS_RELEASE_FILE"
+chmod 600 "$PREVIOUS_RELEASE_FILE"
+
+log "deployment is healthy"

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly original_command="${SSH_ORIGINAL_COMMAND:-}"
+readonly platform_pattern='^ghcr\.io/yongshuaiji/kairo-platform-server@sha256:[0-9a-f]{64}$'
+readonly web_pattern='^ghcr\.io/yongshuaiji/kairo-platform-web@sha256:[0-9a-f]{64}$'
+readonly sha_pattern='^[0-9a-f]{40}$'
+
+read -r verb platform_ref web_ref candidate_sha extra <<< "$original_command"
+
+if [[ "$verb" != "deploy" \
+      || ! "$platform_ref" =~ $platform_pattern \
+      || ! "$web_ref" =~ $web_pattern \
+      || ! "$candidate_sha" =~ $sha_pattern \
+      || -n "${extra:-}" ]]; then
+    printf 'This key is restricted to immutable Kairo deployments.\n' >&2
+    exit 126
+fi
+
+exec sudo -n -- /usr/local/sbin/deploy-kairo "$platform_ref" "$web_ref" "$candidate_sha"

@@ -1,0 +1,112 @@
+name: kairo
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kairo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${KAIRO_DB_NAME:-kairo}
+      POSTGRES_USER: ${KAIRO_DB_USER:-kairo}
+      POSTGRES_PASSWORD: ${KAIRO_DB_PASSWORD:?set KAIRO_DB_PASSWORD}
+    volumes:
+      - kairo-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KAIRO_DB_USER:-kairo} -d ${KAIRO_DB_NAME:-kairo}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    container_name: kairo-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - kairo-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    logging: *logging
+
+  platform:
+    image: ${KAIRO_PLATFORM_IMAGE:?set immutable KAIRO_PLATFORM_IMAGE digest}
+    pull_policy: never
+    container_name: kairo-platform
+    restart: unless-stopped
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      KAIRO_DB_URL: jdbc:postgresql://postgres:5432/${KAIRO_DB_NAME:-kairo}
+      KAIRO_DB_USER: ${KAIRO_DB_USER:-kairo}
+      KAIRO_DB_PASSWORD: ${KAIRO_DB_PASSWORD:?set KAIRO_DB_PASSWORD}
+      KAIRO_REDIS_HOST: redis
+      KAIRO_REDIS_PORT: "6379"
+      KAIRO_FENCING_REDIS_ENABLED: "true"
+      KAIRO_API_ENABLED: "true"
+      KAIRO_ROLLOUT_SCHEDULER_ENABLED: "true"
+      KAIRO_AUTH_MODE: local-token
+      KAIRO_BOOTSTRAP_TOKEN: ${KAIRO_BOOTSTRAP_TOKEN:?set KAIRO_BOOTSTRAP_TOKEN}
+      KAIRO_ATTACH_PLATFORM_URL: http://platform:18280
+      KAIRO_ATTACH_PLATFORM_TOKEN: ${KAIRO_ATTACH_PLATFORM_TOKEN:?set KAIRO_ATTACH_PLATFORM_TOKEN}
+    ports:
+      - "127.0.0.1:18280:18280"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,size=256m
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec \"exec 3<>/dev/tcp/127.0.0.1/18280; printf 'GET /actuator/health/readiness HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '\\\"status\\\":\\\"UP\\\"' <&3\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    logging: *logging
+
+  platform-web:
+    image: ${KAIRO_WEB_IMAGE:?set immutable KAIRO_WEB_IMAGE digest}
+    pull_policy: never
+    container_name: kairo-platform-web
+    restart: unless-stopped
+    init: true
+    depends_on:
+      platform:
+        condition: service_healthy
+    environment:
+      KAIRO_PLATFORM_API_URL: http://platform:18280
+      KAIRO_WEB_SESSION_KEY: ${KAIRO_WEB_SESSION_KEY:?set KAIRO_WEB_SESSION_KEY}
+      KAIRO_WEB_PUBLIC_BASE_URL: http://127.0.0.1:18380
+      KAIRO_WEB_ENVIRONMENT: rc
+      KAIRO_WEB_DEMO_MODE: "false"
+    ports:
+      - "127.0.0.1:18380:3000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,size=128m,uid=1001,gid=1001
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    logging: *logging
+
+volumes:
+  kairo-postgres-data:
+  kairo-redis-data:

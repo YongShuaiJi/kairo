@@ -1,0 +1,250 @@
+name: Verify, publish and deploy Kairo RC
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Full 40-character V1.7 candidate commit to build and deploy
+        required: true
+        type: string
+      version:
+        description: Release identity embedded in the application artifacts
+        required: true
+        default: 1.7.0-rc.1
+        type: string
+      deploy:
+        description: Deploy the published immutable digests to the prod ECS environment
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  PLATFORM_IMAGE: ghcr.io/yongshuaiji/kairo-platform-server
+  WEB_IMAGE: ghcr.io/yongshuaiji/kairo-platform-web
+
+jobs:
+  verify:
+    name: Verify candidate Platform and Web
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Validate candidate identity and V1.7 ancestry
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_VERSION" =~ ^1\.7\.0(-rc\.[0-9]+)?$ ]]
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          git fetch --no-tags origin V1.7
+          git merge-base --is-ancestor "$CANDIDATE_SHA" origin/V1.7
+
+      - name: Set up Java 21 and Maven cache
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Verify Platform and Agent reactor
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: >-
+          mvn -B --no-transfer-progress
+          -Drevision="$RELEASE_VERSION"
+          -pl kairo-platform-server,kairo-agent-server
+          -am test
+
+      - name: Set up Node 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v6.2.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: kairo-platform-web/package-lock.json
+
+      - name: Verify Platform Web
+        working-directory: kairo-platform-web
+        run: |
+          set -Eeuo pipefail
+          npm ci
+          npm run lint
+          npm run typecheck
+          npm run test
+
+  publish:
+    name: Build and publish immutable application images
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      platform_digest: ${{ steps.platform.outputs.digest }}
+      web_digest: ${{ steps.web.outputs.digest }}
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Set up Java 21 and Maven cache
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Package immutable Platform inputs
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: >-
+          mvn -B --no-transfer-progress
+          -Drevision="$RELEASE_VERSION"
+          -DskipTests package
+
+      - name: Prepare minimal Platform image context
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          PLATFORM_CONTEXT: ${{ runner.temp }}/kairo-platform-context
+        run: |
+          set -Eeuo pipefail
+          install -d \
+            "$PLATFORM_CONTEXT/kairo-platform-server/target" \
+            "$PLATFORM_CONTEXT/kairo-agent-bootstrap/target" \
+            "$PLATFORM_CONTEXT/kairo-agent-core-modern/target" \
+            "$PLATFORM_CONTEXT/kairo-bootstrap-api/target"
+          install -m 644 kairo-platform-server/Dockerfile \
+            "$PLATFORM_CONTEXT/kairo-platform-server/Dockerfile"
+          install -m 644 "kairo-platform-server/target/kairo-platform-server-$RELEASE_VERSION.jar" \
+            "$PLATFORM_CONTEXT/kairo-platform-server/target/kairo-platform-server-$RELEASE_VERSION.jar"
+          install -m 644 kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar \
+            "$PLATFORM_CONTEXT/kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar"
+          install -m 644 kairo-agent-core-modern/target/kairo-agent-core-modern.jar \
+            "$PLATFORM_CONTEXT/kairo-agent-core-modern/target/kairo-agent-core-modern.jar"
+          install -m 644 "kairo-bootstrap-api/target/kairo-bootstrap-api-$RELEASE_VERSION.jar" \
+            "$PLATFORM_CONTEXT/kairo-bootstrap-api/target/kairo-bootstrap-api-$RELEASE_VERSION.jar"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Platform image
+        id: platform
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ${{ runner.temp }}/kairo-platform-context
+          file: ${{ runner.temp }}/kairo-platform-context/kairo-platform-server/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.PLATFORM_IMAGE }}:sha-${{ inputs.candidate_sha }}
+          build-args: |
+            BUILD_VERSION=${{ inputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ inputs.candidate_sha }}
+            org.opencontainers.image.version=${{ inputs.version }}
+          cache-from: type=gha,scope=kairo-platform-server
+          cache-to: type=gha,mode=max,scope=kairo-platform-server
+          provenance: mode=max
+          sbom: true
+
+      - name: Build and push Web image
+        id: web
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./kairo-platform-web
+          file: ./kairo-platform-web/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.WEB_IMAGE }}:sha-${{ inputs.candidate_sha }}
+          build-args: |
+            BUILD_VERSION=${{ inputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ inputs.candidate_sha }}
+            org.opencontainers.image.version=${{ inputs.version }}
+          cache-from: type=gha,scope=kairo-platform-web
+          cache-to: type=gha,mode=max,scope=kairo-platform-web
+          provenance: mode=max
+          sbom: true
+
+  deploy:
+    name: Deploy immutable images to Alibaba Cloud ECS
+    if: inputs.deploy == true
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: kairo-rc-production
+      cancel-in-progress: false
+    environment:
+      name: prod
+    steps:
+      - name: Configure pinned SSH connection
+        env:
+          ECS_SSH_PRIVATE_KEY: ${{ secrets.ECS_SSH_PRIVATE_KEY }}
+          ECS_SSH_KNOWN_HOSTS: ${{ vars.ECS_SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$ECS_SSH_PRIVATE_KEY" > "$HOME/.ssh/kairo_deploy"
+          printf '%s\n' "$ECS_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/kairo_deploy" "$HOME/.ssh/known_hosts"
+
+      - name: Pull and deploy approved image digests
+        env:
+          ECS_HOST: ${{ vars.ECS_HOST }}
+          ECS_PORT: ${{ vars.ECS_PORT }}
+          ECS_USER: ${{ vars.ECS_USER }}
+          PLATFORM_REF: ${{ env.PLATFORM_IMAGE }}@${{ needs.publish.outputs.platform_digest }}
+          WEB_REF: ${{ env.WEB_IMAGE }}@${{ needs.publish.outputs.web_digest }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$PLATFORM_REF" =~ ^ghcr\.io/yongshuaiji/kairo-platform-server@sha256:[0-9a-f]{64}$ ]]
+          [[ "$WEB_REF" =~ ^ghcr\.io/yongshuaiji/kairo-platform-web@sha256:[0-9a-f]{64}$ ]]
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          ssh \
+            -T \
+            -i "$HOME/.ssh/kairo_deploy" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=15 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=120 \
+            -p "$ECS_PORT" \
+            "$ECS_USER@$ECS_HOST" \
+            "deploy $PLATFORM_REF $WEB_REF $CANDIDATE_SHA"
+
+      - name: Record deployment summary
+        env:
+          PLATFORM_REF: ${{ env.PLATFORM_IMAGE }}@${{ needs.publish.outputs.platform_digest }}
+          WEB_REF: ${{ env.WEB_IMAGE }}@${{ needs.publish.outputs.web_digest }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          {
+            echo "### Kairo RC deployment"
+            echo
+            echo "Candidate: \`$CANDIDATE_SHA\`"
+            echo "Platform: \`$PLATFORM_REF\`"
+            echo "Web: \`$WEB_REF\`"
+            echo "Remote health checks passed. The services remain bound to ECS loopback."
+          } >> "$GITHUB_STEP_SUMMARY"

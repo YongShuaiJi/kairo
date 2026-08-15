@@ -1,0 +1,15 @@
+**
+!.dockerignore
+!kairo-platform-server/
+!kairo-platform-server/Dockerfile
+!kairo-platform-server/target/
+!kairo-platform-server/target/kairo-platform-server-*.jar
+!kairo-agent-bootstrap/
+!kairo-agent-bootstrap/target/
+!kairo-agent-bootstrap/target/kairo-agent-bootstrap.jar
+!kairo-agent-core-modern/
+!kairo-agent-core-modern/target/
+!kairo-agent-core-modern/target/kairo-agent-core-modern.jar
+!kairo-bootstrap-api/
+!kairo-bootstrap-api/target/
+!kairo-bootstrap-api/target/kairo-bootstrap-api-*.jar
