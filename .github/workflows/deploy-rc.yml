@@ -124,7 +124,11 @@ jobs:
             "$PLATFORM_CONTEXT/kairo-agent-bootstrap/target" \
             "$PLATFORM_CONTEXT/kairo-agent-core-modern/target" \
             "$PLATFORM_CONTEXT/kairo-bootstrap-api/target"
-          install -m 644 kairo-platform-server/Dockerfile \
+          sed \
+            's/^FROM eclipse-temurin:21-jdk$/FROM eclipse-temurin:21-jre-jammy/' \
+            kairo-platform-server/Dockerfile \
+            > "$PLATFORM_CONTEXT/kairo-platform-server/Dockerfile"
+          grep -Fxq 'FROM eclipse-temurin:21-jre-jammy' \
             "$PLATFORM_CONTEXT/kairo-platform-server/Dockerfile"
           install -m 644 "kairo-platform-server/target/kairo-platform-server-$RELEASE_VERSION.jar" \
             "$PLATFORM_CONTEXT/kairo-platform-server/target/kairo-platform-server-$RELEASE_VERSION.jar"

@@ -1,4 +1,6 @@
-FROM eclipse-temurin:21-jdk
+# The Platform only coordinates the remote Attach Executor; it does not attach to target JVMs
+# inside this container. A JRE is therefore sufficient and keeps cross-border image pulls bounded.
+FROM eclipse-temurin:21-jre-jammy
 
 WORKDIR /app
 ARG BUILD_VERSION=1.7.0-SNAPSHOT
