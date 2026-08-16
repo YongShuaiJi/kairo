@@ -191,6 +191,9 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
     concurrency:
       group: kairo-rc-production
       cancel-in-progress: false
@@ -213,6 +216,7 @@ jobs:
           ECS_HOST: ${{ vars.ECS_HOST }}
           ECS_PORT: ${{ vars.ECS_PORT }}
           ECS_USER: ${{ vars.ECS_USER }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PLATFORM_REF: ${{ env.PLATFORM_IMAGE }}@${{ needs.publish.outputs.platform_digest }}
           WEB_REF: ${{ env.WEB_IMAGE }}@${{ needs.publish.outputs.web_digest }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -221,7 +225,7 @@ jobs:
           [[ "$PLATFORM_REF" =~ ^ghcr\.io/yongshuaiji/kairo-platform-server@sha256:[0-9a-f]{64}$ ]]
           [[ "$WEB_REF" =~ ^ghcr\.io/yongshuaiji/kairo-platform-web@sha256:[0-9a-f]{64}$ ]]
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          ssh \
+          printf '%s\n' "$GHCR_TOKEN" | ssh \
             -T \
             -i "$HOME/.ssh/kairo_deploy" \
             -o BatchMode=yes \

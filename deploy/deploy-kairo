@@ -19,6 +19,7 @@ readonly SHA_PATTERN='^[0-9a-f]{40}$'
 
 env_backup=""
 database_backup=""
+docker_config_dir=""
 
 log() {
     printf '[kairo-deploy] %s\n' "$*"
@@ -33,6 +34,9 @@ cleanup() {
     if [[ -n "$env_backup" && -e "$env_backup" ]]; then
         rm -f -- "$env_backup"
     fi
+    if [[ "$docker_config_dir" == /run/kairo-docker-config.* && -d "$docker_config_dir" ]]; then
+        rm -rf -- "$docker_config_dir"
+    fi
 }
 
 trap cleanup EXIT
@@ -46,6 +50,10 @@ target_sha="${3:-}"
 [[ "$target_web" =~ $WEB_PATTERN ]] || fail "invalid or mutable Web image reference"
 [[ "$target_sha" =~ $SHA_PATTERN ]] || fail "candidate SHA must contain exactly 40 lowercase hex characters"
 
+registry_token=""
+IFS= read -r registry_token || fail "missing ephemeral GHCR credential"
+[[ -n "$registry_token" ]] || fail "missing ephemeral GHCR credential"
+
 for command_name in docker curl flock awk mktemp openssl; do
     command -v "$command_name" >/dev/null 2>&1 || fail "missing required command: $command_name"
 done
@@ -54,6 +62,14 @@ done
 
 exec 9>"$LOCK_FILE"
 flock -n 9 || fail "another Kairo deployment is already running"
+
+docker_config_dir="$(mktemp -d /run/kairo-docker-config.XXXXXX)"
+export DOCKER_CONFIG="$docker_config_dir"
+if ! printf '%s\n' "$registry_token" \
+        | docker login ghcr.io --username YongShuaiJi --password-stdin >/dev/null; then
+    fail "temporary GHCR authentication failed"
+fi
+registry_token=""
 
 read_env_value() {
     local key="$1"
