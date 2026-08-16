@@ -9,7 +9,7 @@ readonly sha_pattern='^[0-9a-f]{40}$'
 
 read -r verb platform_ref web_ref candidate_sha extra <<< "$original_command"
 
-if [[ "$verb" != "deploy" \
+if [[ "$verb" != "deploy-archive" \
       || ! "$platform_ref" =~ $platform_pattern \
       || ! "$web_ref" =~ $web_pattern \
       || ! "$candidate_sha" =~ $sha_pattern \
@@ -18,4 +18,4 @@ if [[ "$verb" != "deploy" \
     exit 126
 fi
 
-exec sudo -n -- /usr/local/sbin/deploy-kairo "$platform_ref" "$web_ref" "$candidate_sha"
+exec sudo -n -- /usr/local/sbin/deploy-kairo --archive "$platform_ref" "$web_ref" "$candidate_sha"

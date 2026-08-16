@@ -66,7 +66,7 @@ jobs:
           -am test
 
       - name: Set up Node 24
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v6.2.0
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: "24"
           cache: npm
@@ -215,12 +215,18 @@ jobs:
           printf '%s\n' "$ECS_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/kairo_deploy" "$HOME/.ssh/known_hosts"
 
-      - name: Pull and deploy approved image digests
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Transfer and deploy approved image digests
         env:
           ECS_HOST: ${{ vars.ECS_HOST }}
           ECS_PORT: ${{ vars.ECS_PORT }}
           ECS_USER: ${{ vars.ECS_USER }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PLATFORM_REF: ${{ env.PLATFORM_IMAGE }}@${{ needs.publish.outputs.platform_digest }}
           WEB_REF: ${{ env.WEB_IMAGE }}@${{ needs.publish.outputs.web_digest }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -229,7 +235,15 @@ jobs:
           [[ "$PLATFORM_REF" =~ ^ghcr\.io/yongshuaiji/kairo-platform-server@sha256:[0-9a-f]{64}$ ]]
           [[ "$WEB_REF" =~ ^ghcr\.io/yongshuaiji/kairo-platform-web@sha256:[0-9a-f]{64}$ ]]
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          printf '%s\n' "$GHCR_TOKEN" | ssh \
+          docker pull "$PLATFORM_REF"
+          docker pull "$WEB_REF"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$PLATFORM_REF")" = "$CANDIDATE_SHA"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$WEB_REF")" = "$CANDIDATE_SHA"
+          platform_archive_tag="kairo-platform-server:rc-$CANDIDATE_SHA"
+          web_archive_tag="kairo-platform-web:rc-$CANDIDATE_SHA"
+          docker tag "$PLATFORM_REF" "$platform_archive_tag"
+          docker tag "$WEB_REF" "$web_archive_tag"
+          docker save "$platform_archive_tag" "$web_archive_tag" | gzip -1 | ssh \
             -T \
             -i "$HOME/.ssh/kairo_deploy" \
             -o BatchMode=yes \
@@ -240,7 +254,7 @@ jobs:
             -o ServerAliveCountMax=120 \
             -p "$ECS_PORT" \
             "$ECS_USER@$ECS_HOST" \
-            "deploy $PLATFORM_REF $WEB_REF $CANDIDATE_SHA"
+            "deploy-archive $PLATFORM_REF $WEB_REF $CANDIDATE_SHA"
 
       - name: Record deployment summary
         env:

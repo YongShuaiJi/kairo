@@ -19,7 +19,6 @@ readonly SHA_PATTERN='^[0-9a-f]{40}$'
 
 env_backup=""
 database_backup=""
-docker_config_dir=""
 
 log() {
     printf '[kairo-deploy] %s\n' "$*"
@@ -34,27 +33,22 @@ cleanup() {
     if [[ -n "$env_backup" && -e "$env_backup" ]]; then
         rm -f -- "$env_backup"
     fi
-    if [[ "$docker_config_dir" == /run/kairo-docker-config.* && -d "$docker_config_dir" ]]; then
-        rm -rf -- "$docker_config_dir"
-    fi
 }
 
 trap cleanup EXIT
 
 [[ "${EUID}" -eq 0 ]] || fail "must run as root through the restricted sudo rule"
 
-target_platform="${1:-}"
-target_web="${2:-}"
-target_sha="${3:-}"
+deployment_mode="${1:-}"
+target_platform="${2:-}"
+target_web="${3:-}"
+target_sha="${4:-}"
+[[ "$deployment_mode" == "--archive" ]] || fail "only verified archive deployment is supported"
 [[ "$target_platform" =~ $PLATFORM_PATTERN ]] || fail "invalid or mutable Platform image reference"
 [[ "$target_web" =~ $WEB_PATTERN ]] || fail "invalid or mutable Web image reference"
 [[ "$target_sha" =~ $SHA_PATTERN ]] || fail "candidate SHA must contain exactly 40 lowercase hex characters"
 
-registry_token=""
-IFS= read -r registry_token || fail "missing ephemeral GHCR credential"
-[[ -n "$registry_token" ]] || fail "missing ephemeral GHCR credential"
-
-for command_name in docker curl flock awk mktemp openssl; do
+for command_name in docker curl flock awk mktemp gzip; do
     command -v "$command_name" >/dev/null 2>&1 || fail "missing required command: $command_name"
 done
 [[ -f "$COMPOSE_FILE" ]] || fail "missing Compose file: $COMPOSE_FILE"
@@ -63,13 +57,8 @@ done
 exec 9>"$LOCK_FILE"
 flock -n 9 || fail "another Kairo deployment is already running"
 
-docker_config_dir="$(mktemp -d /run/kairo-docker-config.XXXXXX)"
-export DOCKER_CONFIG="$docker_config_dir"
-if ! printf '%s\n' "$registry_token" \
-        | docker login ghcr.io --username YongShuaiJi --password-stdin >/dev/null; then
-    fail "temporary GHCR authentication failed"
-fi
-registry_token=""
+runtime_platform="kairo-platform-server:rc-$target_sha"
+runtime_web="kairo-platform-web:rc-$target_sha"
 
 read_env_value() {
     local key="$1"
@@ -108,18 +97,26 @@ wait_for_health() {
 write_release() {
     local platform_ref="$1"
     local web_ref="$2"
-    local candidate_sha="$3"
+    local platform_source="$3"
+    local web_source="$4"
+    local candidate_sha="$5"
     local temp_env
     temp_env="$(mktemp "$DEPLOY_DIR/.env.tmp.XXXXXX")"
-    awk -v platform_ref="$platform_ref" -v web_ref="$web_ref" -v candidate_sha="$candidate_sha" '
-        BEGIN { p = 0; w = 0; s = 0 }
+    awk -v platform_ref="$platform_ref" -v web_ref="$web_ref" \
+        -v platform_source="$platform_source" -v web_source="$web_source" \
+        -v candidate_sha="$candidate_sha" '
+        BEGIN { p = 0; w = 0; ps = 0; ws = 0; s = 0 }
         /^KAIRO_PLATFORM_IMAGE=/ { print "KAIRO_PLATFORM_IMAGE=" platform_ref; p = 1; next }
         /^KAIRO_WEB_IMAGE=/ { print "KAIRO_WEB_IMAGE=" web_ref; w = 1; next }
+        /^KAIRO_PLATFORM_SOURCE_IMAGE=/ { print "KAIRO_PLATFORM_SOURCE_IMAGE=" platform_source; ps = 1; next }
+        /^KAIRO_WEB_SOURCE_IMAGE=/ { print "KAIRO_WEB_SOURCE_IMAGE=" web_source; ws = 1; next }
         /^KAIRO_CANDIDATE_SHA=/ { print "KAIRO_CANDIDATE_SHA=" candidate_sha; s = 1; next }
         { print }
         END {
             if (!p) print "KAIRO_PLATFORM_IMAGE=" platform_ref
             if (!w) print "KAIRO_WEB_IMAGE=" web_ref
+            if (!ps) print "KAIRO_PLATFORM_SOURCE_IMAGE=" platform_source
+            if (!ws) print "KAIRO_WEB_SOURCE_IMAGE=" web_source
             if (!s) print "KAIRO_CANDIDATE_SHA=" candidate_sha
         }
     ' "$ENV_FILE" > "$temp_env"
@@ -183,21 +180,26 @@ rollback() {
 
 current_platform="$(read_env_value KAIRO_PLATFORM_IMAGE)"
 current_web="$(read_env_value KAIRO_WEB_IMAGE)"
+current_platform_source="$(read_env_value KAIRO_PLATFORM_SOURCE_IMAGE)"
+current_web_source="$(read_env_value KAIRO_WEB_SOURCE_IMAGE)"
 current_sha="$(read_env_value KAIRO_CANDIDATE_SHA)"
 
-if [[ "$current_platform" == "$target_platform" \
-      && "$current_web" == "$target_web" \
+log "loading approved image archive from the CI runner"
+if ! gzip -dc | docker load; then
+    fail "image archive transfer or load failed"
+fi
+verify_image_identity "$runtime_platform"
+verify_image_identity "$runtime_web"
+
+if [[ "$current_platform" == "$runtime_platform" \
+      && "$current_web" == "$runtime_web" \
+      && "$current_platform_source" == "$target_platform" \
+      && "$current_web_source" == "$target_web" \
       && "$current_sha" == "$target_sha" ]] \
       && containers_healthy; then
-    log "requested candidate is already healthy; nothing to do"
+    log "requested candidate is already healthy; archive verified and no restart is required"
     exit 0
 fi
-
-log "pulling approved immutable image digests"
-docker pull "$target_platform"
-docker pull "$target_web"
-verify_image_identity "$target_platform"
-verify_image_identity "$target_web"
 
 backup_database
 
@@ -207,7 +209,7 @@ if [[ -n "$current_platform" && -n "$current_web" ]]; then
     chmod 600 "$env_backup"
 fi
 
-write_release "$target_platform" "$target_web" "$target_sha"
+write_release "$runtime_platform" "$runtime_web" "$target_platform" "$target_web" "$target_sha"
 
 if ! compose up -d --no-build --pull never --remove-orphans || ! wait_for_health; then
     rollback

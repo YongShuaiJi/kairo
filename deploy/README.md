@@ -18,9 +18,10 @@ Redis have persistent named volumes. Failed upgrades restore the previous image 
 because Flyway migrations are forward-only, a retained PostgreSQL dump must be restored explicitly
 when an old image cannot run against the migrated schema.
 
-The workflow sends its short-lived, repository-scoped `GITHUB_TOKEN` over SSH standard input. The
-deploy script uses it through an isolated temporary Docker configuration and removes that directory
-on exit. No long-lived GHCR credential is stored on the ECS host.
+The GitHub runner pulls the approved digests with its short-lived, repository-scoped
+`GITHUB_TOKEN`, verifies both revision labels, and streams a compressed Docker archive through the
+forced-command SSH key. The ECS host loads the archive, verifies the labels again, and never stores
+or receives a GHCR credential. This also avoids slow cross-border GHCR pulls from the ECS host.
 
 ## Private RC access
 
