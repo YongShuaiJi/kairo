@@ -90,11 +90,11 @@ services:
     environment:
       KAIRO_PLATFORM_API_URL: http://platform:18280
       KAIRO_WEB_SESSION_KEY: ${KAIRO_WEB_SESSION_KEY:?set KAIRO_WEB_SESSION_KEY}
-      KAIRO_WEB_PUBLIC_BASE_URL: http://127.0.0.1:18380
+      KAIRO_WEB_PUBLIC_BASE_URL: ${KAIRO_WEB_PUBLIC_BASE_URL:-http://127.0.0.1:18380}
       KAIRO_WEB_ENVIRONMENT: rc
       KAIRO_WEB_DEMO_MODE: "false"
     ports:
-      - "127.0.0.1:18380:3000"
+      - "127.0.0.1:18381:3000"
     cap_drop:
       - ALL
     security_opt:

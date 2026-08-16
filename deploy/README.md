@@ -23,17 +23,10 @@ The GitHub runner pulls the approved digests with its short-lived, repository-sc
 forced-command SSH key. The ECS host loads the archive, verifies the labels again, and never stores
 or receives a GHCR credential. This also avoids slow cross-border GHCR pulls from the ECS host.
 
-## Private RC access
+## Public Web access
 
-The Platform and Web ports bind only to ECS loopback. Open an SSH tunnel from the operator Mac:
+The Web container binds to ECS loopback port `18381`. Nginx terminates TLS on public port `18380`
+using `nginx-kairo.conf` and proxies requests to that loopback listener. Set
+`KAIRO_WEB_PUBLIC_BASE_URL` in `/opt/kairo/.env` to the externally reachable HTTPS URL.
 
-```bash
-ssh -N \
-  -L 18380:127.0.0.1:18380 \
-  -L 18280:127.0.0.1:18280 \
-  root@YOUR_ECS_HOST
-```
-
-Then open `http://127.0.0.1:18380`. The Platform API is available locally at
-`http://127.0.0.1:18280`. This keeps the RC login token inside the encrypted SSH connection until a
-dedicated HTTPS hostname is configured.
+The Platform API remains private on `127.0.0.1:18280`; PostgreSQL and Redis have no host port.
