@@ -3,6 +3,7 @@ name: kairo
 services:
   postgres:
     image: postgres:16-alpine
+    pull_policy: never
     container_name: kairo-postgres
     restart: unless-stopped
     environment:
@@ -24,6 +25,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    pull_policy: never
     container_name: kairo-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]

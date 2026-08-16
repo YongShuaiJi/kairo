@@ -24,6 +24,8 @@ permissions:
 env:
   PLATFORM_IMAGE: ghcr.io/yongshuaiji/kairo-platform-server
   WEB_IMAGE: ghcr.io/yongshuaiji/kairo-platform-web
+  POSTGRES_IMAGE: postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
+  REDIS_IMAGE: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
 
 jobs:
   verify:
@@ -237,13 +239,22 @@ jobs:
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
           docker pull "$PLATFORM_REF"
           docker pull "$WEB_REF"
+          docker pull "$POSTGRES_IMAGE"
+          docker pull "$REDIS_IMAGE"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$PLATFORM_REF")" = "$CANDIDATE_SHA"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$WEB_REF")" = "$CANDIDATE_SHA"
           platform_archive_tag="kairo-platform-server:rc-$CANDIDATE_SHA"
           web_archive_tag="kairo-platform-web:rc-$CANDIDATE_SHA"
           docker tag "$PLATFORM_REF" "$platform_archive_tag"
           docker tag "$WEB_REF" "$web_archive_tag"
-          docker save "$platform_archive_tag" "$web_archive_tag" | gzip -1 | ssh \
+          docker tag "$POSTGRES_IMAGE" postgres:16-alpine
+          docker tag "$REDIS_IMAGE" redis:7-alpine
+          docker save \
+            "$platform_archive_tag" \
+            "$web_archive_tag" \
+            postgres:16-alpine \
+            redis:7-alpine \
+            | gzip -1 | ssh \
             -T \
             -i "$HOME/.ssh/kairo_deploy" \
             -o BatchMode=yes \
