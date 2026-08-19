@@ -11,8 +11,8 @@ name: compatibility-matrix
 # No continue-on-error on formal rows (C01-C08, C10): a FAILED/SKIPPED/NOT_RUN formal
 # row fails the matrix fail-closed. C09 runs on real macOS arm64/JDK21 and may be PASSED
 # or EXPERIMENTAL (both exit 0, non-blocking); it still emits a row JSON with an explicit
-# reason when experimental. V17-COMPAT.RC/RELEASE remain NOT_RUN until a final
-# release-candidate commit is actually executed.
+# reason when experimental. V17-COMPAT gates advance PR -> RC -> RELEASE only when
+# the aggregate passes and the promoted gate carries complete candidate evidence.
 
 on:
   push:
