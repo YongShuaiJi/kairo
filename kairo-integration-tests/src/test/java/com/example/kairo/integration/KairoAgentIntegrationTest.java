@@ -791,12 +791,16 @@ class KairoAgentIntegrationTest {
         java.lang.reflect.Method score = type.getMethod("score", int.class);
 
         // The observer materializes well within the 2s poll interval; allow a generous window
-        // for the retransform to apply under suite load.
+        // for the retransform and its asynchronous registry bookkeeping to complete under suite
+        // load. publish() makes the advice visible before markResolved()/cancel(), so observing
+        // result=999 alone is not proof that the cleanup task has completed.
         long deadline = System.currentTimeMillis() + 4000;
         int result = -1;
         while (System.currentTimeMillis() < deadline) {
             result = (Integer) score.invoke(instance, 5);
-            if (result == 999) {
+            if (result == 999
+                    && runtime.pendingRegistry().pendingCount() == 0
+                    && runtime.pendingRegistry().resolved().size() == 1) {
                 break;
             }
             Thread.sleep(20);
