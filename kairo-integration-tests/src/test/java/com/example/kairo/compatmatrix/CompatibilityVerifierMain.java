@@ -15,9 +15,9 @@ import java.util.List;
  * fields. When {@code --doc} and/or {@code --manifest} are supplied (M3-F,
  * section 10.4.6), it additionally cross-checks that the generated
  * {@code docs/compatibility/v1.7.md} was produced from this aggregate and that
- * {@code v1.7-acceptance-manifest.json} keeps {@code V17-COMPAT.RC}/{@code RELEASE}
- * {@code NOT_RUN} with no overclaim &mdash; so the aggregate, document and release
- * manifest conclusions cannot diverge.
+ * {@code v1.7-acceptance-manifest.json} has a valid PR -&gt; RC -&gt; RELEASE lifecycle,
+ * with complete evidence for every passed gate and no overclaim &mdash; so the aggregate,
+ * document and release manifest conclusions cannot diverge.
  *
  * <p>It <strong>does not rerun scenarios</strong>.
  *
@@ -152,8 +152,8 @@ public final class CompatibilityVerifierMain {
                 With --doc: verifies the generated document was produced from this
                 aggregate (source hash/overall/buildId/catalog version) and does not
                 overclaim release readiness.
-                With --manifest: verifies V17-COMPAT.RC/RELEASE remain NOT_RUN and no
-                gate overclaims support the aggregate does not have.
+                With --manifest: verifies the V17-COMPAT PR -> RC -> RELEASE lifecycle,
+                complete evidence for passed gates, and no unsupported gate overclaim.
 
                 Exit codes:
                   0  result valid and complete (overall=PASSED)

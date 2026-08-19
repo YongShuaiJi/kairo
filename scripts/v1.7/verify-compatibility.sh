@@ -10,9 +10,9 @@
 # M3-F strengthening (section 10.4.6): when --doc and/or --manifest are supplied, the
 # verifier additionally cross-checks that docs/compatibility/v1.7.md was generated from
 # this aggregate (source hash/overall/buildId/catalog version, provenance marker, no
-# release overclaim) and that v1.7-acceptance-manifest.json keeps V17-COMPAT.RC/RELEASE
-# NOT_RUN with no overclaim - so aggregate, document and release-manifest conclusions
-# cannot diverge.
+# release overclaim) and that v1.7-acceptance-manifest.json has a valid PR -> RC -> RELEASE
+# lifecycle, complete evidence for passed gates and no overclaim - so aggregate, document
+# and release-manifest conclusions cannot diverge.
 #
 # Fixed interface (section 10.3):
 #   ./scripts/v1.7/verify-compatibility.sh target/v1.7/compatibility-result.json \
@@ -72,7 +72,8 @@ Behavior:
     formal-row status semantics, summary/count consistency and evidence/provenance.
   - With --doc: rejects a document not generated from this result (hash/overall/buildId)
     or that overclaims release readiness.
-  - With --manifest: rejects V17-COMPAT.RC/RELEASE != NOT_RUN and any gate overclaim.
+  - With --manifest: validates the V17-COMPAT PR -> RC -> RELEASE lifecycle, complete
+    evidence for passed gates, and rejects unsupported gate overclaims.
   - Does NOT rerun scenarios; never modifies the workflow, the acceptance manifest,
     or support conclusions.
 EOF

@@ -110,11 +110,17 @@ class CompatibilityVerifierCrossCheckTest {
     }
 
     @Test
-    void manifestRcPassedExits4() throws Exception {
+    void manifestRcPassedWithoutEvidenceExits4() throws Exception {
         ObjectNode result = aggregate(FX.passingMatrix());
         Path r = writeResult(result);
         Path d = writeDoc(result);
-        Path m = writeManifest(setGate(committedManifest(), "RC", "PASSED"));
+        ObjectNode manifest = committedManifest();
+        for (JsonNode requirement : manifest.path("requirements")) {
+            if ("V17-COMPAT".equals(requirement.path("id").asText(""))) {
+                ((ObjectNode) requirement.path("gates").path("RC")).remove("buildId");
+            }
+        }
+        Path m = writeManifest(manifest);
         assertThat(run(r, d, m)).isEqualTo(4);
     }
 

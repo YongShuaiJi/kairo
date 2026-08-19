@@ -14,8 +14,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * M3-F divergence-rejection tests (section 10.4.6). The cross-checker binds the
  * aggregate, the generated document and the acceptance manifest so their support
  * conclusions cannot diverge: a document not generated from this aggregate is rejected,
- * a release-overclaiming document is rejected, and a manifest that advances RC/RELEASE
- * or overclaims PR support is rejected.
+ * a release-overclaiming document is rejected, and a manifest with an invalid lifecycle,
+ * incomplete passed-gate evidence, or unsupported support claim is rejected.
  */
 class CompatibilityDocumentCheckTest {
 
@@ -47,10 +47,14 @@ class CompatibilityDocumentCheckTest {
 
     private ObjectNode setGate(ObjectNode manifest, String gate, String status) {
         ObjectNode m = manifest.deepCopy();
-        for (JsonNode r : m.path("requirements")) {
+        gate(m, gate).put("status", status);
+        return m;
+    }
+
+    private ObjectNode gate(ObjectNode manifest, String gate) {
+        for (JsonNode r : manifest.path("requirements")) {
             if ("V17-COMPAT".equals(r.path("id").asText(""))) {
-                ((ObjectNode) r.path("gates").path(gate)).put("status", status);
-                return m;
+                return (ObjectNode) r.path("gates").path(gate);
             }
         }
         throw new AssertionError("V17-COMPAT not found");
@@ -135,17 +139,45 @@ class CompatibilityDocumentCheckTest {
     // --- manifest divergence ---
 
     @Test
-    void manifestRcAdvancedBeyondNotRunRejected() throws Exception {
-        ObjectNode manifest = setGate(committedManifest(), "RC", "PASSED");
+    void manifestRcPassedWithoutBuildIdRejected() throws Exception {
+        ObjectNode manifest = committedManifest();
+        gate(manifest, "RC").remove("buildId");
         assertThat(check().checkManifest(passingResult(), manifest))
-                .anyMatch(e -> e.contains("V17-COMPAT.RC must remain NOT_RUN"));
+                .anyMatch(e -> e.contains("V17-COMPAT.RC") && e.contains("buildId"));
     }
 
     @Test
-    void manifestReleaseAdvancedBeyondNotRunRejected() throws Exception {
-        ObjectNode manifest = setGate(committedManifest(), "RELEASE", "EXPERIMENTAL");
+    void manifestReleasePassedWithoutEvidenceRejected() throws Exception {
+        ObjectNode manifest = setGate(committedManifest(), "RELEASE", "PASSED");
         assertThat(check().checkManifest(passingResult(), manifest))
-                .anyMatch(e -> e.contains("V17-COMPAT.RELEASE must remain NOT_RUN"));
+                .anyMatch(e -> e.contains("V17-COMPAT.RELEASE") && e.contains("buildId"));
+    }
+
+    @Test
+    void manifestReleasePassedWithCompleteEvidenceAccepted() throws Exception {
+        ObjectNode manifest = committedManifest();
+        ObjectNode releaseEvidence = gate(manifest, "RC").deepCopy();
+        releaseEvidence.put("status", "PASSED");
+        gate(manifest, "RELEASE").removeAll().setAll(releaseEvidence);
+        assertThat(check().checkManifest(passingResult(), manifest)).isEmpty();
+    }
+
+    @Test
+    void manifestReleasePassedBeforeRcRejected() throws Exception {
+        ObjectNode manifest = committedManifest();
+        ObjectNode releaseEvidence = gate(manifest, "RC").deepCopy();
+        releaseEvidence.put("status", "PASSED");
+        gate(manifest, "RELEASE").removeAll().setAll(releaseEvidence);
+        gate(manifest, "RC").put("status", "NOT_RUN");
+        assertThat(check().checkManifest(passingResult(), manifest))
+                .anyMatch(e -> e.contains("RELEASE is PASSED") && e.contains("RC"));
+    }
+
+    @Test
+    void manifestUnknownGateStatusRejected() throws Exception {
+        ObjectNode manifest = setGate(committedManifest(), "RELEASE", "CERTIFIED");
+        assertThat(check().checkManifest(passingResult(), manifest))
+                .anyMatch(e -> e.contains("V17-COMPAT.RELEASE") && e.contains("invalid"));
     }
 
     @Test
@@ -177,10 +209,10 @@ class CompatibilityDocumentCheckTest {
                 .anyMatch(e -> e.contains("missing the V17-COMPAT requirement"));
     }
 
-    // --- explicit invariant: V17-COMPAT.RC/RELEASE remain NOT_RUN in the committed manifest ---
+    // --- committed lifecycle must remain internally consistent as gates are promoted ---
 
     @Test
-    void v17CompatRcAndReleaseRemainNotRunInCommittedManifest() throws Exception {
+    void committedManifestHasValidCompatibilityLifecycle() throws Exception {
         JsonNode manifest = committedManifest();
         JsonNode compat = null;
         for (JsonNode r : manifest.path("requirements")) {
@@ -190,11 +222,6 @@ class CompatibilityDocumentCheckTest {
             }
         }
         assertThat(compat).as("committed manifest has V17-COMPAT").isNotNull();
-        assertThat(compat.path("gates").path("RC").path("status").asText())
-                .as("V17-COMPAT.RC must remain NOT_RUN until a final RC commit is executed")
-                .isEqualTo("NOT_RUN");
-        assertThat(compat.path("gates").path("RELEASE").path("status").asText())
-                .as("V17-COMPAT.RELEASE must remain NOT_RUN")
-                .isEqualTo("NOT_RUN");
+        assertThat(check().checkManifest(passingResult(), manifest)).isEmpty();
     }
 }
