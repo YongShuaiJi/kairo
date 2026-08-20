@@ -73,6 +73,7 @@ coverage/
 # 软著
 docs/copyright
 tools/copyright
+output
 
 # Node / Next.js output
 node_modules/
