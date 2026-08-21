@@ -11,6 +11,12 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public final class CompiledRule {
 
+    public enum ExecutionPermit {
+        DENIED,
+        CLOSED,
+        HALF_OPEN
+    }
+
     /** Slow execution (over the configured slow watermark) that tripped the circuit breaker. */
     private static final long SLOW_WATERMARK_MILLIS = 100L;
     private static final long CONSECUTIVE_SLOW_WATERMARK_MILLIS = 10L;
@@ -27,6 +33,9 @@ public final class CompiledRule {
     private final AtomicLong unfinishedTaskCount = new AtomicLong();
     private final AtomicLong lastDurationNanos = new AtomicLong();
     private final AtomicBoolean locked = new AtomicBoolean();
+    private final AtomicBoolean manuallyLocked = new AtomicBoolean();
+    private final AtomicBoolean halfOpenProbeInFlight = new AtomicBoolean();
+    private final AtomicLong circuitOpenedAtMillis = new AtomicLong(-1L);
     private final AtomicReference<CircuitBreakReason> circuitBreakReason = new AtomicReference<>();
 
     public CompiledRule(MockRule rule, CompiledMockScript script) {
@@ -78,9 +87,17 @@ public final class CompiledRule {
     }
 
     public void recordError() {
+        recordError(ExecutionPermit.CLOSED);
+    }
+
+    public void recordError(ExecutionPermit permit) {
         errors.incrementAndGet();
         executions.incrementAndGet();
         long consecutive = consecutiveErrors.incrementAndGet();
+        if (permit == ExecutionPermit.HALF_OPEN && locked.get()) {
+            reopenCircuit(CircuitBreakReason.CONSECUTIVE_ERRORS);
+            return;
+        }
         if (consecutive >= rule.consecutiveFailureThreshold()) {
             circuitBreak(CircuitBreakReason.CONSECUTIVE_ERRORS);
         } else if (executions.get() >= ERROR_RATE_MIN_EXECUTIONS
@@ -90,10 +107,22 @@ public final class CompiledRule {
     }
 
     public void recordSuccess(long durationNanos) {
+        recordSuccess(durationNanos, ExecutionPermit.CLOSED);
+    }
+
+    public void recordSuccess(long durationNanos, ExecutionPermit permit) {
         lastDurationNanos.set(durationNanos);
         executions.incrementAndGet();
         consecutiveErrors.set(0);
         long durationMillis = TimeUnit.NANOSECONDS.toMillis(durationNanos);
+        if (permit == ExecutionPermit.HALF_OPEN && locked.get()) {
+            if (durationMillis > SLOW_WATERMARK_MILLIS) {
+                reopenCircuit(CircuitBreakReason.SLOW_EXECUTION);
+            } else {
+                closeAutomaticCircuit();
+            }
+            return;
+        }
         if (durationMillis > SLOW_WATERMARK_MILLIS) {
             circuitBreak(CircuitBreakReason.SLOW_EXECUTION);
         } else if (durationMillis > CONSECUTIVE_SLOW_WATERMARK_MILLIS) {
@@ -111,11 +140,16 @@ public final class CompiledRule {
      * the rule is circuit-broken so subsequent hits do not pile up behind it.
      */
     public void recordTimeout() {
+        recordTimeout(ExecutionPermit.CLOSED);
+    }
+
+    public void recordTimeout(ExecutionPermit permit) {
         unfinishedTaskCount.incrementAndGet();
-        circuitBreak(CircuitBreakReason.TIMEOUT);
+        circuitBreak(CircuitBreakReason.TIMEOUT, permit);
     }
 
     public void lock() {
+        manuallyLocked.set(true);
         circuitBreak(null);
     }
 
@@ -125,8 +159,72 @@ public final class CompiledRule {
      * original trigger rather than a later side-effect.
      */
     public void circuitBreak(CircuitBreakReason reason) {
-        locked.set(true);
+        circuitBreak(reason, ExecutionPermit.CLOSED);
+    }
+
+    public void circuitBreak(CircuitBreakReason reason, ExecutionPermit permit) {
+        if (reason == null) {
+            manuallyLocked.set(true);
+        }
+        boolean newlyOpened = locked.compareAndSet(false, true);
         circuitBreakReason.compareAndSet(null, reason);
+        if (newlyOpened || permit == ExecutionPermit.HALF_OPEN) {
+            circuitOpenedAtMillis.set(System.currentTimeMillis());
+        }
+        if (newlyOpened || permit == ExecutionPermit.HALF_OPEN) {
+            halfOpenProbeInFlight.set(false);
+        }
+    }
+
+    /**
+     * Acquire permission to execute this rule. Healthy rules pass immediately. An automatically
+     * opened circuit admits exactly one half-open probe after the configured delay, preventing a
+     * transient timeout or scheduler stall from disabling a long-lived enhancement forever.
+     */
+    public ExecutionPermit tryAcquireExecution(long nowMillis, long recoveryDelayMillis) {
+        if (!rule.enabled() || rule.percentage() <= 0
+                || (rule.expireAt() > 0 && rule.expireAt() <= nowMillis)) {
+            return ExecutionPermit.DENIED;
+        }
+        if (!locked.get()) {
+            return ExecutionPermit.CLOSED;
+        }
+        if (manuallyLocked.get() || circuitBreakReason.get() == null) {
+            return ExecutionPermit.DENIED;
+        }
+        long openedAt = circuitOpenedAtMillis.get();
+        if (openedAt < 0 || nowMillis - openedAt < recoveryDelayMillis) {
+            return ExecutionPermit.DENIED;
+        }
+        return halfOpenProbeInFlight.compareAndSet(false, true)
+                ? ExecutionPermit.HALF_OPEN : ExecutionPermit.DENIED;
+    }
+
+    /** Release a half-open permit when sampling, hit limits or re-entry skip execution. */
+    public void releaseExecutionPermit(ExecutionPermit permit) {
+        if (permit == ExecutionPermit.HALF_OPEN && locked.get()) {
+            halfOpenProbeInFlight.set(false);
+        }
+    }
+
+    private void reopenCircuit(CircuitBreakReason reason) {
+        circuitBreakReason.compareAndSet(null, reason);
+        locked.set(true);
+        circuitOpenedAtMillis.set(System.currentTimeMillis());
+        halfOpenProbeInFlight.set(false);
+    }
+
+    private void closeAutomaticCircuit() {
+        if (manuallyLocked.get()) {
+            halfOpenProbeInFlight.set(false);
+            return;
+        }
+        consecutiveErrors.set(0);
+        consecutiveSlowExecutions.set(0);
+        circuitBreakReason.set(null);
+        circuitOpenedAtMillis.set(-1L);
+        locked.set(false);
+        halfOpenProbeInFlight.set(false);
     }
 
     public boolean locked() {
