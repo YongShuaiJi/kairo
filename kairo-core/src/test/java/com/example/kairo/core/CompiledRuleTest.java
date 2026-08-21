@@ -151,6 +151,50 @@ class CompiledRuleTest {
     }
 
     @Test
+    void automaticCircuitAllowsOneHalfOpenProbeAndRecoversOnSuccess() {
+        CompiledRule rule = rule(MockRule.builder().consecutiveFailureThreshold(1));
+        rule.recordTimeout();
+        long afterDelay = System.currentTimeMillis() + 31_000L;
+
+        CompiledRule.ExecutionPermit permit = rule.tryAcquireExecution(afterDelay, 30_000L);
+        assertThat(permit).isEqualTo(CompiledRule.ExecutionPermit.HALF_OPEN);
+        assertThat(rule.tryAcquireExecution(afterDelay, 30_000L))
+                .isEqualTo(CompiledRule.ExecutionPermit.DENIED);
+
+        rule.recordSuccess(TimeUnit.MILLISECONDS.toNanos(1), permit);
+
+        assertThat(rule.locked()).isFalse();
+        assertThat(rule.circuitBreakReason()).isNull();
+        assertThat(rule.tryAcquireExecution(afterDelay, 30_000L))
+                .isEqualTo(CompiledRule.ExecutionPermit.CLOSED);
+    }
+
+    @Test
+    void failedHalfOpenProbeRestartsCooldown() {
+        CompiledRule rule = rule(MockRule.builder().consecutiveFailureThreshold(1));
+        rule.recordTimeout();
+        long afterDelay = System.currentTimeMillis() + 31_000L;
+        CompiledRule.ExecutionPermit permit = rule.tryAcquireExecution(afterDelay, 30_000L);
+        assertThat(permit).isEqualTo(CompiledRule.ExecutionPermit.HALF_OPEN);
+
+        rule.recordError(permit);
+
+        assertThat(rule.locked()).isTrue();
+        assertThat(rule.tryAcquireExecution(System.currentTimeMillis(), 30_000L))
+                .isEqualTo(CompiledRule.ExecutionPermit.DENIED);
+    }
+
+    @Test
+    void manualLockNeverEntersHalfOpenState() {
+        CompiledRule rule = rule(MockRule.builder());
+        rule.lock();
+
+        assertThat(rule.tryAcquireExecution(Long.MAX_VALUE, 1L))
+                .isEqualTo(CompiledRule.ExecutionPermit.DENIED);
+        assertThat(rule.locked()).isTrue();
+    }
+
+    @Test
     void tryClaimHitRespectsMaxHits() {
         MockRule mockRule = MockRule.builder()
                 .id("r")

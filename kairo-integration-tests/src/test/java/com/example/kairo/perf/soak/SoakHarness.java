@@ -24,6 +24,8 @@ import com.example.kairo.api.bytecode.TransformationRevision;
 import com.example.kairo.api.snapshot.AgentRuntimeSnapshot;
 import com.example.kairo.agent.server.SoakPlatformLink;
 import com.example.kairo.core.ClassLoaderIdentity;
+import com.example.kairo.core.CompiledRule;
+import com.example.kairo.core.CircuitBreakReason;
 import com.example.kairo.core.MethodDescriptor;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -227,6 +229,14 @@ public final class SoakHarness {
                 }
                 if (ctx.firstFailure != null) {
                     break;
+                }
+                // A transient automatic circuit opening is an expected fail-open interval. Let
+                // the dispatcher reach its half-open probe before running lifecycle assertions;
+                // otherwise a batch landing in that short window mislabels the original return
+                // value as cross-ClassLoader isolation damage. The five-minute drift gate remains
+                // authoritative and still fails closed if recovery never happens.
+                if (ctx.behaviorDriftStartedAtSeconds >= 0 && ctx.continuousCircuitOpen) {
+                    continue;
                 }
                 // 5-minute enhance/update/partial-unload/full-unload batch.
                 while (elapsed.compareTo(nextBatch) >= 0 && ctx.firstFailure == null) {
@@ -483,10 +493,14 @@ public final class SoakHarness {
                 ctx.continuousInvocations++;
             }
             if (drifted) {
+                observeContinuousRuleHealth(ctx);
                 if (ctx.behaviorDriftStartedAtSeconds < 0) {
                     ctx.behaviorDriftStartedAtSeconds = elapsedSeconds(ctx, ctx.clock);
                 }
             } else {
+                if (ctx.continuousCircuitOpen) {
+                    observeContinuousRuleHealth(ctx);
+                }
                 ctx.behaviorDriftStartedAtSeconds = -1L;
             }
             return null;
@@ -503,6 +517,25 @@ public final class SoakHarness {
                     "no-throw", t.getClass().getSimpleName(),
                     "enhanced invocation threw: " + t.getClass().getSimpleName() + ": " + t.getMessage(),
                     ctx.clock.now(), elapsedSeconds(ctx, ctx.clock), false);
+        }
+    }
+
+    private static void observeContinuousRuleHealth(Context ctx) {
+        CompiledRule continuousRule = ctx.runtime.chainApplier().snapshot(ctx.continuousTarget).rules().stream()
+                .filter(rule -> "soak-cont".equals(rule.rule().id()))
+                .findFirst()
+                .orElse(null);
+        CircuitBreakReason reason = continuousRule == null ? null : continuousRule.circuitBreakReason();
+        boolean open = continuousRule != null && continuousRule.locked() && reason != null;
+        if (open) {
+            if (!ctx.continuousCircuitOpen) {
+                ctx.continuousCircuitOpenEvents++;
+            }
+            ctx.continuousCircuitOpen = true;
+            ctx.lastContinuousCircuitReason = reason.name();
+        } else if (ctx.continuousCircuitOpen) {
+            ctx.continuousCircuitOpen = false;
+            ctx.continuousCircuitRecoveries++;
         }
     }
 
@@ -961,6 +994,16 @@ public final class SoakHarness {
         cycles.put("summaries", ctx.summaries);
         cycles.put("failedBatches", ctx.failedBatches);
 
+        ObjectNode continuousHealth = root.putObject("continuousRuleHealth");
+        continuousHealth.put("automaticCircuitOpenEvents", ctx.continuousCircuitOpenEvents);
+        continuousHealth.put("automaticCircuitRecoveries", ctx.continuousCircuitRecoveries);
+        continuousHealth.put("circuitOpenAtEnd", ctx.continuousCircuitOpen);
+        if (ctx.lastContinuousCircuitReason == null) {
+            continuousHealth.putNull("lastCircuitBreakReason");
+        } else {
+            continuousHealth.put("lastCircuitBreakReason", ctx.lastContinuousCircuitReason);
+        }
+
         ObjectNode warmup = root.putObject("measurementWarmup");
         warmup.put("strategy", "bounded-adaptive-metaspace-plateau");
         warmup.put("enhanceUnloadBatch", ctx.warmupBatchCompleted);
@@ -1210,6 +1253,10 @@ public final class SoakHarness {
         OrderService continuousInstance;
         RuleChainRevision continuousRevision = RuleChainRevision.initial();
         int continuousApplySeq;
+        int continuousCircuitOpenEvents;
+        int continuousCircuitRecoveries;
+        boolean continuousCircuitOpen;
+        String lastContinuousCircuitReason;
         int expectedPrimaryValue = 10;
         long continuousInvocations;
         int batchesRun;

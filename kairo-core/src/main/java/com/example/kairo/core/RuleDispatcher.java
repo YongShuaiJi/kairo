@@ -293,13 +293,21 @@ public final class RuleDispatcher implements AutoCloseable {
         boolean finallyLocation = location.isFinallyLocation();
         boolean observeOnly = finallyLocation || (enterSide && !mayShortCircuit(location));
         for (CompiledRule compiledRule : rules) {
-            if (!compiledRule.isActive(now)
-                    || !samplingPolicy.shouldRun(compiledRule.rule().percentage())
-                    || !compiledRule.tryClaimHit()) {
+            if (!samplingPolicy.shouldRun(compiledRule.rule().percentage())) {
+                continue;
+            }
+            CompiledRule.ExecutionPermit permit = compiledRule.tryAcquireExecution(
+                    now, config.circuitRecoveryDelayMillis());
+            if (permit == CompiledRule.ExecutionPermit.DENIED) {
+                continue;
+            }
+            if (!compiledRule.tryClaimHit()) {
+                compiledRule.releaseExecutionPermit(permit);
                 continue;
             }
             try (ReentryGuard.Scope scope = reentryGuard.enter(state.methodKey(), location, compiledRule.rule().id())) {
                 if (!scope.entered()) {
+                    compiledRule.releaseExecutionPermit(permit);
                     continue;
                 }
                 DefaultInvocationContext context = buildContext(location, state);
@@ -311,7 +319,7 @@ public final class RuleDispatcher implements AutoCloseable {
                 try {
                     execution = scriptExecutor.submit(() -> compiledRule.script().execute(context));
                 } catch (RejectedExecutionException saturated) {
-                    compiledRule.circuitBreak(CircuitBreakReason.SATURATION);
+                    compiledRule.circuitBreak(CircuitBreakReason.SATURATION, permit);
                     log.error("Rule " + compiledRule.rule().id()
                             + " executor rejected the task; circuit-open (saturation); fail-open", saturated);
                     continue;
@@ -321,23 +329,23 @@ public final class RuleDispatcher implements AutoCloseable {
                     raw = execution.get(timeoutMillis, TimeUnit.MILLISECONDS);
                 } catch (TimeoutException timedOut) {
                     execution.cancel(true);
-                    compiledRule.recordTimeout();
+                    compiledRule.recordTimeout(permit);
                     log.error("Rule " + compiledRule.rule().id() + " exceeded " + timeoutMillis
                             + "ms timeout; circuit-open (timeout); " + compiledRule.unfinishedTaskCount()
                             + " unfinished task(s); fail-open", timedOut);
                     continue;
                 } catch (ExecutionException scriptFailure) {
-                    compiledRule.recordError();
+                    compiledRule.recordError(permit);
                     log.error(failOpenMessage(compiledRule), scriptFailure.getCause());
                     continue;
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     execution.cancel(true);
-                    compiledRule.recordError();
+                    compiledRule.recordError(permit);
                     log.error(failOpenMessage(compiledRule), interrupted);
                     continue;
                 }
-                compiledRule.recordSuccess(System.nanoTime() - started);
+                compiledRule.recordSuccess(System.nanoTime() - started, permit);
                 RuleChainDecision decision = RuleChainDecision.from(raw == null ? MockDecision.proceed() : raw);
                 if (observeOnly) {
                     // observe/record only; never mutate the outcome
@@ -348,7 +356,7 @@ public final class RuleDispatcher implements AutoCloseable {
                     return applied;
                 }
             } catch (Throwable e) {
-                compiledRule.recordError();
+                compiledRule.recordError(permit);
                 log.error(failOpenMessage(compiledRule), e);
             }
         }

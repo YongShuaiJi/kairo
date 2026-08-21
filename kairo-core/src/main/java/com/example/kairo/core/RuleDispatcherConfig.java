@@ -12,15 +12,17 @@ import java.util.concurrent.ThreadPoolExecutor;
  * explicit so it can be tuned per deployment and exercised by tests without depending on
  * wall-clock defaults.
  *
- * <p>The defaults reproduce the previous hardcoded behaviour exactly: a 100&nbsp;ms steady-state
+ * <p>The defaults preserve the previous executor and timeout behaviour: a 100&nbsp;ms steady-state
  * timeout, a 1&nbsp;s first-run timeout, and a cached pool with a {@link java.util.concurrent.SynchronousQueue}
  * that hands off to daemon threads up to {@code max(4, availableProcessors)} and rejects once
- * saturated (the prior {@link ThreadPoolExecutor.AbortPolicy}).
+ * saturated (the prior {@link ThreadPoolExecutor.AbortPolicy}). Automatically opened circuits
+ * additionally enter a single-probe half-open state after 30&nbsp;s; manual locks remain permanent.
  */
 public final class RuleDispatcherConfig {
 
     private final long scriptTimeoutMillis;
     private final long firstScriptTimeoutMillis;
+    private final long circuitRecoveryDelayMillis;
     private final int executorCorePoolSize;
     private final int executorMaxPoolSize;
     private final long executorKeepAliveSeconds;
@@ -30,6 +32,8 @@ public final class RuleDispatcherConfig {
     private RuleDispatcherConfig(Builder builder) {
         this.scriptTimeoutMillis = requirePositive(builder.scriptTimeoutMillis, "scriptTimeoutMillis");
         this.firstScriptTimeoutMillis = requirePositive(builder.firstScriptTimeoutMillis, "firstScriptTimeoutMillis");
+        this.circuitRecoveryDelayMillis = requirePositive(
+                builder.circuitRecoveryDelayMillis, "circuitRecoveryDelayMillis");
         this.executorCorePoolSize = requireNonNegative(builder.executorCorePoolSize, "executorCorePoolSize");
         this.executorMaxPoolSize = requirePositive(builder.executorMaxPoolSize, "executorMaxPoolSize");
         if (builder.executorMaxPoolSize < builder.executorCorePoolSize) {
@@ -42,15 +46,17 @@ public final class RuleDispatcherConfig {
     }
 
     /**
-     * Defaults that reproduce the previous hardcoded {@code RuleDispatcher} behaviour: 100&nbsp;ms
-     * steady-state timeout, 1&nbsp;s first-run timeout, core 0, max {@code max(4, cores)}, 30&nbsp;s
-     * keep-alive, a zero-capacity (synchronous) queue and the {@code kairo-script-execution}
-     * thread name prefix.
+     * Defaults that preserve the previous hardcoded {@code RuleDispatcher} executor behaviour:
+     * 100&nbsp;ms steady-state timeout, 1&nbsp;s first-run timeout, core 0, max
+     * {@code max(4, cores)}, 30&nbsp;s keep-alive, a zero-capacity (synchronous) queue and the
+     * {@code kairo-script-execution} thread name prefix. Automatic circuits probe recovery after
+     * 30&nbsp;s.
      */
     public static RuleDispatcherConfig defaults() {
         return builder()
                 .scriptTimeoutMillis(100L)
                 .firstScriptTimeoutMillis(1_000L)
+                .circuitRecoveryDelayMillis(30_000L)
                 .executorCorePoolSize(0)
                 .executorMaxPoolSize(Math.max(4, Runtime.getRuntime().availableProcessors()))
                 .executorKeepAliveSeconds(30L)
@@ -65,6 +71,15 @@ public final class RuleDispatcherConfig {
 
     public long firstScriptTimeoutMillis() {
         return firstScriptTimeoutMillis;
+    }
+
+    /**
+     * How long an automatically opened circuit remains fail-open before one half-open probe is
+     * admitted. A successful probe closes the circuit; a failed probe restarts this delay.
+     * Manual locks never recover automatically.
+     */
+    public long circuitRecoveryDelayMillis() {
+        return circuitRecoveryDelayMillis;
     }
 
     public int executorCorePoolSize() {
@@ -120,6 +135,7 @@ public final class RuleDispatcherConfig {
     public static final class Builder {
         private long scriptTimeoutMillis = 100L;
         private long firstScriptTimeoutMillis = 1_000L;
+        private long circuitRecoveryDelayMillis = 30_000L;
         private int executorCorePoolSize = 0;
         private int executorMaxPoolSize = Math.max(4, Runtime.getRuntime().availableProcessors());
         private long executorKeepAliveSeconds = 30L;
@@ -136,6 +152,11 @@ public final class RuleDispatcherConfig {
 
         public Builder firstScriptTimeoutMillis(long firstScriptTimeoutMillis) {
             this.firstScriptTimeoutMillis = firstScriptTimeoutMillis;
+            return this;
+        }
+
+        public Builder circuitRecoveryDelayMillis(long circuitRecoveryDelayMillis) {
+            this.circuitRecoveryDelayMillis = circuitRecoveryDelayMillis;
             return this;
         }
 

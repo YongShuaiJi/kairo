@@ -129,6 +129,32 @@ class RuleDispatcherTest {
     }
 
     @Test
+    void circuitBrokenRuleRecoversThroughSingleHalfOpenProbe() throws Exception {
+        AtomicInteger scriptRuns = new AtomicInteger();
+        StubScript script = new StubScript(() -> {
+            if (scriptRuns.incrementAndGet() == 1) {
+                throw new IllegalStateException("transient");
+            }
+            return MockDecision.proceed();
+        });
+        CompiledRule rule = register("recovering-rule", method(), script, 1);
+        RuleDispatcherConfig config = RuleDispatcherConfig.builder()
+                .circuitRecoveryDelayMillis(1L)
+                .build();
+        dispatcher = newDispatcher(config);
+
+        dispatcher.onEnter(methodKey(), methodMetadata(), null, new Object[]{"x"});
+        assertThat(rule.locked()).isTrue();
+        Thread.sleep(5L);
+
+        dispatcher.onEnter(methodKey(), methodMetadata(), null, new Object[]{"x"});
+
+        assertThat(scriptRuns.get()).isEqualTo(2);
+        assertThat(rule.locked()).isFalse();
+        assertThat(rule.circuitBreakReason()).isNull();
+    }
+
+    @Test
     void completesUnderLongTimeoutWithoutCircuitBreak() throws Exception {
         StubScript quickScript = new StubScript(() -> {
             Thread.sleep(30);
