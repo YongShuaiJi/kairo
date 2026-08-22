@@ -38,6 +38,7 @@ class SoakResultValidatorTest {
               "measurementWarmup": { "strategy": "bounded-adaptive-metaspace-plateau", "enhanceUnloadBatch": true, "disconnectRecovery": true, "resourceSample": true, "excludedFromDurationAndCycles": true, "minimumLifecycleBatches": 128, "maximumLifecycleBatches": 512, "sampleEveryBatches": 32, "plateauWindowBatches": 128, "maxWindowMetaspaceGrowthPct": 2.0, "batchesRun": 256, "steadyStateEstablished": true, "initialMetaspaceUsedBytes": 38000000, "finalMetaspaceUsedBytes": 41000000, "observedWindowMetaspaceGrowthPct": 1.2, "lifecycleLoadersCreated": 256, "lifecycleLoadersCollected": 224, "lifecycleLoadersOutstanding": 32, "eligibleLifecycleLoaders": 224, "eligibleLifecycleLoadersOutstanding": 0, "latestCohortGraceLoaders": 32, "allowedOutstandingLifecycleLoaders": 2, "samples": [{"lifecycleBatches":128,"metaspaceUsedBytes":40500000},{"lifecycleBatches":256,"metaspaceUsedBytes":41000000}] },
               "budgets": { "maxHeapGrowthPct": 15, "maxMetaspaceGrowthPct": 10, "maxThreadDelta": 2, "maxFdDelta": 5, "driftThresholdSeconds": 300, "sustainedBreachWindowSeconds": 300 },
               "cycles": { "continuousInvocations": 1000000, "continuousTargetEnhanceApplications": 1, "enhanceUnloadBatches": 0, "disconnectRecoveries": 0, "summaries": 2, "failedBatches": 0 },
+              "continuousRuleHealth": { "automaticCircuitOpenEvents": 0, "automaticCircuitRecoveries": 0, "circuitOpenAtEnd": false, "lastCircuitBreakReason": null, "transitions": [] },
               "timeSeries": { "rawPath": "target/v1.7/soak-timeseries.jsonl", "format": "jsonl", "count": 2, "summaryIntervalSeconds": 60 },
               "observations": [
                 { "minuteIndex": 1, "timestamp": "2026-07-31T00:01:00Z", "elapsedSeconds": 60, "heapUsedBytes": 100, "metaspaceUsedBytes": 10, "threadCount": 10, "openFdCount": 50, "loadedClassCount": 1000, "publishedRuleCount": 1, "snapshotCount": 0, "journalRecordCount": 0, "instrumentationTypeCount": 0, "instrumentationMethodCount": 0, "continuousInvocations": 1000, "batchesRun": 0, "disconnectsRun": 0, "driftDetected": false, "driftPersistentSeconds": 0, "heapBreach": false, "metaspaceBreach": false, "threadBreach": false, "fdBreach": false, "sustainedBreach": false },
@@ -258,5 +259,28 @@ class SoakResultValidatorTest {
         ((ObjectNode) r.path("disconnectRecovery")).put("count", 0);
         ((ObjectNode) r.path("disconnectRecovery")).put("lastOutcome", "NONE");
         assertThat(validate(r)).isEmpty();
+    }
+
+    @Test
+    void unbalancedCircuitEvidenceFailsClosed() throws Exception {
+        ObjectNode r = valid();
+        ObjectNode health = (ObjectNode) r.path("continuousRuleHealth");
+        health.put("automaticCircuitOpenEvents", 1);
+        health.put("automaticCircuitRecoveries", 0);
+        health.put("circuitOpenAtEnd", false);
+        health.put("lastCircuitBreakReason", "TIMEOUT");
+
+        assertThat(validate(r)).anyMatch(error -> error.contains("do not reconcile"));
+    }
+
+    @Test
+    void recoveredCircuitRequiresTimestampedTransitions() throws Exception {
+        ObjectNode r = valid();
+        ObjectNode health = (ObjectNode) r.path("continuousRuleHealth");
+        health.put("automaticCircuitOpenEvents", 1);
+        health.put("automaticCircuitRecoveries", 1);
+        health.put("lastCircuitBreakReason", "TIMEOUT");
+
+        assertThat(validate(r)).anyMatch(error -> error.contains("transitions do not match"));
     }
 }

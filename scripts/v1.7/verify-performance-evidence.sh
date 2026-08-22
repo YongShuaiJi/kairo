@@ -16,8 +16,9 @@
 #   - state-cycle-result.json / leak-result.json / soak-result.json :
 #       schemaVersion == "1.0", buildId is a 40-hex commit id, overall == "PASSED"
 #   - soak-result.json additionally : the fixed cadence (PT1M/PT5M/PT30M) is recorded, the
-#       budgets object is present, and timeSeries.rawPath points to an existing raw file
-#       (a sibling of the result, in-repo/local).
+#       budgets object is present, and timeSeries.rawPath points to an existing raw file.
+#       Current harnesses record the portable sibling name; legacy repo-relative/absolute
+#       evidence remains readable for compatibility.
 #
 # Exit codes:
 #   0  all present evidence is structurally valid and none is FAILED
@@ -108,8 +109,9 @@ def check_benchmark(label, root, errors):
 
 
 def resolve_raw(evidence_dir, raw):
-    # The harness records either a repo-root-relative path or an absolute local path. Never fall
-    # back to basename matching: that could validate a different file with the same name.
+    # Current harnesses record a sibling path so the evidence directory is relocatable. Retain
+    # exact legacy repo-relative/absolute resolution, but never fall back to basename matching:
+    # that could validate a different file with the same name.
     candidates = [raw] if os.path.isabs(raw) else [raw, os.path.join(evidence_dir, raw)]
     for candidate in candidates:
         if os.path.isfile(candidate):

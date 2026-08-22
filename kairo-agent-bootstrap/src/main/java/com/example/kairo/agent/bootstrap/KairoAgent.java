@@ -36,7 +36,7 @@ public final class KairoAgent {
                 try {
                     coreHandle.close();
                 } catch (Exception e) {
-                    System.err.println("[kairo] Agent reload failed to stop old core: " + e);
+                    logFailure("agent.bootstrap.reload_stop_failed", loadMode, e);
                 } finally {
                     coreHandle = null;
                 }
@@ -61,6 +61,8 @@ public final class KairoAgent {
                         // no-op
                     }
                 };
+                System.err.println("event=\"agent.bootstrap.started\" loadMode=\""
+                        + safe(loadMode) + "\" launcher=\"" + safe(launcherClassName) + "\"");
             } catch (Throwable throwable) {
                 Throwable failure = throwable;
                 if (throwable instanceof InvocationTargetException) {
@@ -69,10 +71,35 @@ public final class KairoAgent {
                         failure = targetException;
                     }
                 }
-                System.err.println("[kairo] Agent bootstrap failed open: " + failure);
-                failure.printStackTrace(System.err);
+                logFailure("agent.bootstrap.failed_open", loadMode, failure);
             }
         }
+    }
+
+    /** Bootstrap stays dependency-free/JDK 8 compatible, so it uses a tiny local safe formatter. */
+    private static void logFailure(String event, String loadMode, Throwable failure) {
+        StringBuilder stack = new StringBuilder();
+        StackTraceElement[] trace = failure == null ? new StackTraceElement[0] : failure.getStackTrace();
+        for (int i = 0; i < trace.length && i < 8; i++) {
+            if (i > 0) {
+                stack.append(" <- ");
+            }
+            stack.append(trace[i]);
+        }
+        System.err.println("event=\"" + safe(event) + "\" loadMode=\"" + safe(loadMode)
+                + "\" failureType=\"" + safe(failure == null ? "" : failure.getClass().getName())
+                + "\" failure=\"" + safe(failure == null ? "" : failure.getMessage())
+                + "\" failureStack=\"" + safe(stack.toString()) + "\"");
+    }
+
+    private static String safe(String value) {
+        String sanitized = value == null ? "" : value
+                .replaceAll("[\\r\\n\\t]+", " ")
+                .replaceAll("(?i)(authorization|cookie|credential|password|secret|token|api[-_]?key)"
+                        + "(\\s*[:=]\\s*)([^\\s,;]+)", "$1$2[REDACTED]")
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"");
+        return sanitized.length() <= 1000 ? sanitized : sanitized.substring(0, 1000) + "...";
     }
 
     private static Path resolveCoreJar(AgentArguments arguments) {

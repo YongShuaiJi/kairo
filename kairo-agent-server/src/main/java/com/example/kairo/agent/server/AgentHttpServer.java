@@ -11,6 +11,7 @@ import com.example.kairo.api.MethodSelector;
 import com.example.kairo.api.MockRule;
 import com.example.kairo.api.bytecode.ClassIdentity;
 import com.example.kairo.api.bytecode.TransformationRevision;
+import com.example.kairo.api.diagnostics.DiagnosticEvent;
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -31,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -121,6 +123,10 @@ public final class AgentHttpServer implements AutoCloseable {
 
     private HttpHandler authenticated(ExchangeHandler handler) {
         return exchange -> {
+            long started = System.nanoTime();
+            String requestId = requestId(exchange);
+            exchange.getResponseHeaders().set("X-Correlation-Id", requestId);
+            Throwable failure = null;
             try {
                 if (!isPublicPath(exchange.getRequestURI().getPath()) && !authorized(exchange)) {
                     write(exchange, 401, Map.of("error", "Unauthorized"));
@@ -128,13 +134,40 @@ public final class AgentHttpServer implements AutoCloseable {
                 }
                 handler.handle(exchange);
             } catch (IllegalArgumentException e) {
+                failure = e;
                 write(exchange, 400, Map.of("error", e.getMessage()));
             } catch (Exception e) {
-                write(exchange, 500, Map.of("error", e.getClass().getName(), "message", e.getMessage()));
+                failure = e;
+                write(exchange, 500, Map.of("error", "Internal server error", "correlationId", requestId));
             } finally {
+                int status = exchange.getResponseCode();
+                if (isMutation(exchange.getRequestMethod()) || status >= 400 || failure != null) {
+                    runtime.recordEvent("agent.http.request.completed", actor(exchange), null,
+                            normalizePath(exchange.getRequestURI().getPath()),
+                            DiagnosticEvent.format("agent.http.request.completed",
+                                    "correlationId", requestId,
+                                    "method", exchange.getRequestMethod(),
+                                    "path", normalizePath(exchange.getRequestURI().getPath()),
+                                    "status", status,
+                                    "durationMs", (System.nanoTime() - started) / 1_000_000L,
+                                    "failureType", failure == null ? "" : failure.getClass().getName(),
+                                    "failure", DiagnosticEvent.failureSummary(failure),
+                                    "failureStack", DiagnosticEvent.stackSummary(failure)));
+                }
                 exchange.close();
             }
         };
+    }
+
+    private static boolean isMutation(String method) {
+        return "POST".equals(method) || "PUT".equals(method)
+                || "PATCH".equals(method) || "DELETE".equals(method);
+    }
+
+    private static String requestId(HttpExchange exchange) {
+        String supplied = exchange.getRequestHeaders().getFirst("X-Correlation-Id");
+        return supplied != null && supplied.length() <= 128 && supplied.matches("[A-Za-z0-9._:-]+")
+                ? supplied : UUID.randomUUID().toString();
     }
 
     private void route(HttpExchange exchange) throws IOException {

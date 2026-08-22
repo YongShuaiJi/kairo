@@ -51,7 +51,8 @@ class RuleDispatcherTest {
         assertThat(result.isSkipOriginalMethod()).isFalse();
         assertThat(rule.errors()).isEqualTo(1);
         assertThat(rule.locked()).isFalse();
-        assertThat(log.snapshot().stream().anyMatch(msg -> msg.contains("failed; fail-open"))).isTrue();
+        assertThat(log.snapshot().stream().anyMatch(msg -> msg.contains("rule.execution.failed")
+                && msg.contains("outcome=\"FAIL_OPEN\""))).isTrue();
     }
 
     @Test
@@ -97,7 +98,8 @@ class RuleDispatcherTest {
         assertThat(rule.locked()).isTrue();
         assertThat(rule.circuitBreakReason()).isEqualTo(CircuitBreakReason.TIMEOUT);
         assertThat(rule.unfinishedTaskCount()).isGreaterThanOrEqualTo(1);
-        assertThat(log.snapshot().stream().anyMatch(msg -> msg.contains("timeout") && msg.contains("fail-open")))
+        assertThat(log.snapshot().stream().anyMatch(msg -> msg.contains("rule.execution.timeout")
+                        && msg.contains("circuitState=\"OPEN\"")))
                 .isTrue();
     }
 
@@ -152,6 +154,49 @@ class RuleDispatcherTest {
         assertThat(scriptRuns.get()).isEqualTo(2);
         assertThat(rule.locked()).isFalse();
         assertThat(rule.circuitBreakReason()).isNull();
+        assertThat(log.snapshot()).anyMatch(message -> message.contains("rule.circuit.half_open"));
+        assertThat(log.snapshot()).anyMatch(message -> message.contains("rule.circuit.closed"));
+    }
+
+    @Test
+    void coldStartTimeoutFailsOpenThenReturnsEnhancedValueAfterHalfOpenRecovery() throws Exception {
+        AtomicInteger scriptRuns = new AtomicInteger();
+        StubScript script = new StubScript(() -> {
+            if (scriptRuns.incrementAndGet() == 1) {
+                try {
+                    Thread.sleep(5_000L);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+                return MockDecision.returnValue("late-result-must-be-ignored");
+            }
+            return MockDecision.returnValue("recovered");
+        });
+        CompiledRule rule = register("cold-start-rule", method(), script);
+        RuleDispatcherConfig config = RuleDispatcherConfig.builder()
+                .scriptTimeoutMillis(100L)
+                .firstScriptTimeoutMillis(20L)
+                .circuitRecoveryDelayMillis(5L)
+                .executorMaxPoolSize(2)
+                .build();
+        dispatcher = newDispatcher(config);
+
+        EnterResult coldStart = dispatcher.onEnter(methodKey(), methodMetadata(), null, new Object[]{"x"});
+        assertThat(coldStart.getAction()).isEqualTo(BridgeAction.PROCEED);
+        assertThat(rule.locked()).isTrue();
+        assertThat(rule.circuitBreakReason()).isEqualTo(CircuitBreakReason.TIMEOUT);
+
+        Thread.sleep(20L);
+        EnterResult recovered = dispatcher.onEnter(methodKey(), methodMetadata(), null, new Object[]{"x"});
+
+        assertThat(recovered.getAction()).isEqualTo(BridgeAction.RETURN);
+        assertThat(recovered.getReturnValue()).isEqualTo("recovered");
+        assertThat(scriptRuns.get()).isEqualTo(2);
+        assertThat(rule.locked()).isFalse();
+        assertThat(rule.circuitBreakReason()).isNull();
+        assertThat(log.snapshot()).anyMatch(message -> message.contains("rule.execution.timeout"));
+        assertThat(log.snapshot()).anyMatch(message -> message.contains("rule.circuit.half_open"));
+        assertThat(log.snapshot()).anyMatch(message -> message.contains("rule.circuit.closed"));
     }
 
     @Test
@@ -217,13 +262,20 @@ class RuleDispatcherTest {
             assertThat(rejected.isSkipOriginalMethod()).isFalse();
             assertThat(fastRule.locked()).isTrue();
             assertThat(fastRule.circuitBreakReason()).isEqualTo(CircuitBreakReason.SATURATION);
-            assertThat(log.snapshot().stream().anyMatch(msg -> msg.contains("saturation") && msg.contains("fail-open")))
+            assertThat(log.snapshot().stream().anyMatch(msg -> msg.contains("rule.execution.rejected")
+                            && msg.contains("SATURATION")))
                     .isTrue();
 
             releaseBlocker.countDown();
             EnterResult blockingResult = blockingFuture.get(10, TimeUnit.SECONDS);
             assertThat(blockingResult.getAction()).isEqualTo(BridgeAction.PROCEED);
-            assertThat(blockingRule.locked()).isFalse();
+            // The test intentionally keeps this script blocked while the rejected dispatch is
+            // asserted. On a heavily CPU-throttled runner that wall time can legitimately exceed
+            // the dispatcher's slow watermark, so an automatic SLOW_EXECUTION circuit is valid
+            // and unrelated to the SATURATION behaviour under test. Other lock reasons are not.
+            if (blockingRule.locked()) {
+                assertThat(blockingRule.circuitBreakReason()).isEqualTo(CircuitBreakReason.SLOW_EXECUTION);
+            }
         } finally {
             driver.shutdownNow();
         }

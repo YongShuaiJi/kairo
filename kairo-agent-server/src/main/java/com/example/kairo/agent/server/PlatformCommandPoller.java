@@ -8,6 +8,7 @@ import com.example.kairo.api.ScriptDiagnostic;
 import com.example.kairo.api.ScriptPolicyRevision;
 import com.example.kairo.api.ScriptSessionResult;
 import com.example.kairo.api.ScriptSessionSpec;
+import com.example.kairo.api.diagnostics.DiagnosticEvent;
 import com.example.kairo.core.ClassLoaderIdentity;
 import com.example.kairo.groovy.CompiledMockScript;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -29,6 +30,7 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 final class PlatformCommandPoller implements AutoCloseable {
 
@@ -38,6 +40,7 @@ final class PlatformCommandPoller implements AutoCloseable {
     private final HttpClient httpClient;
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private final ScheduledExecutorService executor;
+    private final AtomicBoolean pollFailureActive = new AtomicBoolean();
 
     PlatformCommandPoller(AgentRuntime runtime, AgentLaunchConfig config, Runnable shutdownCallback) {
         this.runtime = runtime;
@@ -61,9 +64,19 @@ final class PlatformCommandPoller implements AutoCloseable {
     private void pollSafely() {
         try {
             pollOnce();
+            if (pollFailureActive.compareAndSet(true, false)) {
+                runtime.recordEvent("platform.command.poll_recovered", "platform", null, null,
+                        DiagnosticEvent.format("platform.command.poll_recovered",
+                                "agentId", config.platformAgentId()));
+            }
         } catch (Exception e) {
-            runtime.recordEvent("platform.command.poll_failed", "platform", null, null,
-                    e.getClass().getName() + ": " + e.getMessage());
+            if (pollFailureActive.compareAndSet(false, true)) {
+                runtime.recordEvent("platform.command.poll_failed", "platform", null, null,
+                        DiagnosticEvent.format("platform.command.poll_failed",
+                                "agentId", config.platformAgentId(),
+                                "failure", DiagnosticEvent.failureSummary(e),
+                                "failureStack", DiagnosticEvent.stackSummary(e)));
+            }
         }
     }
 
@@ -77,29 +90,71 @@ final class PlatformCommandPoller implements AutoCloseable {
             return;
         }
         String commandId = command.path("id").asText();
+        String commandType = commandType(command);
         // V1.7 M1-A §8.1: the dispatch epoch (attempts) the agent polled is the ack fencing token.
         // Every ack path -- success, capability failure and exception failure -- echoes it so the
         // platform can reject a stale owner whose lease was reclaimed by a re-dispatch.
         long epoch = expectedAttempts(command);
+        long started = System.nanoTime();
+        runtime.recordEvent("platform.command.received", "platform", null, commandType,
+                DiagnosticEvent.format("platform.command.received",
+                        "commandId", commandId, "commandType", commandType, "epoch", epoch));
+        Map<String, Object> acknowledgement;
+        String acknowledgementStatus;
         try {
             Map<String, Object> result = execute(command);
-            post("/api/v1/agent-commands/" + commandId + "/ack",
-                    ackBody(epoch, "ACKED", "agent command applied", result, null));
+            acknowledgementStatus = "ACKED";
+            acknowledgement = ackBody(epoch, acknowledgementStatus,
+                    "agent command applied", result, null);
         } catch (com.example.kairo.agent.server.protocol.CapabilityNotSupportedException ce) {
             // V1.6 §5.2: structured CAPABILITY_NOT_SUPPORTED ack so the platform can degrade.
-            post("/api/v1/agent-commands/" + commandId + "/ack",
-                    ackBody(epoch, "FAILED", "capability not supported",
-                            Map.of(
-                                    "code", "CAPABILITY_NOT_SUPPORTED",
-                                    "category", "CAPABILITY",
-                                    "commandType", ce.commandType(),
-                                    "retryable", false),
-                            ce.getMessage()));
+            acknowledgementStatus = "FAILED";
+            acknowledgement = ackBody(epoch, acknowledgementStatus, "capability not supported",
+                    Map.of(
+                            "code", "CAPABILITY_NOT_SUPPORTED",
+                            "category", "CAPABILITY",
+                            "commandType", ce.commandType(),
+                            "retryable", false),
+                    ce.getMessage());
+            runtime.recordEvent("platform.command.capability_rejected", "platform", null, commandType,
+                    DiagnosticEvent.format("platform.command.capability_rejected",
+                            "commandId", commandId, "commandType", commandType,
+                            "epoch", epoch, "failureType", ce.getClass().getName()));
         } catch (Exception e) {
-            post("/api/v1/agent-commands/" + commandId + "/ack",
-                    ackBody(epoch, "FAILED", "agent command failed", null,
-                            e.getClass().getName() + ": " + e.getMessage()));
+            acknowledgementStatus = "FAILED";
+            acknowledgement = ackBody(epoch, acknowledgementStatus,
+                    "agent command failed", null, DiagnosticEvent.failureSummary(e));
+            runtime.recordEvent("platform.command.execution_failed", "platform", null, commandType,
+                    DiagnosticEvent.format("platform.command.execution_failed",
+                            "commandId", commandId, "commandType", commandType, "epoch", epoch,
+                            "durationMs", elapsedMillis(started),
+                            "failure", DiagnosticEvent.failureSummary(e),
+                            "failureStack", DiagnosticEvent.stackSummary(e)));
         }
+        try {
+            post("/api/v1/agent-commands/" + commandId + "/ack", acknowledgement);
+        } catch (Exception ackFailure) {
+            runtime.recordEvent("platform.command.ack_failed", "platform", null, commandType,
+                    DiagnosticEvent.format("platform.command.ack_failed",
+                            "commandId", commandId, "commandType", commandType, "epoch", epoch,
+                            "ackStatus", acknowledgementStatus, "durationMs", elapsedMillis(started),
+                            "failure", DiagnosticEvent.failureSummary(ackFailure),
+                            "failureStack", DiagnosticEvent.stackSummary(ackFailure)));
+            throw ackFailure;
+        }
+        runtime.recordEvent("platform.command.acked", "platform", null, commandType,
+                DiagnosticEvent.format("platform.command.acked",
+                        "commandId", commandId, "commandType", commandType, "epoch", epoch,
+                        "ackStatus", acknowledgementStatus, "durationMs", elapsedMillis(started)));
+    }
+
+    private static String commandType(JsonNode command) {
+        JsonNode payload = command.path("payload");
+        return payload.path("commandType").asText(command.path("command_type").asText("UNKNOWN"));
+    }
+
+    private static long elapsedMillis(long startedNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
     }
 
     /**

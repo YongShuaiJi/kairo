@@ -78,6 +78,7 @@ public final class SoakResultValidator {
         validateMeasurementWarmup(errors, root.path("measurementWarmup"), passing);
         validateBudgets(errors, root.path("budgets"));
         validateCycles(errors, root.path("cycles"), requestedDuration, passing);
+        validateContinuousRuleHealth(errors, root.path("continuousRuleHealth"), passing);
         validateTimeSeries(errors, root.path("timeSeries"), root.path("observations"),
                 requestedDuration, passing);
         validateDisconnectRecovery(errors, root.path("disconnectRecovery"), root.path("cycles"),
@@ -488,6 +489,87 @@ public final class SoakResultValidator {
                     errors.add("passing disconnectRecovery.lastOutcome must be " + expectedOutcome);
                 }
             }
+        }
+    }
+
+    private void validateContinuousRuleHealth(List<String> errors, JsonNode health, boolean passing) {
+        if (!health.isObject()) {
+            errors.add("missing continuousRuleHealth object");
+            return;
+        }
+        JsonNode openEvents = health.path("automaticCircuitOpenEvents");
+        JsonNode recoveries = health.path("automaticCircuitRecoveries");
+        JsonNode openAtEnd = health.path("circuitOpenAtEnd");
+        if (!openEvents.isInt() || openEvents.asInt() < 0) {
+            errors.add("continuousRuleHealth.automaticCircuitOpenEvents must be a non-negative int");
+        }
+        if (!recoveries.isInt() || recoveries.asInt() < 0) {
+            errors.add("continuousRuleHealth.automaticCircuitRecoveries must be a non-negative int");
+        }
+        if (!openAtEnd.isBoolean()) {
+            errors.add("continuousRuleHealth.circuitOpenAtEnd must be boolean");
+        }
+        int opens = openEvents.asInt(-1);
+        int closes = recoveries.asInt(-1);
+        if (opens >= 0 && closes > opens) {
+            errors.add("continuousRuleHealth recoveries cannot exceed open events");
+        }
+        if (opens >= 0 && closes >= 0 && openAtEnd.isBoolean()
+                && opens - closes != (openAtEnd.asBoolean() ? 1 : 0)) {
+            errors.add("continuousRuleHealth open/recovery counts do not reconcile with circuitOpenAtEnd");
+        }
+        JsonNode lastReason = health.path("lastCircuitBreakReason");
+        if (opens > 0 && (!lastReason.isTextual() || lastReason.asText().isBlank())) {
+            errors.add("continuousRuleHealth.lastCircuitBreakReason is required after an open event");
+        }
+        if (lastReason.isTextual() && !Set.of("CONSECUTIVE_ERRORS", "ERROR_RATE",
+                "SLOW_EXECUTION", "TIMEOUT", "SATURATION").contains(lastReason.asText())) {
+            errors.add("continuousRuleHealth.lastCircuitBreakReason is unknown: " + lastReason.asText());
+        }
+        if (opens == 0 && !lastReason.isNull()) {
+            errors.add("continuousRuleHealth.lastCircuitBreakReason must be null when no circuit opened");
+        }
+
+        JsonNode transitions = health.path("transitions");
+        if (!transitions.isArray()) {
+            errors.add("continuousRuleHealth.transitions must be an array");
+        } else {
+            int observedOpens = 0;
+            int observedCloses = 0;
+            long previousElapsed = -1L;
+            for (JsonNode transition : transitions) {
+                requireNonBlankText(errors, transition, "timestamp");
+                long elapsed = transition.path("elapsedSeconds").asLong(-1L);
+                if (!transition.path("elapsedSeconds").isIntegralNumber() || elapsed < 0) {
+                    errors.add("continuousRuleHealth transition elapsedSeconds must be non-negative");
+                } else if (elapsed < previousElapsed) {
+                    errors.add("continuousRuleHealth transitions must be ordered by elapsedSeconds");
+                }
+                previousElapsed = elapsed;
+                if (!transition.path("continuousInvocations").isIntegralNumber()
+                        || transition.path("continuousInvocations").asLong() < 0) {
+                    errors.add("continuousRuleHealth transition continuousInvocations must be non-negative");
+                }
+                String from = textOrNull(transition, "fromState");
+                String to = textOrNull(transition, "toState");
+                if ("CLOSED".equals(from) && "OPEN".equals(to)) {
+                    observedOpens++;
+                    requireNonBlankText(errors, transition, "reason");
+                } else if ("OPEN".equals(from) && "CLOSED".equals(to)) {
+                    observedCloses++;
+                } else {
+                    errors.add("continuousRuleHealth transition must be CLOSED->OPEN or OPEN->CLOSED");
+                }
+            }
+            if (opens >= 0 && observedOpens != opens) {
+                errors.add("continuousRuleHealth transitions do not match automaticCircuitOpenEvents");
+            }
+            if (closes >= 0 && observedCloses != closes) {
+                errors.add("continuousRuleHealth transitions do not match automaticCircuitRecoveries");
+            }
+        }
+        if (passing && openAtEnd.isBoolean() && openAtEnd.asBoolean()) {
+            errors.add("passing continuousRuleHealth cannot end with an open circuit");
         }
     }
 

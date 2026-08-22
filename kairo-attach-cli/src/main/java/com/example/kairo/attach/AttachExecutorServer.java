@@ -1,5 +1,6 @@
 package com.example.kairo.attach;
 
+import com.example.kairo.api.diagnostics.DiagnosticEvent;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -74,8 +75,9 @@ public class AttachExecutorServer {
                 "sidecarId", sidecarId == null ? "" : sidecarId
         )));
         server.start();
-        System.out.println("[kairo] Attach executor health listening on "
-                + config.host() + ":" + config.port());
+        System.out.println(DiagnosticEvent.format("attach.executor.started",
+                "executorId", executorId, "host", config.host(), "port", config.port(),
+                "targetCount", registeredTargets.size()));
     }
 
     private void runCommandLoop() {
@@ -87,8 +89,10 @@ public class AttachExecutorServer {
                 }
             } catch (Exception e) {
                 Throwable failure = unwrap(e);
-                System.err.println("[kairo] Attach executor polling failed: " + failure);
-                failure.printStackTrace(System.err);
+                System.err.println(DiagnosticEvent.format("attach.command.poll_failed",
+                        "executorId", executorId,
+                        "failure", DiagnosticEvent.failureSummary(failure),
+                        "failureStack", DiagnosticEvent.stackSummary(failure)));
                 sleep(1000L);
             }
         }
@@ -104,8 +108,8 @@ public class AttachExecutorServer {
                 .POST(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(request)));
         HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException("Platform command poll failed: "
-                    + response.statusCode() + " " + response.body());
+            throw new IllegalStateException("Platform command poll failed with HTTP "
+                    + response.statusCode());
         }
         return MAPPER.readValue(response.body(), MAP_TYPE);
     }
@@ -118,27 +122,52 @@ public class AttachExecutorServer {
         String agentJar = text(command, "agentJar", config.agentJar());
         String agentArgs = text(command, "agentArgs", "");
         Instant startedAt = Instant.now();
+        System.out.println(DiagnosticEvent.format("attach.command.started",
+                "commandId", commandId, "commandType", commandType,
+                "processId", processId, "agentJar", agentJar));
+        String status;
+        String failureMessage = "";
+        Map<String, Object> result;
         try {
             if (!"ATTACH_AGENT".equals(commandType) && !"RELOAD_AGENT".equals(commandType)) {
                 throw new IllegalArgumentException("Unsupported attach executor command: " + commandType);
             }
             attach(processId, agentJar, agentArgs);
-            ack(commandId, "SUCCEEDED", "", Map.of(
+            status = "SUCCEEDED";
+            result = Map.of(
                     "processId", processId,
                     "agentJar", agentJar,
                     "startedAt", startedAt.toString(),
                     "finishedAt", Instant.now().toString()
-            ));
+            );
         } catch (Exception e) {
             Throwable failure = unwrap(e);
-            ack(commandId, "FAILED", failure.getMessage() == null ? "" : failure.getMessage(), Map.of(
+            status = "FAILED";
+            failureMessage = DiagnosticEvent.failureSummary(failure);
+            result = Map.of(
                     "failureType", failure.getClass().getName(),
                     "processId", processId,
                     "agentJar", agentJar,
                     "startedAt", startedAt.toString(),
                     "finishedAt", Instant.now().toString()
-            ));
+            );
         }
+        try {
+            ack(commandId, status, failureMessage, result);
+        } catch (IOException | InterruptedException ackFailure) {
+            System.err.println(DiagnosticEvent.format("attach.command.ack_failed",
+                    "commandId", commandId, "commandType", commandType, "status", status,
+                    "durationMs", Duration.between(startedAt, Instant.now()).toMillis(),
+                    "failure", DiagnosticEvent.failureSummary(ackFailure)));
+            throw ackFailure;
+        }
+        String event = "SUCCEEDED".equals(status)
+                ? "attach.command.succeeded" : "attach.command.failed";
+        System.out.println(DiagnosticEvent.format(event,
+                "commandId", commandId, "commandType", commandType, "status", status,
+                "processId", processId,
+                "durationMs", Duration.between(startedAt, Instant.now()).toMillis(),
+                "failure", failureMessage));
     }
 
     void ack(String commandId, String status, String message, Map<String, Object> result)
@@ -152,8 +181,8 @@ public class AttachExecutorServer {
                 .POST(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(request)));
         HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException("Platform command ack failed: "
-                    + response.statusCode() + " " + response.body());
+            throw new IllegalStateException("Platform command ack failed with HTTP "
+                    + response.statusCode());
         }
     }
 
@@ -176,8 +205,8 @@ public class AttachExecutorServer {
                 .POST(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(request)));
         HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException("Platform sidecar registration failed: "
-                    + response.statusCode() + " " + response.body());
+            throw new IllegalStateException("Platform sidecar registration failed with HTTP "
+                    + response.statusCode());
         }
         Map<String, Object> result = MAPPER.readValue(response.body(), MAP_TYPE);
         executorId = String.valueOf(result.getOrDefault("executorId", config.executorId()));
@@ -195,10 +224,11 @@ public class AttachExecutorServer {
                 : List.of();
         instanceId = String.valueOf(result.getOrDefault("instanceId", ""));
         sidecarId = String.valueOf(result.getOrDefault("sidecarId", ""));
-        System.out.println("[kairo] Attach executor registered executor=" + executorId
-                + ", targets=" + registeredTargets.size()
-                + ", firstInstance=" + instanceId
-                + ", firstSidecar=" + sidecarId);
+        System.out.println(DiagnosticEvent.format("attach.executor.registered",
+                "executorId", executorId,
+                "targetCount", registeredTargets.size(),
+                "firstInstanceId", instanceId,
+                "firstSidecarId", sidecarId));
     }
 
     private HttpRequest.Builder platformRequest(String url) {

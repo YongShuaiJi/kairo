@@ -46,7 +46,7 @@ public final class RequestContextFactory {
                 principal.scope(), principal.maxSessions());
         return new RequestContext(
                 principal.subjectId(),
-                headerOrDefault(request, "X-Correlation-Id", ""),
+                correlationId(request),
                 clientIp(request),
                 principal.identitySource(),
                 headerOrDefault(request, "User-Agent", ""),
@@ -60,7 +60,7 @@ public final class RequestContextFactory {
         }
         return new RequestContext(
                 headerOrDefault(request, "X-Actor", "system"),
-                headerOrDefault(request, "X-Correlation-Id", ""),
+                correlationId(request),
                 clientIp(request),
                 headerOrDefault(request, "X-Identity-Source", "header-dev"),
                 headerOrDefault(request, "User-Agent", "")
@@ -84,5 +84,11 @@ public final class RequestContextFactory {
     private String headerOrDefault(HttpServletRequest request, String name, String defaultValue) {
         String value = request.getHeader(name);
         return value == null || value.isBlank() ? defaultValue : value;
+    }
+
+    private String correlationId(HttpServletRequest request) {
+        Object generated = request.getAttribute(ApiRequestLoggingFilter.CORRELATION_ID_ATTRIBUTE);
+        return generated instanceof String value && !value.isBlank()
+                ? value : headerOrDefault(request, "X-Correlation-Id", "");
     }
 }

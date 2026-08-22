@@ -52,7 +52,7 @@ final class PlatformAuthenticationFilter extends OncePerRequestFilter {
                     e.code(), e.getMessage(), e.category(), e.retryable())
                     .withDetails(e.details())
                     .withSuggestedActions(e.suggestedActions())
-                    .withCorrelationId(headerOrDefault(request, "X-Correlation-Id", ""));
+                    .withCorrelationId(correlationId(request));
             response.setStatus(e.status());
             response.setCharacterEncoding(StandardCharsets.UTF_8.name());
             response.setContentType("application/json");
@@ -63,6 +63,12 @@ final class PlatformAuthenticationFilter extends OncePerRequestFilter {
     private static String headerOrDefault(HttpServletRequest request, String name, String defaultValue) {
         String value = request.getHeader(name);
         return value == null || value.isBlank() ? defaultValue : value;
+    }
+
+    private static String correlationId(HttpServletRequest request) {
+        Object generated = request.getAttribute(ApiRequestLoggingFilter.CORRELATION_ID_ATTRIBUTE);
+        return generated instanceof String value && !value.isBlank()
+                ? value : headerOrDefault(request, "X-Correlation-Id", "");
     }
 
     private void requireAllowedAgentRoute(HttpServletRequest request,

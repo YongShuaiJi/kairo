@@ -21,12 +21,14 @@ import com.example.kairo.api.bytecode.BytecodeDiffResult;
 import com.example.kairo.api.bytecode.BytecodeSnapshotKind;
 import com.example.kairo.api.bytecode.ClassIdentity;
 import com.example.kairo.api.bytecode.TransformationRevision;
+import com.example.kairo.api.diagnostics.DiagnosticEvent;
 import com.example.kairo.api.snapshot.AgentRuntimeSnapshot;
 import com.example.kairo.agent.server.SoakPlatformLink;
 import com.example.kairo.core.ClassLoaderIdentity;
 import com.example.kairo.core.CompiledRule;
 import com.example.kairo.core.CircuitBreakReason;
 import com.example.kairo.core.MethodDescriptor;
+import com.example.kairo.core.RuleDispatcherConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -96,7 +98,10 @@ import com.sun.management.UnixOperatingSystemMXBean;
  * to measure its own test topology instead of Kairo's retained state.
  * The harness
  * does not inflate timeouts, does not sleep to fake a lifecycle, does not continue on error,
- * and does not weaken assertions. A summary's heap read follows one {@code System.gc()} so it
+ * and does not weaken assertions. During excluded cold-start warm-up it may wait for the real,
+ * configured automatic circuit-recovery window and drive the documented half-open probe; this
+ * verifies recovery rather than fabricating measured soak time. A summary's heap read follows one
+ * {@code System.gc()} so it
  * measures retained (reclaimable) heap, not transient allocation noise - this is the same
  * observation concept as the M2-C probe, not a sleep.
  *
@@ -157,6 +162,9 @@ public final class SoakHarness {
 
     private static int run(SoakArgumentParser.Options opts, SoakClock clock) {
         Instant startedAt = clock.now();
+        diagnostic("soak.run.started",
+                "buildId", opts.buildId(), "mode", opts.mode(),
+                "requestedDuration", opts.duration(), "output", opts.output());
         Context ctx = new Context();
         ctx.opts = opts;
         ctx.clock = clock;
@@ -176,6 +184,13 @@ public final class SoakHarness {
             enhanceContinuous(ctx);
             ctx.expectedPrimaryValue = 77;
 
+            // On a heavily CPU-throttled cold JVM, the first Groovy execution can legitimately
+            // exceed firstScriptTimeout and open the dispatcher's fail-open automatic circuit.
+            // Do not confuse that bounded protection/recovery lifecycle with a missing
+            // enhancement. Conversely, never mask a missing rule, a manual lock, or a wrong
+            // return value: only a circuit with an explicit automatic reason is retryable.
+            awaitContinuousRuleReady(ctx);
+
             // Prime every lifecycle path that otherwise first appears after the measurement
             // baseline (the 5-minute batch and the 30-minute reconnect). Without this explicit
             // cold-start phase, minute 1 is not a stable JVM baseline: the first reconnect alone
@@ -184,6 +199,13 @@ public final class SoakHarness {
             // commands cannot collide with measured cycle ids, and the reset below excludes
             // it from duration/cadence/evidence counts. Product budgets remain unchanged.
             warmUpMeasurementPaths(ctx);
+            diagnostic("soak.warmup.completed",
+                    "lifecycleBatches", ctx.warmupBatchesRun,
+                    "elapsedMillis", java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
+                            System.nanoTime() - ctx.warmupStartedNanos),
+                    "metaspaceWindowGrowthPct", ctx.warmupWindowGrowthPct,
+                    "eligibleLoadersOutstanding", ctx.warmupEligibleLoadersOutstanding,
+                    "steadyStateEstablished", ctx.warmupSteadyStateEstablished);
             clock.reset();
             startedAt = clock.now();
             SoakBudgetChecker checker = new SoakBudgetChecker(BUDGET);
@@ -192,6 +214,12 @@ public final class SoakHarness {
             Duration nextSummary = CADENCE.summaryInterval();
             Duration nextBatch = CADENCE.batchInterval();
             Duration nextDisconnect = CADENCE.disconnectInterval();
+            diagnostic("soak.measurement.started",
+                    "duration", duration,
+                    "summaryInterval", CADENCE.summaryInterval(),
+                    "batchInterval", CADENCE.batchInterval(),
+                    "disconnectInterval", CADENCE.disconnectInterval(),
+                    "continuousInvocations", ctx.continuousInvocations);
 
             while (ctx.firstFailure == null) {
                 Duration elapsed = clock.elapsed();
@@ -258,14 +286,21 @@ public final class SoakHarness {
                 }
             }
         } catch (OutOfMemoryError oom) {
+            diagnosticFailure("soak.run.aborted", oom,
+                    "phase", "execute", "reason", "out-of-memory",
+                    "elapsedSeconds", elapsedSeconds(ctx, clock));
             ctx.oomEvidence = true;
             ctx.firstFailure = new Failure("oom", "execute", "out-of-memory", "", "",
                     oom.getClass().getSimpleName() + ": " + String.valueOf(oom.getMessage()),
                     clock.now(), elapsedSeconds(ctx, clock), true);
         } catch (EvidenceWriteFailure e) {
+            diagnosticFailure("soak.evidence.write_failed", e,
+                    "elapsedSeconds", elapsedSeconds(ctx, clock));
             ctx.evidenceWriteFailure = true;
             ctx.firstFailure = capture(ctx, "evidence", "result-write", e, clock);
         } catch (Throwable t) {
+            diagnosticFailure("soak.run.unexpected_failure", t,
+                    "phase", "setup-or-execute", "elapsedSeconds", elapsedSeconds(ctx, clock));
             ctx.firstFailure = capture(ctx, "setup", "abnormal-exit", t, clock);
         } finally {
             if (ctx.platformLink != null) {
@@ -318,8 +353,22 @@ public final class SoakHarness {
         if (ctx.firstFailure != null) {
             System.err.println("SOAK FAILED: phase=" + ctx.firstFailure.phase
                     + " reason=" + ctx.firstFailure.reason + " detail=" + ctx.firstFailure.detail);
+            diagnostic("soak.run.completed",
+                    "overall", overall, "finalState", finalState,
+                    "elapsedSeconds", completed.toSeconds(),
+                    "continuousInvocations", ctx.continuousInvocations,
+                    "batches", ctx.batchesRun, "disconnects", ctx.disconnectsRun,
+                    "failurePhase", ctx.firstFailure.phase,
+                    "failureReason", ctx.firstFailure.reason);
             return 4;
         }
+        diagnostic("soak.run.completed",
+                "overall", overall, "finalState", finalState,
+                "elapsedSeconds", completed.toSeconds(),
+                "continuousInvocations", ctx.continuousInvocations,
+                "batches", ctx.batchesRun, "disconnects", ctx.disconnectsRun,
+                "circuitOpenEvents", ctx.continuousCircuitOpenEvents,
+                "circuitRecoveries", ctx.continuousCircuitRecoveries);
         return 0;
     }
 
@@ -331,6 +380,14 @@ public final class SoakHarness {
      * silently extending warm-up or relaxing the budget.
      */
     private static void warmUpMeasurementPaths(Context ctx) throws Exception {
+        ctx.warmupStartedNanos = System.nanoTime();
+        diagnostic("soak.warmup.started",
+                "minimumLifecycleBatches", WARMUP_MIN_LIFECYCLE_BATCHES,
+                "maximumLifecycleBatches", WARMUP_MAX_LIFECYCLE_BATCHES,
+                "sampleEveryBatches", WARMUP_SAMPLE_EVERY_BATCHES,
+                "plateauWindowSamples", WARMUP_PLATEAU_WINDOW_SAMPLES,
+                "maxMetaspaceGrowthPct", WARMUP_MAX_WINDOW_METASPACE_GROWTH_PCT,
+                "allowedOutstandingLoaders", WARMUP_ALLOWED_OUTSTANDING_LOADERS);
         Failure disconnectFailure = runDisconnectRecovery(ctx, 0, false);
         if (disconnectFailure != null) {
             throw new AssertionFailure("warmup-" + disconnectFailure.phase,
@@ -349,6 +406,7 @@ public final class SoakHarness {
         ctx.warmupResourceSampleCompleted = true;
 
         recordWarmupSample(ctx, 0);
+        diagnosticWarmupSample(ctx, false, false);
         for (int batch = 1; batch <= WARMUP_MAX_LIFECYCLE_BATCHES; batch++) {
             Failure batchFailure = runBatch(ctx, -batch);
             if (batchFailure != null) {
@@ -358,7 +416,10 @@ public final class SoakHarness {
             ctx.warmupBatchesRun = batch;
             if (batch % WARMUP_SAMPLE_EVERY_BATCHES == 0) {
                 recordWarmupSample(ctx, batch);
-                if (batch >= WARMUP_MIN_LIFECYCLE_BATCHES && warmupPlateauEstablished(ctx)) {
+                boolean plateauEvaluated = batch >= WARMUP_MIN_LIFECYCLE_BATCHES;
+                boolean plateauEstablished = plateauEvaluated && warmupPlateauEstablished(ctx);
+                diagnosticWarmupSample(ctx, plateauEvaluated, plateauEstablished);
+                if (plateauEstablished) {
                     ctx.warmupSteadyStateEstablished = true;
                     ctx.warmupLifecycleLoadersCreated = ctx.lifecycleLoadersCreated;
                     ctx.warmupLifecycleLoadersCollected = ctx.lifecycleLoadersCollected;
@@ -384,6 +445,25 @@ public final class SoakHarness {
         ctx.disconnectLastOutcome = null;
         ctx.behaviorDriftStartedAtSeconds = -1L;
         ctx.runtimeStateDriftStartedAtSeconds = -1L;
+    }
+
+    private static void diagnosticWarmupSample(Context ctx, boolean plateauEvaluated,
+                                               boolean plateauEstablished) {
+        WarmupSample sample = ctx.warmupSamples.get(ctx.warmupSamples.size() - 1);
+        diagnostic("soak.warmup.sample",
+                "sampleIndex", ctx.warmupSamples.size(),
+                "lifecycleBatches", sample.lifecycleBatches(),
+                "elapsedMillis", java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
+                        System.nanoTime() - ctx.warmupStartedNanos),
+                "metaspaceUsedBytes", sample.metaspaceUsedBytes(),
+                "loadedClassCount", sample.loadedClassCount(),
+                "lifecycleLoadersCreated", sample.lifecycleLoadersCreated(),
+                "lifecycleLoadersCollected", sample.lifecycleLoadersCollected(),
+                "plateauEvaluated", plateauEvaluated,
+                "metaspaceWindowGrowthPct", plateauEvaluated ? ctx.warmupWindowGrowthPct : "pending",
+                "eligibleLoadersOutstanding", plateauEvaluated
+                        ? ctx.warmupEligibleLoadersOutstanding : "pending",
+                "steadyStateEstablished", plateauEstablished);
     }
 
     private static void requestFullGc() {
@@ -472,6 +552,102 @@ public final class SoakHarness {
         ctx.continuousRevision = result.applied();
     }
 
+    /**
+     * Prove that the continuous rule is actually serving the enhanced value before any lifecycle
+     * precondition is asserted. A healthy-but-wrong rule fails immediately. Only an explicitly
+     * automatic circuit (TIMEOUT/SATURATION/SLOW_EXECUTION/etc.) receives a bounded opportunity to
+     * pass the dispatcher's real half-open probe.
+     */
+    private static void awaitContinuousRuleReady(Context ctx) {
+        RuleDispatcherConfig config = ctx.runtime.dispatcherConfig();
+        long recoveryBudgetMillis = saturatedAdd(
+                saturatedMultiply(config.circuitRecoveryDelayMillis(), 2L),
+                saturatedAdd(saturatedMultiply(config.firstScriptTimeoutMillis(), 2L), 5_000L));
+        long budgetNanos = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(recoveryBudgetMillis);
+        long startedNanos = System.nanoTime();
+        long deadlineNanos = saturatedAdd(startedNanos, budgetNanos);
+        int attempts = 0;
+
+        while (true) {
+            attempts++;
+            int actual = ctx.continuousInstance.calculateScore(5);
+            ctx.continuousInvocations++;
+            CompiledRule rule = continuousRule(ctx);
+            observeContinuousRuleHealth(ctx);
+
+            boolean ready = actual == ctx.expectedPrimaryValue
+                    && rule != null
+                    && !rule.locked();
+            if (ready) {
+                diagnostic("soak.continuous_rule.ready",
+                        "attempts", attempts,
+                        "waitedMillis", java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
+                                System.nanoTime() - startedNanos),
+                        "executions", rule.executions(),
+                        "errors", rule.errors(),
+                        "circuitRecoveries", ctx.continuousCircuitRecoveries);
+                return;
+            }
+
+            CircuitBreakReason reason = rule == null ? null : rule.circuitBreakReason();
+            boolean automaticCircuit = rule != null && rule.locked() && reason != null;
+            if (!automaticCircuit) {
+                throw continuousReadinessFailure(ctx, rule, actual,
+                        "continuous enhancement is not healthy and no automatic circuit recovery is pending");
+            }
+
+            if (System.nanoTime() >= deadlineNanos) {
+                throw continuousReadinessFailure(ctx, rule, actual,
+                        "automatic circuit did not recover within bounded readiness budget "
+                                + recoveryBudgetMillis + "ms");
+            }
+
+            try {
+                Thread.sleep(Math.min(250L, Math.max(1L, config.circuitRecoveryDelayMillis())));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw continuousReadinessFailure(ctx, rule, actual,
+                        "interrupted while waiting for automatic circuit recovery");
+            }
+        }
+    }
+
+    private static AssertionFailure continuousReadinessFailure(Context ctx, CompiledRule rule,
+                                                                int actual, String message) {
+        return new AssertionFailure("continuous-readiness", String.valueOf(ctx.expectedPrimaryValue),
+                String.valueOf(actual), message + "; " + continuousRuleHealth(rule));
+    }
+
+    private static String continuousRuleHealth(CompiledRule rule) {
+        if (rule == null) {
+            return "rule=missing";
+        }
+        return "rule=" + rule.rule().id()
+                + ",locked=" + rule.locked()
+                + ",reason=" + rule.circuitBreakReason()
+                + ",hits=" + rule.hits()
+                + ",executions=" + rule.executions()
+                + ",errors=" + rule.errors()
+                + ",unfinishedTasks=" + rule.unfinishedTaskCount()
+                + ",lastDurationMillis=" + rule.lastDurationMillis();
+    }
+
+    private static long saturatedMultiply(long left, long right) {
+        try {
+            return Math.multiplyExact(left, right);
+        } catch (ArithmeticException ignored) {
+            return Long.MAX_VALUE;
+        }
+    }
+
+    private static long saturatedAdd(long left, long right) {
+        try {
+            return Math.addExact(left, right);
+        } catch (ArithmeticException ignored) {
+            return Long.MAX_VALUE;
+        }
+    }
+
     private static void verifyLifecycleBaseline(LifecycleTarget lifecycle, int expected) throws Exception {
         int v = invokeLifecycle(lifecycle);
         if (v != expected) {
@@ -521,22 +697,44 @@ public final class SoakHarness {
     }
 
     private static void observeContinuousRuleHealth(Context ctx) {
-        CompiledRule continuousRule = ctx.runtime.chainApplier().snapshot(ctx.continuousTarget).rules().stream()
-                .filter(rule -> "soak-cont".equals(rule.rule().id()))
-                .findFirst()
-                .orElse(null);
+        CompiledRule continuousRule = continuousRule(ctx);
         CircuitBreakReason reason = continuousRule == null ? null : continuousRule.circuitBreakReason();
         boolean open = continuousRule != null && continuousRule.locked() && reason != null;
         if (open) {
             if (!ctx.continuousCircuitOpen) {
                 ctx.continuousCircuitOpenEvents++;
+                ctx.continuousCircuitTransitions.add(new CircuitTransition(
+                        ctx.clock.now(), elapsedSeconds(ctx, ctx.clock), "CLOSED", "OPEN",
+                        reason.name(), ctx.continuousInvocations));
+                diagnostic("soak.continuous_rule.circuit_opened",
+                        "elapsedSeconds", elapsedSeconds(ctx, ctx.clock),
+                        "continuousInvocations", ctx.continuousInvocations,
+                        "reason", reason,
+                        "openEvents", ctx.continuousCircuitOpenEvents,
+                        "ruleHealth", continuousRuleHealth(continuousRule));
             }
             ctx.continuousCircuitOpen = true;
             ctx.lastContinuousCircuitReason = reason.name();
         } else if (ctx.continuousCircuitOpen) {
             ctx.continuousCircuitOpen = false;
             ctx.continuousCircuitRecoveries++;
+            ctx.continuousCircuitTransitions.add(new CircuitTransition(
+                    ctx.clock.now(), elapsedSeconds(ctx, ctx.clock), "OPEN", "CLOSED",
+                    ctx.lastContinuousCircuitReason, ctx.continuousInvocations));
+            diagnostic("soak.continuous_rule.circuit_recovered",
+                    "elapsedSeconds", elapsedSeconds(ctx, ctx.clock),
+                    "continuousInvocations", ctx.continuousInvocations,
+                    "previousReason", ctx.lastContinuousCircuitReason,
+                    "recoveries", ctx.continuousCircuitRecoveries,
+                    "ruleHealth", continuousRuleHealth(continuousRule));
         }
+    }
+
+    private static CompiledRule continuousRule(Context ctx) {
+        return ctx.runtime.chainApplier().snapshot(ctx.continuousTarget).rules().stream()
+                .filter(rule -> "soak-cont".equals(rule.rule().id()))
+                .findFirst()
+                .orElse(null);
     }
 
     // -------------------------------------------------------- 5-minute batch
@@ -546,6 +744,11 @@ public final class SoakHarness {
     }
 
     private static Failure runBatch(Context ctx, int cycle) {
+        if (cycle > 0) {
+            diagnostic("soak.lifecycle_batch.started",
+                    "cycle", cycle, "measured", true,
+                    "elapsedSeconds", elapsedSeconds(ctx, ctx.clock));
+        }
         try {
             LifecycleTarget lifecycle = newLifecycleTarget(ctx);
             verifyLifecycleBaseline(lifecycle, 10);
@@ -613,14 +816,26 @@ public final class SoakHarness {
             // The continuously hot class was never retransformed by this lifecycle batch.
             verify("batch-continuous-still-enhanced", 77, ctx.continuousInstance.calculateScore(5));
             ctx.expectedPrimaryValue = 77;
+            if (cycle > 0) {
+                diagnostic("soak.lifecycle_batch.completed",
+                        "cycle", cycle, "outcome", "SUCCEEDED",
+                        "elapsedSeconds", elapsedSeconds(ctx, ctx.clock),
+                        "continuousInvocations", ctx.continuousInvocations);
+            }
             return null;
         } catch (AssertionFailure af) {
+            diagnosticFailure("soak.lifecycle_batch.failed", af,
+                    "cycle", cycle, "phase", af.phase,
+                    "elapsedSeconds", elapsedSeconds(ctx, ctx.clock));
             return new Failure("batch-" + cycle, af.phase, "lifecycle-failure",
                     af.expected, af.actual, af.detail, ctx.clock.now(), elapsedSeconds(ctx, ctx.clock), false);
         } catch (OutOfMemoryError oom) {
             // OOME has dedicated evidence/final-state semantics at the outer run boundary.
             throw oom;
         } catch (Throwable t) {
+            diagnosticFailure("soak.lifecycle_batch.failed", t,
+                    "cycle", cycle, "phase", "execute",
+                    "elapsedSeconds", elapsedSeconds(ctx, ctx.clock));
             return new Failure("batch-" + cycle, "execute", "lifecycle-failure", "",
                     t.getClass().getSimpleName(), t.getClass().getSimpleName() + ": " + t.getMessage(),
                     ctx.clock.now(), elapsedSeconds(ctx, ctx.clock), false);
@@ -645,7 +860,13 @@ public final class SoakHarness {
         BytecodeSnapshotKey key = new BytecodeSnapshotKey(identity, revision, BytecodeSnapshotKind.INPUT);
         return ctx.runtime.snapshotRepository().bytes(key).orElseThrow(() ->
                 new AssertionFailure("baseline-capture", "first-transform INPUT snapshot", "missing",
-                        "Kairo did not retain the JVM input bytes for " + identity));
+                        "Kairo did not retain the JVM input bytes for " + identity
+                                + "; revision=" + revision
+                                + ", repositorySize=" + ctx.runtime.snapshotRepository().size()
+                                + ", repositoryBytes=" + ctx.runtime.snapshotRepository().totalBytes()
+                                + ", repositoryConfig=" + ctx.runtime.snapshotRepository().config()
+                                + ", classSnapshots=" + ctx.runtime.snapshotRepository().metadataFor(identity)
+                                + ", journalHistory=" + ctx.runtime.transformationJournal().history(identity)));
     }
 
     private static int invokeLifecycle(LifecycleTarget lifecycle) throws Exception {
@@ -659,6 +880,9 @@ public final class SoakHarness {
     }
 
     private static Failure runDisconnectRecovery(Context ctx, int cycle, boolean countAsMeasured) {
+        diagnostic("soak.disconnect_recovery.started",
+                "cycle", cycle, "measured", countAsMeasured,
+                "elapsedSeconds", elapsedSeconds(ctx, ctx.clock));
         try {
             // Precondition: the live JVM is currently enhanced.
             verify("disconnect-precondition", 77, ctx.continuousInstance.calculateScore(5));
@@ -688,10 +912,17 @@ public final class SoakHarness {
                     + snapshot.processStartId() + " rules=" + snapshot.rules().size()
                     + " chains=" + snapshot.chains().size());
             ctx.disconnectLastOutcome = "RECOVERED";
+            diagnostic("soak.disconnect_recovery.completed",
+                    "cycle", cycle, "outcome", "RECOVERED",
+                    "elapsedSeconds", elapsedSeconds(ctx, ctx.clock),
+                    "rules", snapshot.rules().size(), "chains", snapshot.chains().size());
             return null;
         } catch (AssertionFailure af) {
             ctx.disconnectDetails.add("cycle " + cycle + ": FAILED: " + af.detail);
             ctx.disconnectLastOutcome = "FAILED";
+            diagnosticFailure("soak.disconnect_recovery.failed", af,
+                    "cycle", cycle, "phase", af.phase,
+                    "elapsedSeconds", elapsedSeconds(ctx, ctx.clock));
             return new Failure("disconnect-" + cycle, af.phase, "disconnect-recovery",
                     af.expected, af.actual, af.detail, ctx.clock.now(), elapsedSeconds(ctx, ctx.clock), false);
         } catch (OutOfMemoryError oom) {
@@ -700,6 +931,9 @@ public final class SoakHarness {
         } catch (Throwable t) {
             ctx.disconnectDetails.add("cycle " + cycle + ": FAILED: " + t.getClass().getSimpleName());
             ctx.disconnectLastOutcome = "FAILED";
+            diagnosticFailure("soak.disconnect_recovery.failed", t,
+                    "cycle", cycle, "phase", "execute",
+                    "elapsedSeconds", elapsedSeconds(ctx, ctx.clock));
             return new Failure("disconnect-" + cycle, "execute", "disconnect-recovery", "",
                     t.getClass().getSimpleName(), t.getClass().getSimpleName() + ": " + t.getMessage(),
                     ctx.clock.now(), elapsedSeconds(ctx, ctx.clock), false);
@@ -778,6 +1012,32 @@ public final class SoakHarness {
     private static void recordObservation(Context ctx, SoakObservation obs) {
         ctx.observations.add(obs);
         appendTimeSeries(ctx, obs);
+        diagnostic("soak.summary.recorded",
+                "minuteIndex", obs.minuteIndex(),
+                "elapsedSeconds", obs.elapsedSeconds(),
+                "heapUsedBytes", obs.heapUsedBytes(),
+                "metaspaceUsedBytes", obs.metaspaceUsedBytes(),
+                "threadCount", obs.threadCount(),
+                "openFdCount", obs.openFdCount(),
+                "continuousInvocations", obs.continuousInvocations(),
+                "batches", obs.batchesRun(), "disconnects", obs.disconnectsRun(),
+                "driftDetected", obs.driftDetected(),
+                "sustainedBreach", obs.sustainedBreach(),
+                "circuitState", ctx.continuousCircuitOpen ? "OPEN" : "CLOSED",
+                "circuitReason", ctx.lastContinuousCircuitReason);
+    }
+
+    private static void diagnostic(String event, Object... fields) {
+        System.out.println(DiagnosticEvent.format(event, fields));
+    }
+
+    private static void diagnosticFailure(String event, Throwable failure, Object... fields) {
+        Object[] enriched = java.util.Arrays.copyOf(fields, fields.length + 4);
+        enriched[fields.length] = "failure";
+        enriched[fields.length + 1] = DiagnosticEvent.failureSummary(failure);
+        enriched[fields.length + 2] = "failureStack";
+        enriched[fields.length + 3] = DiagnosticEvent.stackSummary(failure);
+        System.err.println(DiagnosticEvent.format(event, enriched));
     }
 
     private static void appendTimeSeries(Context ctx, SoakObservation obs) {
@@ -1003,6 +1263,16 @@ public final class SoakHarness {
         } else {
             continuousHealth.put("lastCircuitBreakReason", ctx.lastContinuousCircuitReason);
         }
+        ArrayNode circuitTransitions = continuousHealth.putArray("transitions");
+        for (CircuitTransition transition : ctx.continuousCircuitTransitions) {
+            ObjectNode node = circuitTransitions.addObject();
+            node.put("timestamp", transition.timestamp().toString());
+            node.put("elapsedSeconds", transition.elapsedSeconds());
+            node.put("fromState", transition.fromState());
+            node.put("toState", transition.toState());
+            node.put("reason", transition.reason());
+            node.put("continuousInvocations", transition.continuousInvocations());
+        }
 
         ObjectNode warmup = root.putObject("measurementWarmup");
         warmup.put("strategy", "bounded-adaptive-metaspace-plateau");
@@ -1111,15 +1381,11 @@ public final class SoakHarness {
         if (ctx.timeSeriesPath == null) {
             return "";
         }
-        // Prefer a repo-root-relative path when the output dir is under the working directory,
-        // so the recorded raw time-series path is an in-repo/local path (§9.4).
-        Path out = ctx.timeSeriesPath.toAbsolutePath().normalize();
-        String userDir = System.getProperty("user.dir");
-        Path root = Path.of(userDir).toAbsolutePath().normalize();
-        if (out.startsWith(root)) {
-            return root.relativize(out).toString();
-        }
-        return out.toString();
+        // Evidence is a relocatable directory bundle. Record the raw series as a sibling of
+        // soak-result.json instead of leaking either the repository root or the container-only
+        // output mount (for example /evidence) into the artifact contract.
+        Path fileName = ctx.timeSeriesPath.getFileName();
+        return fileName == null ? "soak-timeseries.jsonl" : fileName.toString();
     }
 
     private static int writeResult(Context ctx, ObjectNode root) {
@@ -1257,6 +1523,7 @@ public final class SoakHarness {
         int continuousCircuitRecoveries;
         boolean continuousCircuitOpen;
         String lastContinuousCircuitReason;
+        List<CircuitTransition> continuousCircuitTransitions = new ArrayList<>();
         int expectedPrimaryValue = 10;
         long continuousInvocations;
         int batchesRun;
@@ -1270,6 +1537,7 @@ public final class SoakHarness {
         boolean warmupBatchCompleted;
         boolean warmupDisconnectCompleted;
         boolean warmupResourceSampleCompleted;
+        long warmupStartedNanos;
         int warmupBatchesRun;
         boolean warmupSteadyStateEstablished;
         long warmupInitialMetaspaceBytes = -1L;
@@ -1302,6 +1570,11 @@ public final class SoakHarness {
 
     private record WarmupSample(int lifecycleBatches, long metaspaceUsedBytes, int loadedClassCount,
                                 int lifecycleLoadersCreated, int lifecycleLoadersCollected) {
+    }
+
+    private record CircuitTransition(Instant timestamp, long elapsedSeconds,
+                                     String fromState, String toState, String reason,
+                                     long continuousInvocations) {
     }
 
     /** Captures the bytes produced by all earlier transformers during the physical unload itself. */

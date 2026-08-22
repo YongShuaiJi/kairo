@@ -5,6 +5,7 @@ import com.example.demo.perf.BenchmarkTarget;
 import com.example.kairo.api.InvokePhase;
 import com.example.kairo.api.MethodSelector;
 import com.example.kairo.api.MockRule;
+import com.example.kairo.api.diagnostics.DiagnosticEvent;
 import com.example.kairo.core.ClassLoaderIdentity;
 import com.example.kairo.core.CompiledRule;
 import com.example.kairo.core.MethodDescriptor;
@@ -62,7 +63,9 @@ public final class HarnessMain {
             System.exit(2);
         } catch (Throwable t) {
             // Write an error marker alongside the output so the reporter can surface it.
-            t.printStackTrace(System.err);
+            System.err.println(DiagnosticEvent.format("performance.harness.failed",
+                    "failure", DiagnosticEvent.failureSummary(t),
+                    "failureStack", DiagnosticEvent.stackSummary(t)));
             System.exit(3);
         }
     }

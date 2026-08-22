@@ -26,6 +26,7 @@ import com.example.kairo.api.TargetMatchResult;
 import com.example.kairo.api.build.KairoBuildVersion;
 import com.example.kairo.api.bytecode.ClassIdentity;
 import com.example.kairo.api.bytecode.ClassMetadata;
+import com.example.kairo.api.diagnostics.DiagnosticEvent;
 import com.example.kairo.bridge.KairoBridge;
 import com.example.kairo.core.AgentBridgeDispatcher;
 import com.example.kairo.core.ClassLoaderIdentity;
@@ -187,6 +188,7 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     }
 
     public void start() {
+        AgentState before = state.get();
         try {
             KairoBridge.install(new AgentBridgeDispatcher(ruleDispatcher, recordingObserver));
             transformerManager.install();
@@ -201,9 +203,14 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
             // the transformer stays free of re-entrancy.
             cleanupExecutor.scheduleWithFixedDelay(this::pollPendingMatches, 2, 2, TimeUnit.SECONDS);
             state.set(AgentState.ACTIVE);
-            eventBuffer.record("agent.start", "system", null, null, "Kairo agent started");
+            eventBuffer.record("agent.start", "system", null, null,
+                    DiagnosticEvent.format("agent.start", "fromState", before,
+                            "toState", AgentState.ACTIVE));
         } catch (RuntimeException e) {
-            enterDegraded("Agent startup failed: " + e.getMessage());
+            enterDegraded(DiagnosticEvent.format("agent.start.failed",
+                    "fromState", before, "toState", AgentState.DEGRADED,
+                    "failure", DiagnosticEvent.failureSummary(e),
+                    "failureStack", DiagnosticEvent.stackSummary(e)));
             throw e;
         }
     }
@@ -250,9 +257,12 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                     compiledRule.rule(), compiledRule));
             targetTransitioned = applyTargetUpdate(method.getDeclaringClass(), previousTarget, newTarget);
             targetByRuleId.put(rule.id(), newTarget);
-            eventBuffer.record(previous == null ? "rule.create" : "rule.update", actor, rule.id(),
-                    methodKey.toString(), "Published rule version " + compiledRule.rule().version()
-                            + " at " + effectiveRule.effectiveLocation());
+            String event = previous == null ? "rule.create" : "rule.update";
+            eventBuffer.record(event, actor, rule.id(), methodKey.toString(),
+                    DiagnosticEvent.format(event,
+                            "ruleVersion", compiledRule.rule().version(),
+                            "location", effectiveRule.effectiveLocation(),
+                            "targetTransitioned", targetTransitioned));
             recordAppliedHash(method.getDeclaringClass());
             return compiledRule;
         } catch (RuntimeException e) {
@@ -270,12 +280,18 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                         targetByRuleId.put(rule.id(), previousTarget);
                     }
                 } catch (RuntimeException restoreFailure) {
-                    degradedClasses.put(method.getDeclaringClass().getName(), restoreFailure.getMessage());
+                    degradedClasses.put(method.getDeclaringClass().getName(),
+                            DiagnosticEvent.failureSummary(restoreFailure));
+                    recordFailure("rule.publish.rollback_failed", actor, rule.id(), methodKey.toString(),
+                            restoreFailure, "ruleVersion", rule.version(),
+                            "targetTransitioned", targetTransitioned);
                     enterDegraded("Cannot restore instrumentation for " + method.getDeclaringClass().getName());
                     e.addSuppressed(restoreFailure);
                 }
             }
-            eventBuffer.record("rule.publish.failed", actor, rule.id(), methodKey.toString(), e.getMessage());
+            recordFailure("rule.publish.failed", actor, rule.id(), methodKey.toString(), e,
+                    "ruleVersion", rule.version(), "location", effectiveRule.effectiveLocation(),
+                    "publishApplied", publishApplied, "targetTransitioned", targetTransitioned);
             throw e;
         }
     }
@@ -315,8 +331,12 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                     compiledRule.rule(), compiledRule));
             targetTransitioned = applyTargetUpdate(constructor.getDeclaringClass(), previousTarget, newTarget);
             targetByRuleId.put(rule.id(), newTarget);
-            eventBuffer.record(previous == null ? "rule.create" : "rule.update", actor, rule.id(),
-                    methodKey.toString(), "Published constructor rule at " + rule.effectiveLocation());
+            String event = previous == null ? "rule.create" : "rule.update";
+            eventBuffer.record(event, actor, rule.id(), methodKey.toString(),
+                    DiagnosticEvent.format(event,
+                            "ruleVersion", compiledRule.rule().version(),
+                            "location", rule.effectiveLocation(),
+                            "targetTransitioned", targetTransitioned));
             recordAppliedHash(constructor.getDeclaringClass());
             return compiledRule;
         } catch (RuntimeException e) {
@@ -334,12 +354,18 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                         targetByRuleId.put(rule.id(), previousTarget);
                     }
                 } catch (RuntimeException restoreFailure) {
-                    degradedClasses.put(constructor.getDeclaringClass().getName(), restoreFailure.getMessage());
+                    degradedClasses.put(constructor.getDeclaringClass().getName(),
+                            DiagnosticEvent.failureSummary(restoreFailure));
+                    recordFailure("rule.publish.rollback_failed", actor, rule.id(), methodKey.toString(),
+                            restoreFailure, "ruleVersion", rule.version(),
+                            "targetTransitioned", targetTransitioned);
                     enterDegraded("Cannot restore instrumentation for " + constructor.getDeclaringClass().getName());
                     e.addSuppressed(restoreFailure);
                 }
             }
-            eventBuffer.record("rule.publish.failed", actor, rule.id(), methodKey.toString(), e.getMessage());
+            recordFailure("rule.publish.failed", actor, rule.id(), methodKey.toString(), e,
+                    "ruleVersion", rule.version(), "location", rule.effectiveLocation(),
+                    "publishApplied", publishApplied, "targetTransitioned", targetTransitioned);
             throw e;
         }
     }
@@ -373,8 +399,10 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
         CompiledRule compiledRule = publishedRule.constructor() != null
                 ? publishConstructor(publishedRule.constructor(), next, actor)
                 : publish(publishedRule.method(), next, actor);
-        eventBuffer.record(enabled ? "rule.enable" : "rule.disable", actor, ruleId,
-                publishedRule.methodKey().toString(), "Rule enabled=" + enabled);
+        String event = enabled ? "rule.enable" : "rule.disable";
+        eventBuffer.record(event, actor, ruleId, publishedRule.methodKey().toString(),
+                DiagnosticEvent.format(event, "enabled", enabled,
+                        "ruleVersion", compiledRule.rule().version()));
         return compiledRule;
     }
 
@@ -404,7 +432,8 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                 applyTargetUpdate(declaringClass, target, null);
                 targetRemoved = true;
             }
-            eventBuffer.record("rule.delete", actor, ruleId, methodKey.toString(), "Deleted rule");
+            eventBuffer.record("rule.delete", actor, ruleId, methodKey.toString(),
+                    DiagnosticEvent.format("rule.delete", "targetRemoved", targetRemoved));
         } catch (RuntimeException e) {
             ruleRegistry.restoreRule(methodKey, ruleId, publishedRule.compiledRule());
             publishedRules.put(ruleId, publishedRule);
@@ -412,7 +441,8 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
             if (targetRemoved) {
                 applyTargetUpdate(declaringClass, null, target);
             }
-            eventBuffer.record("rule.delete.failed", actor, ruleId, methodKey.toString(), e.getMessage());
+            recordFailure("rule.delete.failed", actor, ruleId, methodKey.toString(), e,
+                    "targetRemoved", targetRemoved);
             throw e;
         }
     }
@@ -466,13 +496,16 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
     }
 
     private void disableAllLocked(boolean disabled) {
+        AgentState before = state.get();
         globallyEnabled = !disabled;
         ruleDispatcher.enabled(globallyEnabled);
         if (state.get() != AgentState.DEGRADED) {
             state.set(disabled ? AgentState.DISABLED : AgentState.ACTIVE);
         }
-        eventBuffer.record(disabled ? "agent.disable-all" : "agent.enable-all", "system", null, null,
-                "Global enabled=" + globallyEnabled);
+        String event = disabled ? "agent.disable-all" : "agent.enable-all";
+        eventBuffer.record(event, "system", null, null,
+                DiagnosticEvent.format(event, "fromState", before,
+                        "toState", state.get(), "globallyEnabled", globallyEnabled));
     }
 
     public void resetAll(String actor) {
@@ -522,8 +555,10 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                 try {
                     transformerManager.retransform(clazz);
                     transformerManager.recordRecovery(clazz, "reset-all precise retransform");
-                } catch (RuntimeException ignore) {
-                    degradedClasses.put(clazz.getName(), "reset retransform failed");
+                } catch (RuntimeException failure) {
+                    degradedClasses.put(clazz.getName(), DiagnosticEvent.failureSummary(failure));
+                    recordFailure("agent.reset-all.class_retransform_failed", actor, null,
+                            clazz.getName(), failure, "strategy", "precise-retransform");
                 }
             }
             degradedClasses.keySet().removeIf(name -> affected.values().stream()
@@ -533,11 +568,14 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
             ruleDispatcher.enabled(true);
             state.set(AgentState.ACTIVE);
             eventBuffer.record("agent.reset-all", actor, null, null,
-                    "Cleared Kairo chains and regenerated " + affected.size()
-                            + " class(es) via precise retransform (no RESET_ALL)");
+                    DiagnosticEvent.format("agent.reset-all", "affectedClasses", affected.size(),
+                            "fromState", AgentState.RESETTING, "toState", AgentState.ACTIVE,
+                            "strategy", "precise-retransform"));
         } catch (RuntimeException e) {
-            enterDegraded("Reset all failed: " + e.getMessage());
-            eventBuffer.record("agent.reset-all.failed", actor, null, null, e.getMessage());
+            recordFailure("agent.reset-all.failed", actor, null, null, e,
+                    "fromState", AgentState.RESETTING, "toState", AgentState.DEGRADED);
+            enterDegraded(DiagnosticEvent.format("agent.reset-all.failed",
+                    "failure", DiagnosticEvent.failureSummary(e)));
             throw e;
         }
     }
@@ -571,6 +609,14 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
         return chainApplier;
     }
 
+    /**
+     * Effective dispatcher policy. Exposed read-only so lifecycle harnesses can wait for the
+     * configured automatic circuit-recovery window instead of duplicating timeout constants.
+     */
+    public RuleDispatcherConfig dispatcherConfig() {
+        return dispatcherConfig;
+    }
+
     public ResetClassResult resetClass(String classId, String actor) {
         snapshotLock.writeLock().lock();
         try {
@@ -598,7 +644,7 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                 remove(ruleId, actor);
                 removed.add(ruleId);
             } catch (RuntimeException e) {
-                failures.put(ruleId, String.valueOf(e.getMessage()));
+                failures.put(ruleId, DiagnosticEvent.failureSummary(e));
             }
         }
         if (failures.isEmpty()) {
@@ -608,7 +654,9 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
             enterDegraded("Class reset failed for " + classId);
         }
         eventBuffer.record("agent.reset-class", actor, null, classId,
-                "Removed " + removed.size() + " rules; failures=" + failures.size());
+                DiagnosticEvent.format("agent.reset-class", "matchedRules", ruleIds.size(),
+                        "removedRules", removed.size(), "failedRules", failures.size(),
+                        "degraded", !failures.isEmpty()));
         return new ResetClassResult(classId, List.copyOf(removed), Map.copyOf(failures), rules(),
                 !failures.isEmpty());
     }
@@ -655,7 +703,8 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
             applyTargetUpdate(method.getDeclaringClass(), null, target);
             registered = true;
             eventBuffer.record("recording.start", actor, null, methodKey.toString(),
-                    "Recording session " + sessionId + " started");
+                    DiagnosticEvent.format("recording.start", "sessionId", sessionId,
+                            "targetRegistered", registered));
             return registration;
         } catch (RuntimeException e) {
             activeRecordings.remove(sessionId);
@@ -663,7 +712,8 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
             if (registered) {
                 applyTargetUpdate(method.getDeclaringClass(), target, null);
             }
-            eventBuffer.record("recording.start.failed", actor, null, methodKey.toString(), e.getMessage());
+            recordFailure("recording.start.failed", actor, null, methodKey.toString(), e,
+                    "sessionId", sessionId, "targetRegistered", registered);
             throw e;
         }
     }
@@ -683,7 +733,8 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
             applyTargetUpdate(method.getDeclaringClass(), target, null);
             removed = true;
             eventBuffer.record("recording.stop", actor, null, methodKey.toString(),
-                    "Recording session " + sessionId + " stopped");
+                    DiagnosticEvent.format("recording.stop", "sessionId", sessionId,
+                            "targetRemoved", removed));
             return registration;
         } catch (RuntimeException e) {
             recordingObserver.start(methodKey, registration);
@@ -691,7 +742,8 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
             if (removed) {
                 applyTargetUpdate(method.getDeclaringClass(), null, target);
             }
-            eventBuffer.record("recording.stop.failed", actor, null, methodKey.toString(), e.getMessage());
+            recordFailure("recording.stop.failed", actor, null, methodKey.toString(), e,
+                    "sessionId", sessionId, "targetRemoved", removed);
             throw e;
         }
     }
@@ -897,8 +949,8 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                         type.getName(), "pending rule materialized on first load");
                 materialized++;
             } catch (RuntimeException | NoSuchMethodException e) {
-                eventBuffer.record("rule.pending.failed", entry.actor(), entry.ruleId(),
-                        type.getName(), e.getClass().getSimpleName() + ": " + e.getMessage());
+                recordFailure("rule.pending.failed", entry.actor(), entry.ruleId(),
+                        type.getName(), e, "phase", "materialize");
             }
         }
         pendingRegistry.cancel(entry.ruleId());
@@ -929,8 +981,8 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                 try {
                     materializePendingForClass(binaryName);
                 } catch (RuntimeException e) {
-                    eventBuffer.record("rule.pending.failed", "system", null, binaryName,
-                            e.getClass().getSimpleName() + ": " + e.getMessage());
+                    recordFailure("rule.pending.failed", "system", null, binaryName, e,
+                            "phase", "first-load");
                 }
             });
         } catch (RuntimeException ignored) {
@@ -963,8 +1015,9 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                         // The class returned to bytes compatible with the anchored hash; clear drift.
                         driftedClasses.remove(identity.binaryClassName());
                     }
-                } catch (RuntimeException ignored) {
-                    // reconciliation must never break the agent
+                } catch (RuntimeException failure) {
+                    recordFailure("target.reconcile.failed", "system", null,
+                            identity.binaryClassName(), failure, "phase", "external-redefine");
                 }
             });
         } catch (RuntimeException ignored) {
@@ -1004,8 +1057,9 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                             published.methodKey().toString(),
                             "call-site " + result.status() + " after redefine: " + result.reason());
                 }
-            } catch (RuntimeException ignored) {
-                // best-effort revalidation
+            } catch (RuntimeException failure) {
+                recordFailure("rule.callsite.revalidation.failed", "system", mock.id(),
+                        published.methodKey().toString(), failure, "phase", "external-redefine");
             }
         }
     }
@@ -1541,7 +1595,8 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
                     try {
                         remove(ruleId, "ttl-cleanup");
                     } catch (RuntimeException e) {
-                        eventBuffer.record("rule.cleanup.failed", "ttl-cleanup", ruleId, null, e.getMessage());
+                        recordFailure("rule.cleanup.failed", "ttl-cleanup", ruleId, null, e,
+                                "phase", "ttl-cleanup");
                     }
                 });
     }
@@ -1601,5 +1656,16 @@ public final class AgentRuntime implements AutoCloseable, ScriptSessionHost {
             snapshotLock.writeLock().unlock();
         }
         eventBuffer.record("agent.degraded", "system", null, null, message);
+    }
+
+    private void recordFailure(String type, String actor, String ruleId, String target,
+                               Throwable failure, Object... fields) {
+        Object[] details = new Object[fields.length + 4];
+        System.arraycopy(fields, 0, details, 0, fields.length);
+        details[fields.length] = "failure";
+        details[fields.length + 1] = DiagnosticEvent.failureSummary(failure);
+        details[fields.length + 2] = "failureStack";
+        details[fields.length + 3] = DiagnosticEvent.stackSummary(failure);
+        eventBuffer.record(type, actor, ruleId, target, DiagnosticEvent.format(type, details));
     }
 }

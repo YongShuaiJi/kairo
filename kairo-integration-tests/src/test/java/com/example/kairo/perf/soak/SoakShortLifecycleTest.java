@@ -122,9 +122,10 @@ class SoakShortLifecycleTest {
                 .hasSize((int) (duration.toMinutes() / 30));
         assertThat(dr.path("lastOutcome").asText()).isEqualTo("RECOVERED");
 
-        // The raw time-series file exists at the recorded in-repo/local path.
+        // The evidence bundle remains valid after being copied out of its original output
+        // directory (including a container-only /evidence mount).
         String rawPath = result.path("timeSeries").path("rawPath").asText();
-        assertThat(rawPath).isNotBlank();
+        assertThat(rawPath).isEqualTo("soak-timeseries.jsonl");
         Path rawFile = outputDir.resolve("soak-timeseries.jsonl");
         assertThat(rawFile).exists();
         long lines = Files.lines(rawFile).count();

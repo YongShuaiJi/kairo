@@ -24,6 +24,7 @@
 - [Docker 本地平台文档](./ops/platform-docker.md)：Compose 启停和本地演示。
 - [生产发布级检查清单](./ops/production-readiness-checklist.md)：发布前质量、权限、Token、Agent、脚本和文档检查项。
 - [V1.7 LTS 运维 Runbook](./ops/v1.7-lts-runbook.md)：V1.7 九类事件应急流程、固定指标契约与受控演练入口。
+- [诊断日志规范](./ops/diagnostic-logging.md)：全链路事件、关联字段、脱敏边界、P7D 证据和排障路径。
 
 ## API 文档
 

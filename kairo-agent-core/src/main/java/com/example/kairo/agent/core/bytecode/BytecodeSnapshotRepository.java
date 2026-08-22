@@ -26,6 +26,8 @@ import java.util.function.LongSupplier;
  *   <li>deterministic eviction: when over capacity the least-recently-accessed
  *       entry is removed, ties broken by {@link BytecodeSnapshotKey#compareTo};
  *       </li>
+ *   <li>a successful {@link #store} keeps the entry just written readable;
+ *       capacity eviction in that store call may only remove older entries;</li>
  *   <li>defensive byte copies on both store and read;</li>
  *   <li>thread-safe: reads are lock-free, maintenance (store/evict/clear) is
  *       guarded by a single lock;</li>
@@ -120,7 +122,7 @@ public final class BytecodeSnapshotRepository implements AutoCloseable {
                 totalBytes.addAndGet(-previous.bytes.length);
             }
             totalBytes.addAndGet(stored.length);
-            evictIfOverCapacity();
+            evictIfOverCapacity(key);
         } finally {
             maintenance.unlock();
         }
@@ -267,7 +269,7 @@ public final class BytecodeSnapshotRepository implements AutoCloseable {
         clear();
     }
 
-    private void evictIfOverCapacity() {
+    private void evictIfOverCapacity(BytecodeSnapshotKey protectedKey) {
         while (entries.size() > config.maxEntries() || totalBytes.get() > config.maxBytes()) {
             if (entries.isEmpty()) {
                 break;
@@ -275,6 +277,16 @@ public final class BytecodeSnapshotRepository implements AutoCloseable {
             BytecodeSnapshotKey victimKey = null;
             Entry victim = null;
             for (var e : entries.entrySet()) {
+                // A successful store must make the value it just accepted immediately readable.
+                // Without this guard, a coarse or fixed clock can give every entry the same
+                // access timestamp; the key tie-break may then choose the newly inserted value
+                // itself. The caller observes a successful store followed by an impossible
+                // miss (the P7D warm-up exposed this at a high ClassLoader count). A single
+                // entry can never be larger than maxBytes (validated above), so older entries
+                // can always be removed to satisfy both bounds while protecting this key.
+                if (e.getKey().equals(protectedKey)) {
+                    continue;
+                }
                 Entry candidate = e.getValue();
                 if (victim == null) {
                     victimKey = e.getKey();

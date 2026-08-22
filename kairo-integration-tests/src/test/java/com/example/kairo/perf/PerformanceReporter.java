@@ -2,6 +2,7 @@ package com.example.kairo.perf;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.kairo.api.diagnostics.DiagnosticEvent;
 import com.example.kairo.perf.ScenarioCatalog.Scenario;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -37,7 +38,9 @@ public final class PerformanceReporter {
             int code = new PerformanceReporter().run(args);
             System.exit(code);
         } catch (Throwable t) {
-            t.printStackTrace(System.err);
+            System.err.println(DiagnosticEvent.format("performance.report.failed",
+                    "failure", DiagnosticEvent.failureSummary(t),
+                    "failureStack", DiagnosticEvent.stackSummary(t)));
             System.exit(5);
         }
     }

@@ -2,6 +2,7 @@ package com.example.kairo.agent.server;
 
 import com.example.kairo.agent.core.AgentCore;
 import com.example.kairo.agent.core.AgentRuntime;
+import com.example.kairo.api.diagnostics.DiagnosticEvent;
 
 import java.lang.instrument.Instrumentation;
 import java.nio.file.Path;
@@ -27,7 +28,9 @@ public final class AgentCoreLauncher {
                         new PlatformAgentRegistrationClient(config).register(runtime.jvmInfo(), server.port());
                 effectiveConfig = config.withPlatformAgentId(registration.agentId());
                 runtime.recordEvent("platform.agent.register", "platform", null, registration.instanceId(),
-                        "Agent registered as " + registration.agentId());
+                        DiagnosticEvent.format("platform.agent.register",
+                                "agentId", registration.agentId(), "loadMode", loadMode,
+                                "httpPort", server.port()));
             }
             PlatformCommandPoller poller = null;
             PlatformRecordingUploader recordingUploader = null;
@@ -48,11 +51,20 @@ public final class AgentCoreLauncher {
                     config.registrationDir(), config.tokenFile(), runtime.jvmInfo(), server.port(),
                     token.token(), token.expiresAt(), AgentHttpServer.PROTOCOL_VERSION));
             runtime.recordEvent("agent.register", "system", null, null,
-                    "Agent registered at " + registration[0]);
+                    DiagnosticEvent.format("agent.register", "loadMode", loadMode,
+                            "httpPort", server.port(), "registrationWritten", registration[0] != null,
+                            "platformPolling", effectiveConfig.platformPollingEnabled()));
             AgentCoreHandle handle = new AgentCoreHandle(server, poller, recordingUploader, tokenManager);
             handleRef.set(handle);
             return handle;
         } catch (RuntimeException e) {
+            String diagnostic = DiagnosticEvent.format("agent.launch.failed", "loadMode", loadMode,
+                    "failure", DiagnosticEvent.failureSummary(e),
+                    "failureStack", DiagnosticEvent.stackSummary(e));
+            runtime.recordEvent("agent.launch.failed", "system", null, null, diagnostic);
+            // The in-memory buffer disappears when startup aborts, so retain one bounded,
+            // scrubbed copy on stderr for attach/launcher diagnostics.
+            System.err.println(diagnostic);
             AgentCore.stop();
             throw e;
         }

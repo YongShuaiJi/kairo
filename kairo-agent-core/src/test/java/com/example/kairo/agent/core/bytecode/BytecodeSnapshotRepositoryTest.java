@@ -127,6 +127,54 @@ class BytecodeSnapshotRepositoryTest {
     }
 
     @Test
+    void newlyStoredEntrySurvivesCapacityEvictionWhenClockTies() {
+        // Real agents can capture several transformations in one clock tick. Before the fix,
+        // the deterministic key tie-break selected the lexicographically smallest key even
+        // when it was the value store() had just accepted, so an immediate read returned empty.
+        AtomicLong fixedClock = new AtomicLong(100L);
+        BytecodeSnapshotRepository repo = new BytecodeSnapshotRepository(
+                new BytecodeSnapshotRepository.Config(2, 1024, 0), fixedClock::get);
+        ClassIdentity z = ci("com.example.Z");
+        ClassIdentity y = ci("com.example.Y");
+        ClassIdentity a = ci("com.example.A");
+
+        repo.store(key(z, 1, BytecodeSnapshotKind.INPUT), new byte[]{1},
+                meta(z, 1, BytecodeSnapshotKind.INPUT, new byte[]{1}));
+        repo.store(key(y, 1, BytecodeSnapshotKind.INPUT), new byte[]{2},
+                meta(y, 1, BytecodeSnapshotKind.INPUT, new byte[]{2}));
+        repo.store(key(a, 1, BytecodeSnapshotKind.INPUT), new byte[]{3},
+                meta(a, 1, BytecodeSnapshotKind.INPUT, new byte[]{3}));
+
+        assertThat(repo.size()).isEqualTo(2);
+        assertThat(repo.bytes(key(a, 1, BytecodeSnapshotKind.INPUT)))
+                .as("store must not evict the entry written by that same call")
+                .isPresent().get().satisfies(bytes -> assertThat(bytes).containsExactly(3));
+        assertThat(repo.contains(key(y, 1, BytecodeSnapshotKind.INPUT))).isFalse();
+        assertThat(repo.contains(key(z, 1, BytecodeSnapshotKind.INPUT))).isTrue();
+    }
+
+    @Test
+    void newestSnapshotRemainsReadableAcrossHighClassLoaderChurn() {
+        AtomicLong fixedClock = new AtomicLong(100L);
+        BytecodeSnapshotRepository repo = new BytecodeSnapshotRepository(
+                new BytecodeSnapshotRepository.Config(256, 8L * 1024 * 1024, 0), fixedClock::get);
+
+        for (int i = 1024; i >= 0; i--) {
+            ClassIdentity current = new ClassIdentity(
+                    "com.example.Target" + String.format("%04d", i), "loader-" + i);
+            BytecodeSnapshotKey currentKey = key(current, 1, BytecodeSnapshotKind.INPUT);
+            byte[] bytes = {(byte) i};
+            repo.store(currentKey, bytes, meta(current, 1, BytecodeSnapshotKind.INPUT, bytes));
+
+            assertThat(repo.bytes(currentKey))
+                    .as("snapshot for churned loader %s must be immediately readable", i)
+                    .isPresent();
+            assertThat(repo.size()).isLessThanOrEqualTo(256);
+            assertThat(repo.totalBytes()).isLessThanOrEqualTo(8L * 1024 * 1024);
+        }
+    }
+
+    @Test
     void evictsByTotalBytes() {
         AtomicLong clock = new AtomicLong(0L);
         BytecodeSnapshotRepository repo = new BytecodeSnapshotRepository(

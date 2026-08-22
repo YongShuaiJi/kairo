@@ -1,6 +1,7 @@
 package com.example.kairo.agent.core;
 
 import com.example.kairo.api.ScriptLog;
+import com.example.kairo.api.diagnostics.DiagnosticEvent;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -24,11 +25,11 @@ public final class RuntimeEventBuffer implements ScriptLog {
     public void record(String type, String actor, String ruleId, String target, String message) {
         RuntimeEvent event = new RuntimeEvent(
                 System.currentTimeMillis(),
-                type,
-                actor == null ? "system" : actor,
-                ruleId,
-                target,
-                truncate(message)
+                DiagnosticEvent.sanitize(type),
+                DiagnosticEvent.sanitize(actor == null ? "system" : actor),
+                ruleId == null ? null : DiagnosticEvent.sanitize(ruleId),
+                target == null ? null : DiagnosticEvent.sanitize(target),
+                truncate(DiagnosticEvent.sanitizeLogLine(message))
         );
         synchronized (events) {
             events.addLast(event);
@@ -61,7 +62,7 @@ public final class RuntimeEventBuffer implements ScriptLog {
 
     @Override
     public void error(String message, Throwable throwable) {
-        String suffix = throwable == null ? "" : " :: " + throwable.getClass().getName() + ": " + throwable.getMessage();
+        String suffix = throwable == null ? "" : " :: " + DiagnosticEvent.failureSummary(throwable);
         record("script.error", "script", null, null, message + suffix);
     }
 

@@ -7,6 +7,7 @@ import com.example.kairo.api.OutcomeState;
 import com.example.kairo.api.PropagationMode;
 import com.example.kairo.api.RuleChainDecision;
 import com.example.kairo.api.ScriptLog;
+import com.example.kairo.api.diagnostics.DiagnosticEvent;
 import com.example.kairo.bridge.EnterResult;
 import com.example.kairo.bridge.ExitResult;
 import com.example.kairo.object.RuntimeObjectFactory;
@@ -301,6 +302,15 @@ public final class RuleDispatcher implements AutoCloseable {
             if (permit == CompiledRule.ExecutionPermit.DENIED) {
                 continue;
             }
+            CircuitBreakReason reasonBeforeExecution = compiledRule.circuitBreakReason();
+            if (permit == CompiledRule.ExecutionPermit.HALF_OPEN) {
+                log.info(DiagnosticEvent.format("rule.circuit.half_open",
+                        "ruleId", compiledRule.rule().id(),
+                        "target", state.methodKey(),
+                        "location", location,
+                        "previousReason", reasonBeforeExecution,
+                        "recoveryDelayMs", config.circuitRecoveryDelayMillis()));
+            }
             if (!compiledRule.tryClaimHit()) {
                 compiledRule.releaseExecutionPermit(permit);
                 continue;
@@ -320,8 +330,8 @@ public final class RuleDispatcher implements AutoCloseable {
                     execution = scriptExecutor.submit(() -> compiledRule.script().execute(context));
                 } catch (RejectedExecutionException saturated) {
                     compiledRule.circuitBreak(CircuitBreakReason.SATURATION, permit);
-                    log.error("Rule " + compiledRule.rule().id()
-                            + " executor rejected the task; circuit-open (saturation); fail-open", saturated);
+                    log.error(circuitFailureEvent("rule.execution.rejected", compiledRule, state,
+                            location, permit, timeoutMillis, reasonBeforeExecution), saturated);
                     continue;
                 }
                 MockDecision raw;
@@ -330,22 +340,26 @@ public final class RuleDispatcher implements AutoCloseable {
                 } catch (TimeoutException timedOut) {
                     execution.cancel(true);
                     compiledRule.recordTimeout(permit);
-                    log.error("Rule " + compiledRule.rule().id() + " exceeded " + timeoutMillis
-                            + "ms timeout; circuit-open (timeout); " + compiledRule.unfinishedTaskCount()
-                            + " unfinished task(s); fail-open", timedOut);
+                    log.error(circuitFailureEvent("rule.execution.timeout", compiledRule, state,
+                            location, permit, timeoutMillis, reasonBeforeExecution), timedOut);
                     continue;
                 } catch (ExecutionException scriptFailure) {
                     compiledRule.recordError(permit);
-                    log.error(failOpenMessage(compiledRule), scriptFailure.getCause());
+                    log.error(circuitFailureEvent("rule.execution.failed", compiledRule, state,
+                            location, permit, timeoutMillis, reasonBeforeExecution), scriptFailure.getCause());
                     continue;
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     execution.cancel(true);
                     compiledRule.recordError(permit);
-                    log.error(failOpenMessage(compiledRule), interrupted);
+                    log.error(circuitFailureEvent("rule.execution.interrupted", compiledRule, state,
+                            location, permit, timeoutMillis, reasonBeforeExecution), interrupted);
                     continue;
                 }
-                compiledRule.recordSuccess(System.nanoTime() - started, permit);
+                long durationNanos = System.nanoTime() - started;
+                compiledRule.recordSuccess(durationNanos, permit);
+                logSuccessfulCircuitTransition(compiledRule, state, location, permit,
+                        reasonBeforeExecution, durationNanos);
                 RuleChainDecision decision = RuleChainDecision.from(raw == null ? MockDecision.proceed() : raw);
                 if (observeOnly) {
                     // observe/record only; never mutate the outcome
@@ -357,7 +371,8 @@ public final class RuleDispatcher implements AutoCloseable {
                 }
             } catch (Throwable e) {
                 compiledRule.recordError(permit);
-                log.error(failOpenMessage(compiledRule), e);
+                log.error(circuitFailureEvent("rule.execution.failed", compiledRule, state,
+                        location, permit, -1L, reasonBeforeExecution), e);
             }
         }
         return ChainResult.CONTINUED;
@@ -622,13 +637,50 @@ public final class RuleDispatcher implements AutoCloseable {
                 null, null, null, null, null);
     }
 
-    private static String failOpenMessage(CompiledRule compiledRule) {
-        String id = compiledRule.rule().id();
-        CircuitBreakReason reason = compiledRule.circuitBreakReason();
-        if (compiledRule.locked() && reason != null) {
-            return "Rule " + id + " failed and circuit-open (" + reason + "); fail-open";
+    private String circuitFailureEvent(String event, CompiledRule compiledRule,
+                                       InvocationState state, EnhancementLocation location,
+                                       CompiledRule.ExecutionPermit permit, long timeoutMillis,
+                                       CircuitBreakReason previousReason) {
+        return DiagnosticEvent.format(event,
+                "ruleId", compiledRule.rule().id(),
+                "target", state.methodKey(),
+                "location", location,
+                "permit", permit,
+                "previousCircuitReason", previousReason,
+                "circuitState", compiledRule.locked() ? "OPEN" : "CLOSED",
+                "circuitReason", compiledRule.circuitBreakReason(),
+                "timeoutMs", timeoutMillis,
+                "unfinishedTasks", compiledRule.unfinishedTaskCount(),
+                "errorCount", compiledRule.errors(),
+                "executionCount", compiledRule.executions(),
+                "outcome", "FAIL_OPEN");
+    }
+
+    private void logSuccessfulCircuitTransition(CompiledRule compiledRule, InvocationState state,
+                                                EnhancementLocation location,
+                                                CompiledRule.ExecutionPermit permit,
+                                                CircuitBreakReason previousReason,
+                                                long durationNanos) {
+        long durationMillis = TimeUnit.NANOSECONDS.toMillis(durationNanos);
+        if (permit == CompiledRule.ExecutionPermit.HALF_OPEN) {
+            if (compiledRule.locked()) {
+                log.error(DiagnosticEvent.format("rule.circuit.reopened",
+                        "ruleId", compiledRule.rule().id(), "target", state.methodKey(),
+                        "location", location, "previousReason", previousReason,
+                        "reason", compiledRule.circuitBreakReason(), "durationMs", durationMillis), null);
+            } else {
+                log.info(DiagnosticEvent.format("rule.circuit.closed",
+                        "ruleId", compiledRule.rule().id(), "target", state.methodKey(),
+                        "location", location, "previousReason", previousReason,
+                        "durationMs", durationMillis));
+            }
+        } else if (compiledRule.locked()) {
+            // A successful script can still open the circuit when it breaches the slow watermark.
+            log.warn(DiagnosticEvent.format("rule.circuit.opened",
+                    "ruleId", compiledRule.rule().id(), "target", state.methodKey(),
+                    "location", location, "reason", compiledRule.circuitBreakReason(),
+                    "durationMs", durationMillis));
         }
-        return "Rule " + id + " failed; fail-open";
     }
 
     @Override

@@ -1,6 +1,7 @@
 package com.example.kairo.platform.operation;
 
 import com.example.kairo.api.error.ApiError;
+import com.example.kairo.api.diagnostics.DiagnosticEvent;
 import com.example.kairo.api.error.ErrorCategory;
 import com.example.kairo.api.operation.Operation;
 import com.example.kairo.api.operation.OperationEvent;
@@ -13,6 +14,8 @@ import com.example.kairo.platform.persistence.mapper.OperationMapper;
 import com.example.kairo.platform.service.PlatformException;
 import com.example.kairo.platform.service.PlatformJson;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -41,6 +44,8 @@ import java.util.UUID;
  */
 @Service
 public final class OperationService {
+
+    private static final Logger LOG = LoggerFactory.getLogger(OperationService.class);
 
     private final OperationMapper operationMapper;
     private final Clock clock;
@@ -94,7 +99,13 @@ public final class OperationService {
         if (request.idempotencyKey() != null) {
             Map<String, Object> existing = operationMapper.findByIdempotencyKey(request.idempotencyKey());
             if (existing != null) {
-                return String.valueOf(existing.get("id"));
+                String existingId = String.valueOf(existing.get("id"));
+                LOG.info(DiagnosticEvent.format("operation.idempotent_replay",
+                        "operationId", existingId,
+                        "operationType", request.type(),
+                        "correlationId", request.correlationId(),
+                        "idempotencyKeyHash", DiagnosticEvent.fingerprint(request.idempotencyKey())));
+                return existingId;
             }
         }
         String id = "op-" + UUID.randomUUID();
@@ -164,8 +175,14 @@ public final class OperationService {
         Runnable record = () -> {
             try {
                 metricsRecorder.recordOperationOutcome(operationType, result, durationNanos);
-            } catch (RuntimeException ignored) {
-                // Observability must never change the operation state-machine result.
+            } catch (RuntimeException failure) {
+                // Observability must never change the operation state-machine result, but losing
+                // the metric must itself remain diagnosable.
+                LOG.warn(DiagnosticEvent.format("operation.metric_recording_failed",
+                        "operationId", existing.get("id"), "operationType", operationType,
+                        "result", result,
+                        "failure", DiagnosticEvent.failureSummary(failure),
+                        "failureStack", DiagnosticEvent.stackSummary(failure)));
             }
         };
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
@@ -261,6 +278,9 @@ public final class OperationService {
                 type, actor == null ? "" : actor,
                 PlatformJson.write(detail == null ? Map.of() : detail),
                 Timestamp.from(clock.instant()));
+        LOG.info(DiagnosticEvent.format("operation.event",
+                "operationId", id, "sequence", seq, "eventType", type,
+                "actor", actor == null ? "" : actor));
     }
 
     private void transition(String id, OperationStatus status, int progress,
@@ -280,9 +300,21 @@ public final class OperationService {
                 errorJson == null ? nullableString(existing.get("error_json")) : errorJson,
                 revertOperationId, completedAt, Timestamp.from(now), version);
         if (updated == 0) {
+            LOG.warn(DiagnosticEvent.format("operation.transition_conflict",
+                    "operationId", id, "fromStatus", existing.get("status"),
+                    "toStatus", status, "expectedVersion", version));
             throw PlatformException.conflict("RESOURCE_VERSION_CONFLICT",
                     "操作版本已变化，无法更新状态", Map.of("operationId", id));
         }
+        LOG.info(DiagnosticEvent.format("operation.transition",
+                "operationId", id,
+                "operationType", existing.get("operation_type"),
+                "fromStatus", existing.get("status"),
+                "toStatus", status,
+                "fromVersion", version,
+                "toVersion", version + 1,
+                "durationMs", Math.max(0L,
+                        now.toEpochMilli() - timestampMillis(existing.get("created_at")))));
     }
 
     private Map<String, Object> requireExisting(String id) {

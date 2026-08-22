@@ -1,5 +1,6 @@
 package com.example.kairo.platform.api;
 
+import com.example.kairo.api.diagnostics.DiagnosticEvent;
 import com.example.kairo.platform.persistence.mapper.IdempotencyRecordMapper;
 import com.example.kairo.platform.service.PlatformJson;
 import com.example.kairo.platform.service.RequestContext;
@@ -11,6 +12,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.dao.DuplicateKeyException;
@@ -29,6 +32,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * V1.6 acceptance safety: a database-safe idempotency reservation/in-progress/completed protocol
@@ -71,6 +75,8 @@ import java.util.concurrent.TimeUnit;
 @Order(Ordered.HIGHEST_PRECEDENCE + 20)
 final class IdempotencyFilter extends OncePerRequestFilter {
 
+    private static final Logger LOG = LoggerFactory.getLogger(IdempotencyFilter.class);
+
     private static final String STATUS_IN_PROGRESS = "IN_PROGRESS";
     private static final String STATUS_COMPLETED = "COMPLETED";
 
@@ -112,7 +118,7 @@ final class IdempotencyFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         String key = request.getHeader("Idempotency-Key");
-        String correlationId = headerOrDefault(request, "X-Correlation-Id", "");
+        String correlationId = correlationId(request);
         if (key.isBlank() || key.length() > 255) {
             writeError(response, 400, "INVALID_IDEMPOTENCY_KEY",
                     "Idempotency-Key 不能为空且长度不能超过 255 个字符",
@@ -138,6 +144,7 @@ final class IdempotencyFilter extends OncePerRequestFilter {
         Timestamp expiresAt = Timestamp.from(now.plusSeconds(86_400));
 
         if (reserve(key, actor, requestHash, ownerToken, leaseExpiresAt, createdAt, expiresAt)) {
+            logAction("idempotency.reserved", key, correlationId, actor, "OWNER", -1);
             executeOwned(key, ownerToken, new CachedBodyRequest(request, requestBody),
                     new ContentCachingResponseWrapper(response), filterChain, correlationId);
             return;
@@ -170,17 +177,24 @@ final class IdempotencyFilter extends OncePerRequestFilter {
                               ContentCachingResponseWrapper wrappedResponse, FilterChain chain,
                               String correlationId)
             throws ServletException, IOException {
-        ScheduledFuture<?> renewal = startHeartbeat(key, ownerToken);
+        ScheduledFuture<?> renewal = startHeartbeat(key, ownerToken, correlationId);
         try {
             chain.doFilter(wrappedRequest, wrappedResponse);
             int status = wrappedResponse.getStatus();
             byte[] body = wrappedResponse.getContentAsByteArray();
             if (status >= 200 && status < 500) {
-                idempotencyRecordMapper.completeRecord(key, ownerToken, status,
+                int updated = idempotencyRecordMapper.completeRecord(key, ownerToken, status,
                         new String(body, StandardCharsets.UTF_8), Timestamp.from(Instant.now()));
+                logAction("idempotency.completed", key, correlationId, "", "OWNER", status);
+                if (updated == 0) {
+                    LOG.warn(DiagnosticEvent.format("idempotency.fence_lost",
+                            "keyHash", DiagnosticEvent.fingerprint(key),
+                            "correlationId", correlationId, "phase", "COMPLETE"));
+                }
             } else {
                 // 5xx: never cache as success; release so a retry can re-execute.
                 idempotencyRecordMapper.deleteReservation(key, ownerToken);
+                logAction("idempotency.released", key, correlationId, "", "HTTP_5XX", status);
             }
             wrappedResponse.copyBodyToResponse();
         } catch (RuntimeException | ServletException | IOException e) {
@@ -190,6 +204,11 @@ final class IdempotencyFilter extends OncePerRequestFilter {
             } catch (RuntimeException ignored) {
                 // Best-effort cleanup; propagate the original failure.
             }
+            LOG.error(DiagnosticEvent.format("idempotency.owner_failed",
+                    "keyHash", DiagnosticEvent.fingerprint(key),
+                    "correlationId", correlationId,
+                    "failure", DiagnosticEvent.failureSummary(e),
+                    "failureStack", DiagnosticEvent.stackSummary(e)));
             throw e;
         } finally {
             if (renewal != null) {
@@ -199,17 +218,36 @@ final class IdempotencyFilter extends OncePerRequestFilter {
     }
 
     /** Renew the lease while the owner is still executing, fenced by the owner token. */
-    private ScheduledFuture<?> startHeartbeat(String key, String ownerToken) {
+    private ScheduledFuture<?> startHeartbeat(String key, String ownerToken, String correlationId) {
+        AtomicBoolean failureReported = new AtomicBoolean();
         try {
             return heartbeat.scheduleAtFixedRate(() -> {
                 try {
-                    idempotencyRecordMapper.renewLease(key, ownerToken,
+                    int updated = idempotencyRecordMapper.renewLease(key, ownerToken,
                             Timestamp.from(Instant.now().plusMillis(leaseMillis)));
-                } catch (RuntimeException ignored) {
-                    // Best-effort: a renewal failure (e.g. owner already completed) is non-fatal.
+                    if (updated == 0 && failureReported.compareAndSet(false, true)) {
+                        LOG.warn(DiagnosticEvent.format("idempotency.lease_not_renewed",
+                                "keyHash", DiagnosticEvent.fingerprint(key),
+                                "correlationId", correlationId, "reason", "FENCE_NOT_OWNED"));
+                    } else if (updated > 0) {
+                        failureReported.set(false);
+                    }
+                } catch (RuntimeException failure) {
+                    if (failureReported.compareAndSet(false, true)) {
+                        LOG.warn(DiagnosticEvent.format("idempotency.lease_renewal_failed",
+                                "keyHash", DiagnosticEvent.fingerprint(key),
+                                "correlationId", correlationId,
+                                "failure", DiagnosticEvent.failureSummary(failure),
+                                "failureStack", DiagnosticEvent.stackSummary(failure)));
+                    }
                 }
             }, renewMillis, renewMillis, TimeUnit.MILLISECONDS);
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException failure) {
+            LOG.warn(DiagnosticEvent.format("idempotency.heartbeat_start_failed",
+                    "keyHash", DiagnosticEvent.fingerprint(key),
+                    "correlationId", correlationId,
+                    "failure", DiagnosticEvent.failureSummary(failure),
+                    "failureStack", DiagnosticEvent.stackSummary(failure)));
             return null; // If the executor is shut down, the owner still runs without renewal.
         }
     }
@@ -245,7 +283,7 @@ final class IdempotencyFilter extends OncePerRequestFilter {
 
         if (STATUS_COMPLETED.equals(status)) {
             if (actor.equals(recordActor) && hash.equals(recordHash)) {
-                replay(response, record);
+                replay(response, record, key, correlationId);
             } else {
                 writeConflict(response, correlationId);
             }
@@ -260,7 +298,7 @@ final class IdempotencyFilter extends OncePerRequestFilter {
         // Same-key same-request: wait for the owner to complete, then replay.
         Map<String, Object> completed = waitForCompletion(key);
         if (completed != null && STATUS_COMPLETED.equals(String.valueOf(completed.get("status")))) {
-            replay(response, completed);
+            replay(response, completed, key, correlationId);
             return;
         }
         // The owner is either dead (lease expired) or alive-but-slow (wait window elapsed).
@@ -280,7 +318,7 @@ final class IdempotencyFilter extends OncePerRequestFilter {
         if (STATUS_COMPLETED.equals(String.valueOf(current.get("status")))) {
             if (actor.equals(String.valueOf(current.get("actor")))
                     && hash.equals(String.valueOf(current.get("request_hash")))) {
-                replay(response, current);
+                replay(response, current, key, correlationId);
             } else {
                 writeConflict(response, correlationId);
             }
@@ -291,6 +329,7 @@ final class IdempotencyFilter extends OncePerRequestFilter {
             Timestamp nowTs = Timestamp.from(Instant.now());
             Timestamp newLease = Timestamp.from(Instant.now().plusMillis(leaseMillis));
             if (idempotencyRecordMapper.reclaimReservation(key, actor, hash, ownerToken, newLease, nowTs) > 0) {
+                logAction("idempotency.reclaimed", key, correlationId, actor, "EXPIRED_OWNER", -1);
                 executeOwned(key, ownerToken, new CachedBodyRequest(request, requestBody),
                         new ContentCachingResponseWrapper(response), chain, correlationId);
                 return;
@@ -300,7 +339,7 @@ final class IdempotencyFilter extends OncePerRequestFilter {
             if (reread != null && STATUS_COMPLETED.equals(String.valueOf(reread.get("status")))
                     && actor.equals(String.valueOf(reread.get("actor")))
                     && hash.equals(String.valueOf(reread.get("request_hash")))) {
-                replay(response, reread);
+                replay(response, reread, key, correlationId);
             } else {
                 writeConflict(response, correlationId);
             }
@@ -347,11 +386,30 @@ final class IdempotencyFilter extends OncePerRequestFilter {
         return null;
     }
 
-    private void replay(HttpServletResponse response, Map<String, Object> record) throws IOException {
-        response.setStatus(((Number) record.get("response_status")).intValue());
+    private void replay(HttpServletResponse response, Map<String, Object> record,
+                        String key, String correlationId) throws IOException {
+        int status = ((Number) record.get("response_status")).intValue();
+        response.setStatus(status);
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
         response.setContentType("application/json");
         response.getWriter().write(String.valueOf(record.get("response_json")));
+        logAction("idempotency.replayed", key, correlationId, "", "COMPLETED", status);
+    }
+
+    private static void logAction(String event, String key, String correlationId,
+                                  String actor, String outcome, int status) {
+        LOG.info(DiagnosticEvent.format(event,
+                "keyHash", DiagnosticEvent.fingerprint(key),
+                "correlationId", correlationId,
+                "actor", actor,
+                "outcome", outcome,
+                "status", status));
+    }
+
+    private static String correlationId(HttpServletRequest request) {
+        Object generated = request.getAttribute(ApiRequestLoggingFilter.CORRELATION_ID_ATTRIBUTE);
+        return generated instanceof String value && !value.isBlank()
+                ? value : headerOrDefault(request, "X-Correlation-Id", "");
     }
 
     private void writeConflict(HttpServletResponse response, String correlationId) throws IOException {

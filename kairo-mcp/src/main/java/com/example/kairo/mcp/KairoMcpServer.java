@@ -1,6 +1,7 @@
 package com.example.kairo.mcp;
 
 import com.example.kairo.api.build.KairoBuildVersion;
+import com.example.kairo.api.diagnostics.DiagnosticEvent;
 import com.example.kairo.sdk.KairoClient;
 import com.example.kairo.sdk.KairoClientConfig;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -68,7 +69,9 @@ public class KairoMcpServer {
                     System.out.flush();
                 }
             } catch (Exception e) {
-                System.err.println("Handler error: " + e.getMessage());
+                System.err.println(DiagnosticEvent.format("mcp.stdio.handler_failed",
+                        "failure", DiagnosticEvent.failureSummary(e),
+                        "failureStack", DiagnosticEvent.stackSummary(e)));
             }
         });
     }
@@ -78,6 +81,9 @@ public class KairoMcpServer {
         try {
             req = mapper.readValue(jsonRequest, Map.class);
         } catch (JsonProcessingException e) {
+            System.err.println(DiagnosticEvent.format("mcp.request.rejected",
+                    "reason", "PARSE_ERROR", "failureType", e.getClass().getName(),
+                    "failureStack", DiagnosticEvent.stackSummary(e)));
             return error(null, -32700, "Parse error");
         }
 
@@ -87,28 +93,54 @@ public class KairoMcpServer {
         Map<String, Object> params = req.get("params") instanceof Map
                 ? (Map<String, Object>) req.get("params")
                 : Map.of();
+        String requestRef = DiagnosticEvent.fingerprint(String.valueOf(id));
+        String toolName = "tools/call".equals(method) ? str(params, "name") : "";
+        long started = System.nanoTime();
 
         try {
             if (method == null) {
+                logRequest("mcp.request.rejected", requestRef, "", toolName,
+                        started, "INVALID_REQUEST", null);
                 return error(id, -32600, "Invalid request");
             }
-            switch (method) {
+            String response = switch (method) {
                 case "initialize" -> {
-                    return success(id, initialize());
+                    yield success(id, initialize());
                 }
                 case "tools/list" -> {
-                    return success(id, listTools());
+                    yield success(id, listTools());
                 }
                 case "tools/call" -> {
-                    return success(id, callTool(params));
+                    yield success(id, callTool(params));
                 }
                 default -> {
-                    return error(id, -32601, "Method not found: " + method);
+                    yield error(id, -32601, "Method not found: " + method);
                 }
-            }
+            };
+            String outcome = switch (method) {
+                case "initialize", "tools/list", "tools/call" -> "SUCCEEDED";
+                default -> "METHOD_NOT_FOUND";
+            };
+            logRequest("mcp.request.completed", requestRef, method, toolName,
+                    started, outcome, null);
+            return response;
         } catch (Exception e) {
-            return error(id, -32603, "Internal error: " + e.getMessage());
+            logRequest("mcp.request.failed", requestRef, method, toolName,
+                    started, "FAILED", e);
+            return error(id, -32603, "Internal error; inspect MCP diagnostics using requestRef=" + requestRef);
         }
+    }
+
+    private static void logRequest(String event, String requestRef, String method, String toolName,
+                                   long startedNanos, String outcome, Throwable failure) {
+        System.err.println(DiagnosticEvent.format(event,
+                "requestRef", requestRef,
+                "method", method,
+                "toolName", toolName,
+                "outcome", outcome,
+                "durationMs", (System.nanoTime() - startedNanos) / 1_000_000L,
+                "failure", DiagnosticEvent.failureSummary(failure),
+                "failureStack", DiagnosticEvent.stackSummary(failure)));
     }
 
     private Map<String, Object> initialize() {

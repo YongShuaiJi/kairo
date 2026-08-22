@@ -1,6 +1,7 @@
 package com.example.kairo.core;
 
 import com.example.kairo.api.ScriptLog;
+import com.example.kairo.api.diagnostics.DiagnosticEvent;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -13,7 +14,7 @@ public final class LimitedScriptLog implements ScriptLog {
     private final ArrayDeque<String> entries = new ArrayDeque<>();
 
     public LimitedScriptLog() {
-        this(200, 500);
+        this(200, 1000);
     }
 
     public LimitedScriptLog(int maxEntries, int maxLength) {
@@ -46,8 +47,8 @@ public final class LimitedScriptLog implements ScriptLog {
     }
 
     private synchronized void add(String level, String message, Throwable throwable) {
-        String text = level + " " + truncate(message)
-                + (throwable == null ? "" : " :: " + throwable.getClass().getName() + ": " + truncate(throwable.getMessage()));
+        String text = level + " " + truncate(DiagnosticEvent.sanitizeLogLine(message))
+                + (throwable == null ? "" : " :: " + truncate(DiagnosticEvent.failureSummary(throwable)));
         entries.addLast(text);
         while (entries.size() > maxEntries) {
             entries.removeFirst();
