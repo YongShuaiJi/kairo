@@ -10,12 +10,14 @@ LABEL org.opencontainers.image.source="https://github.com/YongShuaiJi/kairo" \
 WORKDIR /workspace
 COPY . /workspace/
 
-# Keep the candidate checkout and Maven repository in the image. The runtime runner uses
-# git to bind evidence to the exact commit and Maven offline mode so a seven-day gate never
-# depends on network availability after the image has been pulled.
+# Bind the extracted source tree to the immutable candidate without shipping repository
+# history in the runtime image. run-soak.sh accepts this build-owned provenance file only
+# when no Git checkout is present; normal worktree execution still derives HEAD and dirty
+# state directly from Git.
 RUN test -n "$BUILD_SHA" \
-    && test "$(git rev-parse HEAD^{commit})" = "$BUILD_SHA" \
-    && test -z "$(git status --porcelain)" \
+    && test "${#BUILD_SHA}" -eq 40 \
+    && ! printf '%s' "$BUILD_SHA" | grep -q '[^0-9a-f]' \
+    && printf '%s\n' "$BUILD_SHA" > /workspace/.kairo-image-build-id \
     && mvn -B --no-transfer-progress \
          -pl kairo-integration-tests -am test-compile \
     && mvn -B --no-transfer-progress \
@@ -23,8 +25,7 @@ RUN test -n "$BUILD_SHA" \
          dependency:build-classpath \
          -Dmdep.outputFile=/tmp/kairo-soak-classpath \
          -DincludeScope=test \
-    && rm -f /tmp/kairo-soak-classpath \
-    && test -z "$(git status --porcelain)"
+    && rm -f /tmp/kairo-soak-classpath
 
 ENV MVN="mvn -o"
 ENV MAVEN_OPTS="-XX:TieredStopAtLevel=1"

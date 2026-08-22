@@ -1,0 +1,9 @@
+.git
+.claude
+.idea
+.DS_Store
+**/.DS_Store
+**/target
+kairo-platform-web/node_modules
+output
+tmp

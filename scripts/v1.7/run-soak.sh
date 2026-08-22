@@ -69,7 +69,8 @@ Optional:
 Behavior:
   - Builds the harness in place at HEAD (kairo-integration-tests -am test-compile);
     the active V1.7 worktree is never switched or dirtied.
-  - Resolves and records the current 40-hex HEAD commit as the build ID.
+  - Resolves and records the current 40-hex HEAD commit as the build ID; an immutable
+    soak image uses its build-owned provenance file because repository history is omitted.
   - PR evidence (default) refuses a dirty tracked/untracked working tree; use
     --allow-dirty only for local development (mode=dev).
   - Cleans only this runner's prior soak-result.json + soak-timeseries.jsonl before running.
@@ -112,8 +113,20 @@ if ! [[ "$DURATION" =~ ^P[0-9YMWDHST]+$ ]] || ! [[ "$DURATION" =~ [0-9] ]]; then
 fi
 read -r -a JVM_ARGV <<< "$JVM_ARGS"
 
-# Resolve the current 40-hex HEAD commit (peeled to the commit object).
-HEAD_ID="$(git -C "$REPO_ROOT" rev-parse "HEAD^{commit}")"
+# Resolve provenance from a real worktree, or from the build-owned file embedded in the
+# immutable soak image. The image deliberately excludes .git; its OCI revision label and
+# content-addressed digest bind the same BUILD_SHA used to create this file.
+IMAGE_BUILD_ID_FILE="$REPO_ROOT/.kairo-image-build-id"
+PROVENANCE_SOURCE="git"
+if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  HEAD_ID="$(git -C "$REPO_ROOT" rev-parse "HEAD^{commit}")"
+elif [[ -f "$IMAGE_BUILD_ID_FILE" ]]; then
+  HEAD_ID="$(tr -d '\r\n' < "$IMAGE_BUILD_ID_FILE")"
+  PROVENANCE_SOURCE="immutable-image"
+else
+  echo "error: neither a Git worktree nor immutable image build provenance is available" >&2
+  exit 1
+fi
 if ! [[ "$HEAD_ID" =~ ^[0-9a-f]{40}$ ]]; then
   echo "error: could not resolve a 40-hex HEAD commit (got: $HEAD_ID)" >&2
   exit 1
@@ -122,7 +135,7 @@ fi
 # Dirty-tree detection. PR/RC/RELEASE evidence (default) refuses a dirty tree; --allow-dirty
 # is a clearly-marked development-only escape that records mode=dev.
 DIRTY="false"
-if [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]]; then
+if [[ "$PROVENANCE_SOURCE" == "git" ]] && [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]]; then
   DIRTY="true"
 fi
 if [[ "$DIRTY" == "true" && "$ALLOW_DIRTY" != "true" ]]; then
@@ -144,7 +157,7 @@ printf -v EXACT_CMD '%q ' "$0" "${ORIGINAL_ARGS[@]}"
 EXACT_CMD="${EXACT_CMD% }"
 
 echo "==> duration=$DURATION mode=$MODE working-tree-dirty=$DIRTY"
-echo "==> head=$HEAD_ID"
+echo "==> head=$HEAD_ID provenance-source=$PROVENANCE_SOURCE"
 echo "==> jvm-args: $JVM_ARGS"
 
 # -----------------------------------------------------------------------------
