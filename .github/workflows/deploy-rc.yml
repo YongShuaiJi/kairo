@@ -24,6 +24,7 @@ permissions:
 env:
   PLATFORM_IMAGE: ghcr.io/yongshuaiji/kairo-platform-server
   WEB_IMAGE: ghcr.io/yongshuaiji/kairo-platform-web
+  SOAK_IMAGE: ghcr.io/yongshuaiji/kairo-soak-runner
   POSTGRES_IMAGE: postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
   REDIS_IMAGE: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
 
@@ -87,13 +88,14 @@ jobs:
     name: Build and publish immutable application images
     needs: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
     outputs:
       platform_digest: ${{ steps.platform.outputs.digest }}
       web_digest: ${{ steps.web.outputs.digest }}
+      soak_digest: ${{ steps.soak.outputs.digest }}
     steps:
       - name: Check out candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -190,6 +192,47 @@ jobs:
           cache-to: type=gha,mode=max,scope=kairo-platform-web
           provenance: mode=max
           sbom: true
+
+      - name: Build and push immutable soak image
+        id: soak
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: .github/docker/soak.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.SOAK_IMAGE }}:sha-${{ inputs.candidate_sha }}
+          build-args: |
+            BUILD_SHA=${{ inputs.candidate_sha }}
+            BUILDKIT_CONTEXT_KEEP_GIT_DIR=1
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ inputs.candidate_sha }}
+            org.opencontainers.image.version=${{ inputs.version }}
+          cache-from: type=gha,scope=kairo-soak-runner-amd64
+          cache-to: type=gha,mode=max,scope=kairo-soak-runner-amd64
+          provenance: mode=max
+          sbom: true
+
+      - name: Record published immutable images
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PLATFORM_DIGEST: ${{ steps.platform.outputs.digest }}
+          WEB_DIGEST: ${{ steps.web.outputs.digest }}
+          SOAK_DIGEST: ${{ steps.soak.outputs.digest }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$PLATFORM_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$WEB_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$SOAK_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          {
+            echo "### Kairo RC immutable images"
+            echo
+            echo "Candidate: \`$CANDIDATE_SHA\`"
+            echo "Platform: \`${PLATFORM_IMAGE}@${PLATFORM_DIGEST}\`"
+            echo "Web: \`${WEB_IMAGE}@${WEB_DIGEST}\`"
+            echo "Soak: \`${SOAK_IMAGE}@${SOAK_DIGEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     name: Deploy immutable images to Alibaba Cloud ECS
